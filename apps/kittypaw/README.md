@@ -51,6 +51,39 @@ kittypaw chat          # interactive REPL mode
 kittypaw server start  # start as HTTP/WebSocket server
 ```
 
+## Recommended Models
+
+Verified 2026-05-04 to 2026-05-05. Detailed matrix + raw measurements: [`docs/MODEL_GUIDE.md`](docs/MODEL_GUIDE.md).
+
+### Cloud (KittyPaw chat default — Korean priority)
+
+| Rank | Provider / Model | Free quota | Notes |
+|---|---|---|---|
+| ★★★ 1 | **Mistral `mistral-medium-latest`** | docs unspecified — dashboard. Card ❌ phone auth + ⚠️ training-on-by-default | Korean natural, AI-self-aware, 128K context |
+| ★★★ 2 | **Groq `qwen/qwen3-32b`** | 60 RPM / 1K RPD / 6K TPM / 500K TPD. **org-gated** + `reasoning_format=parsed` required | Cleansed thinking variant, 128K context |
+| ★★ 3 | Mistral `ministral-8b-latest` | (Mistral Experiment plan) | 256K context, faster |
+| ★★ 4 | Groq `llama-3.3-70b-versatile` | 30 RPM / 1K RPD / 12K TPM / 100K TPD | Parallel tools ✅, occasional Korean/Japanese mix |
+| ★★ 5 | Gemini `gemini-2.5-flash-lite` | docs unspecified — `aistudio.google.com/rate-limit` dashboard | 1M input / 65K output |
+
+**Skipped**: Cerebras (8K context cap → KittyPaw chat unfit), Together AI ($5 card required), Cohere Trial (non-commercial license).
+
+**Untested (key not held)**: OpenRouter `:free` (20 RPM / 200 RPD, card ❌), DeepSeek (5M tokens / 30-day grant — tool_call leak ~11%).
+
+### Local (verified on eMac M3 Pro 36 GB · ssh tunnel `:11500 → emac:11434`)
+
+| Rank | Backend / Model | Memory (Q4) | Warm latency | Notes |
+|---|---|---|---|---|
+| ★★★ 1 | **LM Studio MLX `qwen3-30b-a3b-instruct-2507`** 4bit | 17.2 GB | **0.55-0.61s** (cold 30s) | MoE, no thinking |
+| ★★★ 2 | **Ollama `qwen2.5:32b-instruct`** Q4_K_M | 19 GB | 3-9s | Thinking-free, identity stable |
+| ★★★ 3 | Ollama `gemma4:latest` 8B | 9.6 GB | 0.82s | Fastest 8B |
+| ★★ 4 | Ollama `qwen3:latest` 8B | 5.2 GB | 10.7s @ max_tok=1024 | Sweet spot |
+| ★★★ 5 | Ollama `phi4-mini:latest` 3.8B | 2.5 GB | <1s (KittyPaw harness) | **16 GB MBA fit** |
+| ★★ 6 | Ollama `granite4.1:8b` Q4_K_M | 5.4 GB | 1s (KittyPaw harness) | Raw ollama identity hallucination (§ 5.1.2) — **KittyPaw system prompt가 강제 통과** |
+
+**Avoid**: qwen3:14b/4b/30b-a3b (thinking explosion), hermes3:8b (English-only), mistral-nemo:12b (Korean unstable), **`llama3.3:70b`** (KittyPaw instruction following 실패 — 모델 크기 ≠ 호환, § 5.1.4).
+
+**Sources** (verified 2026-05-05): [Cerebras](https://inference-docs.cerebras.ai/support/rate-limits) · [Groq](https://console.groq.com/docs/rate-limits) · [Mistral](https://docs.mistral.ai/deployment/ai-studio/tier) · [Gemini](https://ai.google.dev/gemini-api/docs/rate-limits) · [OpenRouter](https://openrouter.ai/docs/faq) · [Together](https://docs.together.ai/docs/billing-credits)
+
 ## In-Chat Commands
 
 These commands are entered inside `kittypaw chat`, Telegram, Kakao, or another
