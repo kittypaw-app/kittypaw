@@ -19,40 +19,15 @@ KittyPaw에 `provider="lmstudio"` 신규 case 추가 + dev-models harness에 LM 
 
 - [x] **T0 — prereq grep + endpoint validate**: registry.go 9 case 패턴 확인 (line 84-91 ollama 미러). const block (line 11-29). emac LM Studio :1234 200 + qwen3-30b-a3b-instruct-2507 loaded ✓.
 
-- [ ] **T1 — RED→GREEN: registry.go case "lmstudio"** (15분):
-  - RED: `llm/registry_test.go` 신규 `TestNewProviderLMStudio` (ollama test pattern line 30-42 미러)
-  - GREEN: `llm/registry.go`:
-    - const block: `lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"` (코멘트 1줄)
-    - switch case (line 84 ollama 직후): `case "lmstudio":` ollama 패턴 미러
-  - 회귀: `go test ./llm/... -run TestNewProvider`
-  - **commit**: `feat(llm): add lmstudio provider case (port 11600 → emac:1234)`
+- [x] **T1 — RED→GREEN: registry.go case "lmstudio"**: `lmstudioDefaultBaseURL` const + case + 2 tests (ollama 패턴 미러). commit `407964e`.
 
-- [ ] **T2 — GREEN→RED: dev-models.sh tunnel rename + tunnel-lms** (30분):
-  - GREEN scripts/dev-models.sh:
-    - `tunnel_start` → `tunnel_ollama_start` (rename + ControlPath `/tmp/.ssh-emac-ollama-cm`)
-    - 신규 `tunnel_lms_start` (-L 11600:localhost:1234 + ControlPath `/tmp/.ssh-emac-lms-cm`)
-    - 동일 패턴 `tunnel_{ollama,lms}_{stop,status}`
-    - heredoc 7번째 entry: `[lmstudio-qwen3-30b-mlx]\nprovider="lmstudio"\nmodel="qwen3-30b-a3b-instruct-2507"`
-    - case 분기 router: `tunnel-ollama-start | tunnel-lms-start | ...`
-  - RED→GREEN tests/dev-models-tunnel.bats (3+α cases):
-    - tunnel-lms-start: -L 11600:localhost:1234 + ControlPath
-    - tunnel-lms-stop: -O exit
-    - tunnel-lms-status: lsof :11600 + curl :11600/v1/models 2단계 probe
+- [x] **T2 — dev-models.sh tunnel rename + tunnel-lms + 7th entry**: `tunnel-{ollama,lms}-{start,stop,status}` 분리 (ControlPath suffix), heredoc 7th entry `lmstudio-qwen3-30b-mlx`, help text 갱신. tunnel.bats 13 cases (7 ollama + 6 lms) GREEN.
 
-- [ ] **T3 — RED→GREEN: measure script rename + BACKEND param** (40분):
-  - Rename `scripts/dev-models-ollama-measure.sh` → `scripts/dev-models-measure.sh`
-  - Rename `tests/dev-models-ollama-measure.bats` → `tests/dev-models-measure.bats`
-  - RED bats cases (3+α): lmstudio happy path / unsupported BACKEND fail / lmstudio special-char prompt
-  - GREEN: BACKEND case 분기 + `EMAC_OLLAMA` probe는 ollama case에만
+- [x] **T3 — measure script generalize + BACKEND param**: `dev-models-ollama-measure.sh` → `dev-models-measure.sh BACKEND={ollama|lmstudio}`, lmstudio path verifies model loaded via /v1/models (GUI-managed, no auto-pull). measure.bats 11 cases (2 generic + 6 ollama + 3 lmstudio) GREEN.
 
-- [ ] **T4 — Makefile target rename + 신규** (10분):
-  - rename `dev-models-tunnel`→`-tunnel-ollama` (+ stop/status)
-  - 신규 `dev-models-tunnel-lms` (+ stop/status)
-  - rename `dev-models-ollama-measure` → `dev-models-measure BACKEND=... MODEL=... PROMPT=...`
-  - `.PHONY` 갱신
-  - **T2-T4 atomic commit**: `feat(scripts,tests,build): dev-models — LM Studio MLX tunnel + measure backend matrix`
+- [x] **T4 — Makefile target rename + 신규**: `dev-models-tunnel-{ollama,lms}{-stop,-status}` + `dev-models-measure BACKEND=... MODEL=... PROMPT=...`. .PHONY 갱신.
 
-- [ ] **T5 — 회귀 검증** (15분): `make build && make test-unit && make lint && go test -race ./engine/... ./llm/...` + `bats tests/dev-models-tunnel.bats tests/dev-models-measure.bats`
+- [x] **T5 — 회귀 검증**: `make build` + `make test-unit` + `make lint` (0 issues) + `go test -race ./engine/... ./llm/...` + bats 24/24 모두 PASS.
 
 - [ ] **T6 — docs 갱신** (20분):
   - `docs/DEV_MODELS.md`: LM Studio 섹션 (사전 GUI load + tunnel + measure)

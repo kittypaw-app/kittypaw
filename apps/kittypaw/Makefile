@@ -3,7 +3,7 @@ PKG       := ./cli
 BUILDTIME := $(shell TZ=Asia/Seoul date +%Y-%m-%d\ %H:%M\ KST)
 LDFLAGS   := -X 'main.version=dev ($(BUILDTIME))'
 
-.PHONY: build test test-unit test-integration test-e2e test-ci lint fmt run clean eval-secretary eval-user-flows eval-local smoke dev-models dev-models-setup dev-models-server dev-models-chat dev-models-stop dev-models-clean dev-models-status dev-models-tunnel dev-models-tunnel-stop dev-models-tunnel-status dev-models-ollama-measure
+.PHONY: build test test-unit test-integration test-e2e test-ci lint fmt run clean eval-secretary eval-user-flows eval-local smoke dev-models dev-models-setup dev-models-server dev-models-chat dev-models-stop dev-models-clean dev-models-status dev-models-tunnel-ollama dev-models-tunnel-ollama-stop dev-models-tunnel-ollama-status dev-models-tunnel-lms dev-models-tunnel-lms-stop dev-models-tunnel-lms-status dev-models-measure
 
 build:
 	@mkdir -p bin
@@ -74,23 +74,39 @@ dev-models-clean:
 dev-models-status:
 	scripts/dev-models.sh status
 
-# SSH-tunneled ollama on a separate "emac" host. The local M1 Air runs
-# the chat client; emac (M3 Pro 36GB) runs `ollama serve`. We forward
-# emac:11434 → localhost:11434 over an OpenSSH ControlMaster session.
-# Prereqs: `ssh emac` alias in ~/.ssh/config, ollama installed on emac,
-# and (for measure) jq + bats. See docs/DEV_MODELS.md for the full flow.
-dev-models-tunnel:
-	scripts/dev-models.sh tunnel-start
+# SSH-tunneled local backends on emac (M3 Pro 36GB). The M1 Air runs the
+# chat client; emac runs ollama serve and/or LM Studio (Apple Metal MLX).
+# Two independent tunnels with separate ControlPath sockets so they can
+# coexist:
+#   ollama → localhost:11500 → emac:11434  (`ollama serve`)
+#   lms    → localhost:11600 → emac:1234   (LM Studio HTTP server, no auth)
+# Prereqs: `ssh emac` alias in ~/.ssh/config; ollama installed on emac
+# (for ollama tunnel); LM Studio app running with HTTP server enabled +
+# target model loaded via GUI (for lms tunnel). See docs/DEV_MODELS.md.
+dev-models-tunnel-ollama:
+	scripts/dev-models.sh tunnel-ollama-start
 
-dev-models-tunnel-stop:
-	scripts/dev-models.sh tunnel-stop
+dev-models-tunnel-ollama-stop:
+	scripts/dev-models.sh tunnel-ollama-stop
 
-dev-models-tunnel-status:
-	scripts/dev-models.sh tunnel-status
+dev-models-tunnel-ollama-status:
+	scripts/dev-models.sh tunnel-ollama-status
 
-# One-shot measurement against an ollama model on emac. Pulls the model,
-# config-swaps [llm].default + reloads the daemon, fires one chat round,
-# prints latency + response, then a trap restores the original config.
-# Usage: make dev-models-ollama-measure MODEL=qwen2.5:7b [PROMPT='...']
-dev-models-ollama-measure: build
-	scripts/dev-models-ollama-measure.sh $(MODEL) $(PROMPT)
+dev-models-tunnel-lms:
+	scripts/dev-models.sh tunnel-lms-start
+
+dev-models-tunnel-lms-stop:
+	scripts/dev-models.sh tunnel-lms-stop
+
+dev-models-tunnel-lms-status:
+	scripts/dev-models.sh tunnel-lms-status
+
+# One-shot measurement against an ollama or LM Studio model on emac.
+# ollama path pulls the model first; lmstudio path verifies it is loaded
+# in the GUI. Both swap [llm].default + reload, fire one chat round,
+# print latency + response, and trap-restore the original config.
+# Usage:
+#   make dev-models-measure BACKEND=ollama   MODEL=qwen2.5:7b [PROMPT='...']
+#   make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 [PROMPT='...']
+dev-models-measure: build
+	scripts/dev-models-measure.sh $(BACKEND) $(MODEL) $(PROMPT)

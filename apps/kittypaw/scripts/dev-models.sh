@@ -124,6 +124,12 @@ id = "openrouter-llama-3.3"
 provider = "openrouter"
 model = "meta-llama/llama-3.3-70b-instruct:free"
 max_tokens = 1024
+
+[[llm.models]]
+id = "lmstudio-qwen3-30b-mlx"
+provider = "lmstudio"
+model = "qwen3-30b-a3b-instruct-2507"
+max_tokens = 1024
 TOML
   # server.toml carries bind + master_api_key (CLAUDE.md "Server-wide
   # settings"). The chat client's DaemonConn reads these to derive
@@ -143,7 +149,7 @@ bind = "$TEST_BIND"
 master_api_key = "$master_key"
 TOML
   umask 022
-  echo "wrote $cfg (6 models — groq-qwen / groq-llama / mistral-medium / ministral-8b / gemini-flash-lite / openrouter-llama-3.3)"
+  echo "wrote $cfg (7 models — groq-qwen / groq-llama / mistral-medium / ministral-8b / gemini-flash-lite / openrouter-llama-3.3 / lmstudio-qwen3-30b-mlx)"
 }
 
 require_keys() {
@@ -242,7 +248,7 @@ status)
   done
   ;;
 
-tunnel-start)
+tunnel-ollama-start)
   # OpenSSH ControlMaster + LocalForward to emac:11434 → localhost:11500.
   # Idempotent: -O exit cleans any stale ControlSocket from a prior aborted
   # tunnel before spawning -fN. ssh alias `emac` must resolve in ~/.ssh/config.
@@ -250,32 +256,71 @@ tunnel-start)
   # § 2 convention (avoids collision with a host-side ollama on :11434).
   ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
             -o ConnectTimeout=3
-            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-%C)
+            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C)
   ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
   ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11500:localhost:11434 emac
-  echo "tunnel up: localhost:11500 → emac:11434  (stop: make dev-models-tunnel-stop)"
+  echo "tunnel up: localhost:11500 → emac:11434  (stop: make dev-models-tunnel-ollama-stop)"
   ;;
 
-tunnel-stop)
+tunnel-ollama-stop)
   ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
             -o ConnectTimeout=3
-            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-%C)
+            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C)
   ssh "${ssh_opts[@]}" -O exit emac
   ;;
 
-tunnel-status)
+tunnel-ollama-status)
   # Two-stage liveness probe (Architect): lsof catches the local LocalForward
   # bind, curl /api/tags catches an "orphan" ControlSocket where the SSH
   # session was reset but the bind survives. lsof OK + curl fail = orphan.
   if ! lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "tunnel down — make dev-models-tunnel" >&2
+    echo "tunnel down — make dev-models-tunnel-ollama" >&2
     exit 1
   fi
   if ! curl -fsS --max-time 5 http://localhost:11500/api/tags >/dev/null 2>&1; then
-    echo "tunnel orphan (forward unreachable) — restart: make dev-models-tunnel-stop && make dev-models-tunnel" >&2
+    echo "tunnel orphan (forward unreachable) — restart: make dev-models-tunnel-ollama-stop && make dev-models-tunnel-ollama" >&2
     exit 1
   fi
   echo "tunnel ok: localhost:11500 → emac:11434 (ollama /api/tags responding)"
+  ;;
+
+tunnel-lms-start)
+  # LM Studio MLX backend on emac (M3 Pro 36GB). LocalForward emac:1234 →
+  # localhost:11600 (no auth — LM Studio HTTP server runs unauthenticated).
+  # Same ControlMaster + idempotent -O exit pattern as tunnel-ollama; the
+  # ControlPath is suffixed -lms- so both tunnels can coexist (different
+  # multiplex sessions, different ports). Pre-req: emac LM Studio app
+  # running with HTTP server enabled (Settings → Developer → Server) and
+  # the desired model loaded via GUI — `lms` CLI is intentionally unused
+  # (see MODEL_GUIDE.md § 3.4 daemon-stall fact).
+  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
+            -o ConnectTimeout=3
+            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C)
+  ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
+  ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11600:localhost:1234 emac
+  echo "tunnel up: localhost:11600 → emac:1234   (stop: make dev-models-tunnel-lms-stop)"
+  ;;
+
+tunnel-lms-stop)
+  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
+            -o ConnectTimeout=3
+            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C)
+  ssh "${ssh_opts[@]}" -O exit emac
+  ;;
+
+tunnel-lms-status)
+  # Two-stage probe — lsof catches the local bind, curl /v1/models catches
+  # an orphan ControlSocket. (LM Studio uses OpenAI-compat /v1/models, not
+  # ollama's /api/tags.)
+  if ! lsof -nP -iTCP:11600 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "tunnel down — make dev-models-tunnel-lms" >&2
+    exit 1
+  fi
+  if ! curl -fsS --max-time 5 http://localhost:11600/v1/models >/dev/null 2>&1; then
+    echo "tunnel orphan (forward unreachable — LM Studio HTTP server stopped?) — restart: make dev-models-tunnel-lms-stop && make dev-models-tunnel-lms" >&2
+    exit 1
+  fi
+  echo "tunnel ok: localhost:11600 → emac:1234 (LM Studio /v1/models responding)"
   ;;
 
 go)
@@ -308,33 +353,50 @@ help|*)
 $(basename "$0") — local /model demo harness
 
 Usage:
-  $0 go                setup + server + chat in one shot (recommended)
-  $0 setup [--force]   create isolated config (idempotent)
-  $0 server            start daemon on :$TEST_PORT
-  $0 chat              attach chat REPL
-  $0 stop              stop daemon
-  $0 clean --yes       remove TEST_HOME (explicit confirmation)
-  $0 status            print state
+  $0 go                       setup + server + chat in one shot (recommended)
+  $0 setup [--force]          create isolated config (idempotent)
+  $0 server                   start daemon on :$TEST_PORT
+  $0 chat                     attach chat REPL
+  $0 stop                     stop daemon
+  $0 clean --yes              remove TEST_HOME (explicit confirmation)
+  $0 status                   print state
+
+  $0 tunnel-ollama-start      SSH tunnel localhost:11500 → emac:11434
+  $0 tunnel-ollama-stop       close ollama tunnel via -O exit
+  $0 tunnel-ollama-status     2-stage probe (lsof + /api/tags)
+  $0 tunnel-lms-start         SSH tunnel localhost:11600 → emac:1234
+  $0 tunnel-lms-stop          close lms tunnel via -O exit
+  $0 tunnel-lms-status        2-stage probe (lsof + /v1/models)
 
 Env:
-  KITTYPAW_DEV_HOME    isolation home (default: /tmp/kittypaw-dev-models)
-  KITTYPAW_DEV_PORT    daemon port    (default: 3001)
-  KITTYPAW_DEV_BIND    bind address   (default: 127.0.0.1:\$KITTYPAW_DEV_PORT;
-                                       loopback only — vendor keys live in
-                                       this daemon, override only when LAN
-                                       access is intentional)
-  GROQ_API_KEY         required for server
-  MISTRAL_API_KEY      required for server
+  KITTYPAW_DEV_HOME           isolation home (default: /tmp/kittypaw-dev-models)
+  KITTYPAW_DEV_PORT           daemon port    (default: 3001)
+  KITTYPAW_DEV_BIND           bind address   (default: 127.0.0.1:\$KITTYPAW_DEV_PORT;
+                                              loopback only — vendor keys live in
+                                              this daemon, override only when LAN
+                                              access is intentional)
+  GROQ_API_KEY                required for server
+  MISTRAL_API_KEY             required for server
+  GEMINI_API_KEY              required for server
+  OPENROUTER_API_KEY          required for server
 
 Typical flow (Makefile aliases shown):
   export GROQ_API_KEY=gsk_...
   export MISTRAL_API_KEY=...
-  make dev-models             # one-shot: setup + server + chat (recommended)
+  export GEMINI_API_KEY=...
+  export OPENROUTER_API_KEY=...
+  make dev-models                              # one-shot: setup + server + chat
   # or step-by-step:
   make dev-models-setup
   make dev-models-server
-  make dev-models-chat        # in REPL: /model, /model mistral-medium, ...
+  make dev-models-chat                         # in REPL: /model, /model mistral-medium, ...
   make dev-models-stop
+
+Local backend on emac (M3 Pro 36GB, ssh emac alias required):
+  make dev-models-tunnel-ollama                # ollama serve  → :11500
+  make dev-models-tunnel-lms                   # LM Studio app → :11600 (load model via GUI)
+  make dev-models-measure BACKEND=ollama   MODEL=qwen2.5:7b
+  make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
 USAGE
   ;;
 esac
