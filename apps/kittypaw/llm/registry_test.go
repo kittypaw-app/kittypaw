@@ -459,3 +459,41 @@ func TestNewProviderFromModelConfig(t *testing.T) {
 		t.Errorf("contextWindow = %d, want 32000", op.contextWindow)
 	}
 }
+
+func TestNewProviderLMStudio(t *testing.T) {
+	// LM Studio HTTP server is OpenAI Chat Completions-compatible (no auth).
+	// dev-models harness opens an SSH tunnel localhost:11600 → emac:1234,
+	// so the default base URL points at the tunnel. Provider resolves to
+	// OpenAIProvider in chat mode — same wire as ollama / cerebras / groq.
+	p, err := NewProvider("lmstudio", "", "qwen3-30b-a3b-instruct-2507", 1024)
+	if err != nil {
+		t.Fatalf("NewProvider(lmstudio) error: %v", err)
+	}
+	op, ok := p.(*OpenAIProvider)
+	if !ok {
+		t.Fatalf("expected *OpenAIProvider for lmstudio, got %T", p)
+	}
+	if op.baseURL != lmstudioDefaultBaseURL {
+		t.Errorf("baseURL = %q, want %q", op.baseURL, lmstudioDefaultBaseURL)
+	}
+}
+
+func TestNewProviderLMStudioBaseURLOverride(t *testing.T) {
+	// Custom base_url (different SSH tunnel port, alt LM Studio host, mock)
+	// must win over the default. Pinned via NewProviderFromModelConfig path
+	// — same override contract as ollama / cerebras.
+	p, err := NewProviderFromModelConfig(core.ModelConfig{
+		Provider:  "lmstudio",
+		APIKey:    "",
+		Model:     "qwen3-30b-a3b-instruct-2507",
+		MaxTokens: 1024,
+		BaseURL:   "http://localhost:9999/v1/chat/completions",
+	})
+	if err != nil {
+		t.Fatalf("NewProviderFromModelConfig(lmstudio) error: %v", err)
+	}
+	op := p.(*OpenAIProvider)
+	if op.baseURL != "http://localhost:9999/v1/chat/completions" {
+		t.Errorf("baseURL = %q, want override", op.baseURL)
+	}
+}

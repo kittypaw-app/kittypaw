@@ -27,6 +27,12 @@ const (
 	// verified, no card). magistral-medium-latest emits list-of-blocks
 	// content (handled by extractContent in openai.go).
 	mistralDefaultBaseURL = "https://api.mistral.ai/v1/chat/completions"
+
+	// LM Studio (OpenAI Chat Completions-compatible, no auth). dev-models
+	// harness forwards localhost:11600 → emac:1234 over OpenSSH ControlMaster
+	// (`make dev-models-tunnel-lms`); production callers can override via
+	// ModelConfig.BaseURL. See docs/DEV_MODELS.md.
+	lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"
 )
 
 // Option is a functional option for NewProvider.
@@ -83,6 +89,15 @@ func NewProvider(provider, apiKey, model string, maxTokens int, opts ...Option) 
 
 	case "ollama":
 		baseURL := ollamaDefaultBaseURL
+		if o.baseURL != "" {
+			baseURL = o.baseURL
+		}
+		return NewOpenAI(apiKey, model, maxTokens,
+			WithBaseURL(baseURL),
+		), nil
+
+	case "lmstudio":
+		baseURL := lmstudioDefaultBaseURL
 		if o.baseURL != "" {
 			baseURL = o.baseURL
 		}
