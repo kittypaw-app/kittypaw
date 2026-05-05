@@ -6,6 +6,7 @@ __pycache__/
 dist/
 tmp/
 .worktrees/
+.ina/
 .env
 .env.*
 !.env.example
