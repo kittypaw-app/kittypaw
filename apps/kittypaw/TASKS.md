@@ -38,7 +38,9 @@ KittyPaw에 `provider="lmstudio"` 신규 case 추가 + dev-models harness에 LM 
     - § 5.1.4 stale `make` 명령 갱신
     - 변경 이력 v1.8 추가
 
-- [ ] **T7 — 사용자 검증 + § 3 박제** (수동 게이트): `make dev-models-tunnel-lms` + `make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='ping'` → cold/warm + 5점 척도 박제. **commit**: `docs(model-guide): § 3 KittyPaw harness measured fact (qwen3-30b-mlx)`
+- [x] **T6.5 — `lms` CLI 자동화 (B 갈래 P 진입)**: emac에 `lms` CLI 이미 설치됨 (`~/.lmstudio/bin/lms`, 이전 박힌 "미설치" fact stale). `lms load <modelKey> -y --gpu max --ttl 300` 작동 검증 (cold 9.67s, n=1, 2026-05-05). measure script `BACKEND=lmstudio` path 갱신 — `/v1/models` advertised check 제거, `lms load` 자동 호출로 변경. § 3.4 fact 정정 — stall은 `lms get` (download) 한정, CLI 본체 정상. § 3.3 cold load 30.57s → 9.67s (`--gpu max`, n=1). bats 12 cases GREEN.
+
+- [ ] **T7 — 사용자 검증 + § 3.6 박제** (수동 게이트): `make dev-models-tunnel-lms` + `make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='안녕? 한 줄로 자기소개 해줘.'` → warm chat latency 박제 (lms load는 script 자동, cold chat은 별도 측정 — § 3.6 흐름 참조). **commit**: `docs(model-guide): § 3.6 KittyPaw harness measured fact (qwen3-30b-mlx)`
 
 **합리화 차단**:
 - "openai+base_url 우회로 작은 변경" → telemetry/log clarity + future backend 패턴 안정화, 거부

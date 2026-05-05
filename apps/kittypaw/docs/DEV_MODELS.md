@@ -77,7 +77,7 @@ API 키 revoke 권장 (시연 후):
 | `ministral-8b` | mistral | `ministral-8b-latest` | non-thinking, 작은 model |
 | `gemini-flash-lite` | gemini | `gemini-2.5-flash-lite` | non-thinking, **별도 wire** (Generative Language API, OpenAI 호환 X) |
 | `openrouter-llama-3.3` | openrouter | `meta-llama/llama-3.3-70b-instruct:free` | non-thinking, **provider routing 변동** (§ 4.6) — production 비추, 다양화 후보 |
-| `lmstudio-qwen3-30b-mlx` | lmstudio | `qwen3-30b-a3b-instruct-2507` | non-thinking, **self-hosted MLX** (port 11600 → emac:1234, 사전 `make dev-models-tunnel-lms` + 모델 GUI load 필요 — 아래 SSH 섹션 참조) |
+| `lmstudio-qwen3-30b-mlx` | lmstudio | `qwen3-30b-a3b-instruct-2507` | non-thinking, **self-hosted MLX** (port 11600 → emac:1234, 사전 `make dev-models-tunnel-lms` 필요 — 모델 load는 measure script 자동, 아래 SSH 섹션 참조) |
 
 `magistral-medium-latest` 등 thinking variant는 본 phase 디폴트 X — 직접 추가 시 KittyPaw가 list-of-blocks content 자동 unwrap (§ 6.7 extractContent).
 
@@ -200,7 +200,9 @@ emac (별도 mac M3 Pro 36GB 등) 같은 별도 머신에 ollama 또는 LM Studi
 **LM Studio MLX** (provider="lmstudio"):
 - emac에 LM Studio 앱 설치 (https://lmstudio.ai)
 - LM Studio에서 HTTP server 활성화 (Settings → Developer → Server, port 1234)
-- 측정 대상 모델을 GUI에서 load (e.g., `qwen3-30b-a3b-instruct-2507` MLX 4bit, § 3 박제). 자동 load **불가** — § 3.4 `lms` CLI daemon stall fact (재현 2회) 일관, HTTP API만 사용.
+- emac에 `lms` CLI 설치 (LM Studio app → Settings → Developer → "Install lms CLI" 클릭). measure script가 SSH로 자동 호출하므로 PATH 등록은 default home 위치 (`~/.lmstudio/bin/lms`)면 충분. § 3.4 fact 정정 — `lms get` (download)만 daemon stall, CLI 본체 (`lms load/ls/ps`)는 정상 (검증 2026-05-05).
+- 측정 대상 모델 download 1회 (e.g., `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` 17.2GB). `lms get` 회피 → `hf download` direct (§ 3.4)
+- 모델 load는 measure script가 자동 (`lms load <modelKey> -y --gpu max --ttl 300`). 수동 GUI load 불필요.
 - API key 인증 미사용 (HTTP server 평문 노출 — emac 로컬에 한정)
 
 ### Quick Start — ollama
@@ -219,13 +221,14 @@ make dev-models-tunnel-ollama-stop   # 끝
 ### Quick Start — LM Studio MLX
 
 ```bash
-# 사전: LM Studio 앱 GUI에서 모델 load 확인 (e.g., qwen3-30b-a3b-instruct-2507)
+# 사전: LM Studio app GUI에서 HTTP server 켜져 있고 (Settings → Developer → Server),
+# 측정 대상 모델 download 완료. 모델 load는 measure script가 자동.
 make dev-models-tunnel-lms           # SSH tunnel :11600 → emac:1234
 make dev-models                      # daemon + chat REPL
 
 # /model lmstudio-qwen3-30b-mlx       # chat REPL 안에서 swap 가능 (default config 7번째 entry)
 
-# 다른 터미널에서 측정
+# 다른 터미널에서 측정 — script가 ssh emac으로 lms load 자동 호출 (-y --gpu max --ttl 300)
 make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
 make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='Go에서 fizzbuzz 함수 한 줄'
 
@@ -244,8 +247,8 @@ make dev-models-tunnel-lms-stop      # 끝
 4. tunnel 2단계 probe (lsof :PORT + curl http://localhost:PORT/PATH — orphan ControlSocket 검출)
 5. daemon 헬스 (lsof :3001)
 6. backend별 모델 load:
-   - ollama: ssh emac "ollama pull <model>"  (PATH probe로 /usr/local/bin, /opt/homebrew/bin fallback)
-   - lmstudio: GET /v1/models JSON에서 <model> id 존재 확인 (loaded 모델만 advertise 됨; 미loaded 시 "load via app GUI" hint + fail-fast)
+   - ollama: `ssh emac "ollama pull <model>"`  (PATH probe로 /usr/local/bin, /opt/homebrew/bin fallback)
+   - lmstudio: `ssh emac "lms load <modelKey> -y --gpu max --ttl 300"` (PATH probe로 ~/.lmstudio/bin, /opt/homebrew/bin fallback). `-y` = disambiguation prompt 자동 승인 (non-interactive SSH 무한 hang 회피), `--gpu max` = full Apple Metal offload (cold ~9.67s vs auto ~30s, n=1 2026-05-05), `--ttl 300` = idle 5분 후 auto-unload (메모리 leak 회피). 미설치 시 "Install lms CLI" hint + fail-fast.
 7. config.toml 백업 + [[llm.models]] id="<backend>-measure" 추가 + base_url override + [llm].default swap
 8. POST /api/v1/reload (Authorization: Bearer master_api_key)
 9. POST /api/v1/chat (jq -nc --arg JSON 빌드 — 특수문자 prompt safe)
@@ -256,9 +259,10 @@ backend별 차이:
 | | ollama | lmstudio |
 |---|---|---|
 | 로컬 포트 | :11500 | :11600 |
-| 사전 요건 cmd | + ollama | (skip) |
+| 사전 요건 cmd | + ollama | + lms |
 | probe path | /api/tags | /v1/models |
-| 모델 load | `ssh emac ollama pull` | GUI 수동 (script은 verify only) |
+| 모델 load | `ssh emac ollama pull <model>` | `ssh emac lms load <modelKey> -y --gpu max --ttl 300` |
+| 미설치 hint | `brew install ollama` | LM Studio app → Settings → Developer → "Install lms CLI" |
 | ControlPath | /tmp/kittypaw-dev-models-tunnel-ollama-%C | /tmp/kittypaw-dev-models-tunnel-lms-%C |
 ```
 
@@ -287,7 +291,8 @@ backend별 차이:
 | `tunnel orphan (forward unreachable)` | ControlSocket 살았는데 SSH connection reset. `make dev-models-tunnel-{ollama|lms}-stop && make dev-models-tunnel-{ollama|lms}` |
 | `kittypaw daemon not listening on :3001` | dev-models 시작 안 됨. `make dev-models-stop && make dev-models` |
 | `ollama pull failed` (ollama only) | emac 네트워크 / 디스크 부족 |
-| `model not loaded in LM Studio: <model>` (lmstudio only) | LM Studio app GUI에서 해당 모델 load 안 됨. Settings → Developer → Server에서 load 후 재시도 |
+| `lms CLI not found on emac` (lmstudio only) | emac에 lms CLI 미설치. LM Studio app → Settings → Developer → "Install lms CLI" 클릭 후 재시도. (~/.lmstudio/bin/lms 가 default 위치) |
+| `lms load failed for <model>` (lmstudio only) | modelKey 잘못 (path 줬는지 확인 — `ssh emac '~/.lmstudio/bin/lms ls'` 결과의 modelKey 컬럼 사용). `--exact` 안 쓰면 fuzzy 매칭이지만 다중 매칭 시 -y가 첫 매치 선택 |
 | `tunnel orphan (forward unreachable — LM Studio HTTP server stopped?)` (lmstudio) | LM Studio app은 떠있으나 HTTP server 비활성화. Settings → Developer → Server toggle 확인 |
 
 ### 보안

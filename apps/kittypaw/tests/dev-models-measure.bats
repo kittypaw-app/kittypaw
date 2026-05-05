@@ -35,14 +35,17 @@ CFG
   export PATH="$TEST_DIR/bin:$PATH"
 
   # ssh: success by default. The ollama pull path captures stdout via
-  # `EMAC_OLLAMA=$(ssh emac '...')`, so when the script asks `command -v
-  # ollama || for p in ...` we need to print a plausible path; otherwise
-  # the script fails-fast with "ollama not found on emac".
+  # `EMAC_OLLAMA=$(ssh emac '...')`, and the lmstudio path captures
+  # stdout via `EMAC_LMS=$(ssh emac '...')`, so when the script asks
+  # `command -v {ollama|lms}` we need to print a plausible path;
+  # otherwise the script fails-fast with "{ollama|lms} not found on
+  # emac".
   cat > "$TEST_DIR/bin/ssh" <<'SSH'
 #!/usr/bin/env bash
 echo "ssh $*" >> "$TEST_DIR/ssh.log"
 case "$*" in
   *"command -v ollama"*) echo "/usr/local/bin/ollama" ;;
+  *"command -v lms"*)    echo "/Users/test/.lmstudio/bin/lms" ;;
   *) ;;
 esac
 exit 0
@@ -189,20 +192,23 @@ and $env got expanded'
 # lmstudio backend (port 11600 → emac:1234, no pull, GUI-managed model load)
 # ---------------------------------------------------------------------------
 
-@test "lmstudio: happy path — verify model loaded + reload + chat + trap restore" {
+@test "lmstudio: happy path — lms load + reload + chat + trap restore" {
   ORIG_CFG="$(cat "$KITTYPAW_DEV_HOME/accounts/default/config.toml")"
 
   run "$SCRIPT_PATH" lmstudio qwen3-30b-a3b-instruct-2507 "ping"
   [ "$status" -eq 0 ]
 
-  # Probe must hit /v1/models (not /api/tags) and chat must be reached.
+  # Tunnel probe must hit /v1/models (not /api/tags) and chat must be reached.
   grep -qE "curl .*localhost:11600/v1/models" "$TEST_DIR/curl.log"
   grep -q "/api/v1/reload" "$TEST_DIR/curl.log"
   grep -q "/api/v1/chat" "$TEST_DIR/curl.log"
 
-  # No `ollama pull` — lmstudio path skips emac model fetch. The ssh.log
-  # may contain the SSH health probe (`ssh ... emac true`), but should not
-  # contain any `pull` invocation.
+  # lms load invoked with the auto-approval / Metal / TTL flags (Critic
+  # obligatory — these are the load-bearing bits that prevent SSH hang
+  # on disambiguation prompts and cap memory leakage).
+  grep -qE "lms load \"qwen3-30b-a3b-instruct-2507\".*-y.*--gpu max.*--ttl 300" "$TEST_DIR/ssh.log"
+
+  # No `ollama pull` — lmstudio path skips emac ollama fetch.
   ! grep -qE "ssh .*pull " "$TEST_DIR/ssh.log" 2>/dev/null
 
   # Trap restored config.
@@ -210,25 +216,50 @@ and $env got expanded'
   [ "$RESTORED" = "$ORIG_CFG" ]
 }
 
-@test "lmstudio: fail when target model not loaded in /v1/models" {
-  # /v1/models returns a snapshot without the requested model — script
-  # must fail-fast with a clear "load via app GUI" hint.
-  cat > "$TEST_DIR/bin/curl" <<'CURL'
+@test "lmstudio: fail when lms CLI not found on emac" {
+  # ssh emac 'command -v lms || ...' returns empty → EMAC_LMS empty →
+  # fail-fast with the "Install lms CLI" hint.
+  cat > "$TEST_DIR/bin/ssh" <<'SSH'
 #!/usr/bin/env bash
-echo "curl $*" >> "$TEST_DIR/curl.log"
+echo "ssh $*" >> "$TEST_DIR/ssh.log"
+# command -v ollama still works (probe only triggers for ollama backend);
+# command -v lms returns nothing → script fails on the EMAC_LMS check.
 case "$*" in
-  *"/v1/models"*) echo '{"data":[{"id":"some-other-model","object":"model"}]}'; exit 0 ;;
-  *"/api/v1/reload"*) echo '{"reloaded":true}'; exit 0 ;;
-  *"/api/v1/chat"*)   echo '{"response":"hello"}'; exit 0 ;;
-  *)                  exit 0 ;;
+  *"command -v ollama"*) echo "/usr/local/bin/ollama" ;;
+  *"command -v lms"*) ;;
+  *) ;;
 esac
-CURL
-  chmod +x "$TEST_DIR/bin/curl"
+exit 0
+SSH
+  chmod +x "$TEST_DIR/bin/ssh"
 
   run "$SCRIPT_PATH" lmstudio qwen3-30b-a3b-instruct-2507
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not loaded"* || "$output" == *"GUI"* ]]
-  # Must NOT have reached the chat endpoint.
+  [[ "$output" == *"lms CLI not found"* || "$output" == *"Install lms CLI"* ]]
+  # Must NOT have reached the chat endpoint or invoked `lms load`.
+  ! grep -q "/api/v1/chat" "$TEST_DIR/curl.log"
+  ! grep -qE "lms load" "$TEST_DIR/ssh.log"
+}
+
+@test "lmstudio: fail when lms load returns non-zero (bad modelKey)" {
+  # ssh mock returns lms path on `command -v lms`, but `lms load <model>`
+  # fails (e.g., user passed a path instead of the modelKey, ambiguous
+  # match without -y, etc). Script must surface the failure with the
+  # `lms ls` hint, not silently proceed to chat.
+  cat > "$TEST_DIR/bin/ssh" <<'SSH'
+#!/usr/bin/env bash
+echo "ssh $*" >> "$TEST_DIR/ssh.log"
+case "$*" in
+  *"command -v lms"*) echo "/Users/test/.lmstudio/bin/lms"; exit 0 ;;
+  *"lms load "*) exit 1 ;;
+  *) exit 0 ;;
+esac
+SSH
+  chmod +x "$TEST_DIR/bin/ssh"
+
+  run "$SCRIPT_PATH" lmstudio bad-model-key
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"lms load failed"* || "$output" == *"modelKey"* ]]
   ! grep -q "/api/v1/chat" "$TEST_DIR/curl.log"
 }
 

@@ -148,21 +148,28 @@ if [[ "$NEEDS_PULL" == "1" ]]; then
   ssh "${SSH_OPTS[@]}" emac "$EMAC_OLLAMA pull $MODEL" \
     || { echo "ollama pull failed — check network / disk on emac" >&2; exit 1; }
 else
-  # LM Studio: GUI-driven model load. The user must have the target model
-  # already loaded via Settings → Developer → Server. We can't `lms load`
-  # automatically because § 3.4 daemon-stall (CLI hangs) makes scripted
-  # control unreliable. Verify the target model is currently visible from
-  # the tunnel (/v1/models advertises only loaded models).
-  echo "[1/4] LM Studio: verify $MODEL is loaded on emac (GUI-managed)..."
-  if ! curl -fsS --max-time 5 "http://localhost:$PROBE_PORT$PROBE_PATH" \
-       | jq -e --arg m "$MODEL" '.data[] | select(.id == $m) | .id' >/dev/null 2>&1; then
-    echo "model not loaded in LM Studio: $MODEL" >&2
-    echo "  load via app GUI on emac (Settings → Developer → Server, then load)" >&2
-    echo "  current /v1/models snapshot:" >&2
-    curl -fsS --max-time 5 "http://localhost:$PROBE_PORT$PROBE_PATH" \
-      | jq -r '.data[].id' 2>/dev/null | sed 's/^/    - /' >&2 || true
+  # LM Studio: load $MODEL via `lms` CLI on emac. The earlier § 3.4 fact
+  # ("lms daemon stall, re-produced 2x") was scoped to `lms get` (model
+  # download); the CLI itself (load/ls/ps) is fine — verified 2026-05-05
+  # against LM Studio 0.4.12+1 + lms commit 0b2a176. `-y` auto-approves
+  # the disambiguation prompt that would otherwise hang non-interactive
+  # SSH (first match wins; modelKey, not the full mlx-community/... path).
+  # `--gpu max` forces full Apple Metal offload (cold load ~9.67s vs
+  # ~30s on auto, n=1). `--ttl 300` auto-unloads after 5 min idle so a
+  # measurement run doesn't leak 17 GB indefinitely.
+  echo "[1/4] LM Studio: load $MODEL via lms CLI on emac..."
+  EMAC_LMS=$(ssh "${SSH_OPTS[@]}" emac \
+    'command -v lms 2>/dev/null || \
+     for p in ~/.lmstudio/bin/lms ~/.cache/lm-studio/bin/lms /usr/local/bin/lms /opt/homebrew/bin/lms; do \
+       [ -x "$p" ] && echo "$p" && break; \
+     done' 2>/dev/null)
+  if [[ -z "$EMAC_LMS" ]]; then
+    echo "lms CLI not found on emac (checked PATH, ~/.lmstudio/bin, ~/.cache/lm-studio/bin, /usr/local/bin, /opt/homebrew/bin)" >&2
+    echo "  install: LM Studio app on emac → Settings → Developer → 'Install lms CLI'" >&2
     exit 1
   fi
+  ssh "${SSH_OPTS[@]}" emac "$EMAC_LMS load \"$MODEL\" -y --gpu max --ttl 300" \
+    || { echo "lms load failed for $MODEL — verify modelKey: ssh emac '$EMAC_LMS ls'" >&2; exit 1; }
 fi
 
 # 5. config swap + reload
