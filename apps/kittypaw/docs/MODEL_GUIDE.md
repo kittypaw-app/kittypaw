@@ -91,7 +91,7 @@ OLLAMA_BASE_URL=http://localhost:11500/v1/chat/completions \
   go test -tags ollama_integration -v -run TestOllamaLiveSmoke ./llm/
 ```
 
-### 2.4 KittyPaw harness automated measure (`make dev-models-ollama-measure`)
+### 2.4 KittyPaw harness automated measure (`make dev-models-measure BACKEND=ollama`)
 
 prompt: `안녕? 한 줄로 자기소개 해줘.` (§ 2.2 일관). 측정 2026-05-05. 시스템 프롬프트는 KittyPaw 비서 페르소나 + skill loop의 JS sandbox 형식 강제.
 
@@ -152,13 +152,30 @@ lms ls                            # qwen3-30b-a3b-instruct-2507 30B qwen3_moe 17
 ### 3.5 KittyPaw integration test
 
 ```bash
+# Option A — go test with ollama integration tag (base_url override만 바꿔 LMS로 재사용)
 ssh -fN -L 11600:localhost:1234 emac
 OLLAMA_TEST_MODEL=qwen3-30b-a3b-instruct-2507 \
 OLLAMA_BASE_URL=http://localhost:11600/v1/chat/completions \
   go test -tags ollama_integration -v -run TestOllamaLiveSmoke ./llm/
+
+# Option B — KittyPaw harness automated measure (recommended)
+make dev-models-tunnel-lms
+make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
 ```
 
-LM Studio는 OpenAI Chat Completions 호환 endpoint 노출 → KittyPaw `provider="ollama"` (또는 `provider="openai"` + `base_url`) 둘 다 가능. 위 명령은 ollama 통합 테스트를 base_url override만 바꿔 LMS로 재사용한 것이다.
+LM Studio는 OpenAI Chat Completions 호환 endpoint 노출. KittyPaw 본 phase에서 `provider="lmstudio"` 신규 case 추가 (`llm/registry.go`, `lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"`) — `provider="openai" + base_url` 우회보다 telemetry/log clarity 우위 (mistral case 일관 mental model). `make dev-models-measure BACKEND=lmstudio` 는 § 3.6 KittyPaw harness 측정 흐름을 자동화한다.
+
+### 3.6 KittyPaw harness automated measure (`make dev-models-measure BACKEND=lmstudio`)
+
+prompt: `안녕? 한 줄로 자기소개 해줘.` (§ 2.4 일관). 시스템 프롬프트는 KittyPaw 비서 페르소나 + skill loop의 JS sandbox 형식 강제 (§ 2.4와 동일 구조).
+
+| Model | latency (KittyPaw) | 응답 preview | 비서 결과 |
+|---|---|---|---|
+| `qwen3-30b-a3b-instruct-2507` (MLX 4bit) | _(placeholder — 사용자 측정 후 박힘)_ | _(cold/warm 2회 + 5점 척도)_ | _(KittyPaw harness 재현 → § 3 raw 측정과 대조)_ |
+
+박제 가이드: **cold** = 첫 호출 (모델 GUI에 load 되어 있어도 LM Studio 자체의 idle-unload 가능 — § 3.3 fact), **warm** = 두 번째 호출. quality 5점 척도는 § 2.4와 일관 (한국어 자연스러움 + 페르소나 일관 + 코드 정확도). § 3 raw 측정 (`curl /v1/chat/completions` 직접) 대비 KittyPaw harness 측정은 system prompt + memory + history 누적 영향 포함 — § 8.5 ecological-valid 측정 가이드 일관.
+
+§ 5.1.4 가설 (cloud full precision vs ollama Q4 quantization vs LM Studio MLX) 3-wire 대조에 본 row가 MLX wire 데이터를 박는다.
 
 ---
 
@@ -320,7 +337,7 @@ prompt 동일.
 
 `llama3.3:70b` Q4_K_M (42 GB) vs `qwen2.5:32b-instruct` Q4_K_M (19 GB) — 70B 모델이 32B 모델보다 KittyPaw skill loop의 JS sandbox 형식 instruction following ✗.
 
-`make dev-models-ollama-measure MODEL=llama3.3:70b` 결과:
+`make dev-models-measure BACKEND=ollama MODEL=llama3.3:70b` 결과:
 - attempt 0: 자연어 + Go code block (markdown) → SyntaxError (8 errors)
 - attempt 1: ` ```go ... ``` ` markdown → ILLEGAL token (2 errors)
 - attempt 2: code_len=0 (LLM이 retry budget 소진 후 빈 응답)
@@ -710,6 +727,7 @@ done
 | 2026-05-04 | v1.5 — **§ 3 LM Studio MLX `Qwen3-30B-A3B-Instruct-2507-4bit` 매트릭스 박제** (warm 0.55-0.61s, thinking 0, 정체성 일관). § 5.2 LMS daemon stall은 `hf download` 직접으로 resolved 표시. § 5 numbering 정리(중복 5.2 → 5.2/5.3 분리, 후속 +1 shift). § 1 Decision Matrix에 LM Studio가 가능한 36GB 시나리오 1순위 (MLX) 별도 행 추가 |
 | 2026-05-05 | v1.6 — **별도 KittyPaw 세션 측정 결과 통합**: § 5.3 Cerebras 8K cap을 실측 분포(median 8001 / max 9919 / 8K 초과 52%)로 박제 + stateful daemon 누적 함정 명시. § 6.4 신설 — Provider context_window /v1/models API 실측 체크리스트 + Groq qwen3-32b 128K 정정(plan 단계 16K 가정 6× 오류). § 6.5 신설 — 결정 기준 측정 전 박기 원칙. § 4 Cloud 매트릭스 갱신 — 모든 Groq 모델 128K 박제. § 8.5 의식적 gap (stateful daemon, 마케팅 ≠ 실측) 보강 |
 | 2026-05-05 | v1.7 — **무료 cloud 매트릭스 대폭 확장 + 비표준 옵션 어댑터 fact**. 측정 신규 11종: Mistral 6 (large/medium/small/magistral/ministral-8b/pixtral-large), Gemini 7 (flash-lite/3-flash/2.5-flash 통과·3.1-pro/3-pro/2.5-pro/3.1-flash-lite quota), Groq qwen3-32b. 신규 함정 § 5.10-5.14: Qwen3-Coder family GH issue 6+ (회귀 권장), Mistral large 정체성 페르소나 SFT (3회 재현), Mistral magistral Native reasoning disable 불가, Groq qwen3-32b thinking variant + `reasoning_format=parsed/hidden` 우회, 무료 한도 docs 격차 (Gemini/Mistral/Together/DeepSeek dashboard 분산). § 6.6 Groq reasoning_format 어댑터 분기 권장. § 6.7 Mistral content list of blocks 파서 권장. § 4.1-4.9 공식 docs 1차 source로 한도 박제 (정량/미명시 라벨링). § 1 Decision Matrix Cloud Korean 1순위 = mistral-medium-latest 확정 (실측 fact 기반, Cerebras qwen-3-235b는 보조 phase) |
+| 2026-05-05 | v1.8 — **`provider="lmstudio"` 신규 case + § 3.6 KittyPaw harness placeholder**. `llm/registry.go` 10번째 case (anthropic/openai/gemini/ollama/cerebras/groq/deepseek/openrouter/mistral/lmstudio); `lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"` (dev-models SSH tunnel `:11600 → emac:1234`). dev-models harness measure script generalize: `make dev-models-measure BACKEND={ollama|lmstudio} MODEL=...` (기존 `dev-models-ollama-measure` rename). tunnel target 분리 — `make dev-models-tunnel-{ollama,lms}-{start,stop,status}` (별도 ControlPath suffix, 동시 운용). dev-models default config 7번째 entry `lmstudio-qwen3-30b-mlx`. § 2.4 헤더 갱신 (BACKEND=ollama). § 3.5 KittyPaw integration test에 harness Option 추가. § 3.6 신설 — qwen3-30b-a3b-instruct-2507 KittyPaw harness 측정 row placeholder (사용자 측정 후 박힘). bats: tunnel.bats 13 cases + measure.bats 11 cases GREEN |
 
 ---
 

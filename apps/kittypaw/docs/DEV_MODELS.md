@@ -37,7 +37,7 @@ make dev-models       # setup → server start → chat REPL 진입
 채팅 REPL에서:
 
 ```
-> /model                       # 현재 + 등록된 5 모델 list, "* groq-qwen" 활성 표시
+> /model                       # 현재 + 등록된 7 모델 list, "* groq-qwen" 활성 표시
 > 안녕? 한 줄 자기소개          # Qwen (default — Groq qwen3-32b cleansed, <think> 부재)
 > /model mistral-medium         # turn-level swap
 > 안녕? 한 줄 자기소개          # Mistral 응답 ("AI 도우미야" 자칭)
@@ -65,9 +65,9 @@ API 키 revoke 권장 (시연 후):
 
 ---
 
-## 등록된 6 모델
+## 등록된 7 모델
 
-`scripts/dev-models.sh setup`이 `KITTYPAW_CONFIG_DIR/accounts/default/config.toml`에 박는 기본 6 모델 (cloud OpenAI 호환 wire 5 + Gemini Generative Language API wire 1 — multi-wire 검증 + provider routing 다양화 의도):
+`scripts/dev-models.sh setup`이 `KITTYPAW_CONFIG_DIR/accounts/default/config.toml`에 박는 기본 7 모델 (cloud OpenAI 호환 wire 5 + Gemini Generative Language API wire 1 + self-hosted LM Studio MLX 1 — multi-wire 검증 + provider routing 다양화 의도):
 
 | ID | provider | model | thinking adapter |
 |---|---|---|---|
@@ -77,6 +77,7 @@ API 키 revoke 권장 (시연 후):
 | `ministral-8b` | mistral | `ministral-8b-latest` | non-thinking, 작은 model |
 | `gemini-flash-lite` | gemini | `gemini-2.5-flash-lite` | non-thinking, **별도 wire** (Generative Language API, OpenAI 호환 X) |
 | `openrouter-llama-3.3` | openrouter | `meta-llama/llama-3.3-70b-instruct:free` | non-thinking, **provider routing 변동** (§ 4.6) — production 비추, 다양화 후보 |
+| `lmstudio-qwen3-30b-mlx` | lmstudio | `qwen3-30b-a3b-instruct-2507` | non-thinking, **self-hosted MLX** (port 11600 → emac:1234, 사전 `make dev-models-tunnel-lms` + 모델 GUI load 필요 — 아래 SSH 섹션 참조) |
 
 `magistral-medium-latest` 등 thinking variant는 본 phase 디폴트 X — 직접 추가 시 KittyPaw가 list-of-blocks content 자동 unwrap (§ 6.7 extractContent).
 
@@ -114,6 +115,8 @@ KITTYPAW_DEV_PORT=3010 scripts/dev-models.sh go
 | `KITTYPAW_DEV_LOG` | `/tmp/kittypaw-dev-models.log` | daemon log |
 | `GROQ_API_KEY` | (필수) | Groq vendor key |
 | `MISTRAL_API_KEY` | (필수) | Mistral vendor key |
+| `GEMINI_API_KEY` | (필수) | Gemini vendor key |
+| `OPENROUTER_API_KEY` | (필수) | OpenRouter vendor key |
 
 ---
 
@@ -165,82 +168,135 @@ setup wizard가 `--password-stdin --no-chat --no-service --force`로 비interact
 
 ## 다른 모델 추가하기
 
-`scripts/dev-models.sh setup --force` 후 `KITTYPAW_DEV_HOME/accounts/default/config.toml`을 직접 편집하거나, `scripts/dev-models.sh`의 `write_config_if_missing` heredoc을 수정. KittyPaw의 8 provider case (anthropic / openai / gemini / ollama / cerebras / groq / deepseek / openrouter / mistral) 모두 지원.
+`scripts/dev-models.sh setup --force` 후 `KITTYPAW_DEV_HOME/accounts/default/config.toml`을 직접 편집하거나, `scripts/dev-models.sh`의 `write_config_if_missing` heredoc을 수정. KittyPaw의 10 provider case (anthropic / openai / gemini / ollama / cerebras / groq / deepseek / openrouter / mistral / lmstudio) 모두 지원.
 
 `provider="openai" + base_url=...` 우회로 mistral / gemini OpenAI-compat endpoint 쓰는 것은 **비추** — `OPENAI_API_KEY` env var와 vendor key 충돌. vendor 명시 case가 정답.
 
 ---
 
-## SSH 통한 self-hosted ollama 테스트 (선택)
+## SSH 통한 self-hosted backend 테스트 (선택)
 
-emac (별도 mac M3 Pro 36GB 등) 같은 별도 머신에 ollama 띄우고 KittyPaw 비서가 사용. 작업 머신 (M1 Air 8GB 등)에서 ollama 못 띄우는 환경 (8GB unified memory + 작업 앱 + 모델 = OOM/freeze) 용.
+emac (별도 mac M3 Pro 36GB 등) 같은 별도 머신에 ollama 또는 LM Studio (Apple Metal MLX) 띄우고 KittyPaw 비서가 사용. 작업 머신 (M1 Air 8GB 등)에서 로컬 모델 못 띄우는 환경 (8GB unified memory + 작업 앱 + 모델 = OOM/freeze) 용. 두 backend는 **별도 SSH tunnel ControlPath**로 동시 운용 가능 (emac M3 36GB 헤드룸).
 
-### 사전 요구
+| Backend | 로컬 포트 | emac 포트 | KittyPaw provider | 모델 load |
+|---|---|---|---|---|
+| `ollama` | `:11500` | `:11434` | `provider="ollama"` | `ssh emac ollama pull <model>` (자동) |
+| `lmstudio` | `:11600` | `:1234` | `provider="lmstudio"` | LM Studio app GUI에서 수동 load (§ 3.4 lms CLI stall fact 회피) |
+
+### 공통 사전 요구
 
 | 항목 | 비고 |
 |---|---|
 | `ssh emac` alias | `~/.ssh/config` 또는 `known_hosts`. 키 인증 작동 필요 |
-| emac에 ollama 설치 | `brew install ollama` 또는 https://ollama.com/download |
 | 같은 LAN | SSH tunnel 통해 forward. 외부 SSH도 가능하나 latency ↑ |
 | 로컬 도구 | `brew install jq bats-core shellcheck` |
 
-### Quick Start
+### Backend별 사전 요구
+
+**ollama** (provider="ollama"):
+- emac에 ollama 설치: `brew install ollama` 또는 https://ollama.com/download
+- emac에 ollama daemon 가동 (`ollama serve` 또는 launchd)
+
+**LM Studio MLX** (provider="lmstudio"):
+- emac에 LM Studio 앱 설치 (https://lmstudio.ai)
+- LM Studio에서 HTTP server 활성화 (Settings → Developer → Server, port 1234)
+- 측정 대상 모델을 GUI에서 load (e.g., `qwen3-30b-a3b-instruct-2507` MLX 4bit, § 3 박제). 자동 load **불가** — § 3.4 `lms` CLI daemon stall fact (재현 2회) 일관, HTTP API만 사용.
+- API key 인증 미사용 (HTTP server 평문 노출 — emac 로컬에 한정)
+
+### Quick Start — ollama
 
 ```bash
-make dev-models-tunnel              # SSH tunnel 시작 (background, idempotent)
-make dev-models                     # daemon + chat REPL (cloud 모델 swap 가능)
+make dev-models-tunnel-ollama        # SSH tunnel :11500 → emac:11434 (background, idempotent)
+make dev-models                      # daemon + chat REPL (cloud 모델 swap 가능)
 
 # 다른 터미널에서 측정
-make dev-models-ollama-measure MODEL=qwen2.5:7b
-make dev-models-ollama-measure MODEL=qwen2.5-coder:7b PROMPT='Go에서 fizzbuzz 함수 한 줄'
+make dev-models-measure BACKEND=ollama MODEL=qwen2.5:7b
+make dev-models-measure BACKEND=ollama MODEL=qwen2.5-coder:7b PROMPT='Go에서 fizzbuzz 함수 한 줄'
 
-make dev-models-tunnel-stop         # 끝
+make dev-models-tunnel-ollama-stop   # 끝
 ```
 
-### 측정 자동화 흐름 (`scripts/dev-models-ollama-measure.sh`)
+### Quick Start — LM Studio MLX
+
+```bash
+# 사전: LM Studio 앱 GUI에서 모델 load 확인 (e.g., qwen3-30b-a3b-instruct-2507)
+make dev-models-tunnel-lms           # SSH tunnel :11600 → emac:1234
+make dev-models                      # daemon + chat REPL
+
+# /model lmstudio-qwen3-30b-mlx       # chat REPL 안에서 swap 가능 (default config 7번째 entry)
+
+# 다른 터미널에서 측정
+make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
+make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='Go에서 fizzbuzz 함수 한 줄'
+
+make dev-models-tunnel-lms-stop      # 끝
+```
+
+두 backend 동시 운용도 가능 (`make dev-models-tunnel-ollama && make dev-models-tunnel-lms`). ControlPath suffix가 다르고 (`-ollama-` / `-lms-`) port도 분리되어 race 없음.
+
+### 측정 자동화 흐름 (`scripts/dev-models-measure.sh BACKEND={ollama|lmstudio}`)
 
 ```
-1. command -v 사전요건 검증 (jq, ssh, ollama, lsof, curl, awk, sed)
+공통:
+1. command -v 사전요건 검증 (ssh, jq, lsof, curl, awk, sed; ollama backend는 ollama 추가)
 2. master_api_key 파싱 (awk -F'"' '/^master_api_key/{print $2}' server.toml)
 3. ssh emac true (3s timeout — emac off / sleep / alias 누락 감지)
-4. tunnel 2단계 probe (lsof :11500 + curl http://localhost:11500/api/tags — orphan ControlSocket 검출)
+4. tunnel 2단계 probe (lsof :PORT + curl http://localhost:PORT/PATH — orphan ControlSocket 검출)
 5. daemon 헬스 (lsof :3001)
-6. ssh emac "ollama pull <model>"  # 이미 받았으면 빠름
-7. config.toml 백업 + [[llm.models]] id="ollama-measure" 추가 + [llm].default swap
+6. backend별 모델 load:
+   - ollama: ssh emac "ollama pull <model>"  (PATH probe로 /usr/local/bin, /opt/homebrew/bin fallback)
+   - lmstudio: GET /v1/models JSON에서 <model> id 존재 확인 (loaded 모델만 advertise 됨; 미loaded 시 "load via app GUI" hint + fail-fast)
+7. config.toml 백업 + [[llm.models]] id="<backend>-measure" 추가 + base_url override + [llm].default swap
 8. POST /api/v1/reload (Authorization: Bearer master_api_key)
-9. POST /api/v1/chat (default = ollama-measure 적용됨, jq -nc로 JSON 빌드)
+9. POST /api/v1/chat (jq -nc --arg JSON 빌드 — 특수문자 prompt safe)
 10. 응답 + latency 출력
 11. trap EXIT/INT/TERM → config 원복 + reload (Ctrl-C도 OK)
+
+backend별 차이:
+| | ollama | lmstudio |
+|---|---|---|
+| 로컬 포트 | :11500 | :11600 |
+| 사전 요건 cmd | + ollama | (skip) |
+| probe path | /api/tags | /v1/models |
+| 모델 load | `ssh emac ollama pull` | GUI 수동 (script은 verify only) |
+| ControlPath | /tmp/kittypaw-dev-models-tunnel-ollama-%C | /tmp/kittypaw-dev-models-tunnel-lms-%C |
 ```
 
 **load-bearing fact**: KittyPaw `core.ChatPayload` (core/types.go:97) 에 model 필드 없음 + `handleChat` (server/api.go:472)이 `nil` RunOptions로 Run 호출 → `POST /api/v1/chat`은 항상 `[llm].default` 사용. 측정 모델 swap 유일한 방법 = config 임시 변경 + `/api/v1/reload`.
 
 ### 박제 가이드 — 측정 후 사용자 직접 기록
 
-측정 후 `apps/kittypaw/docs/MODEL_GUIDE.md § 5.15` 표 직접 채우기:
+측정 후 `apps/kittypaw/docs/MODEL_GUIDE.md` 표 직접 채우기:
 
+- **ollama**: § 2.4 KittyPaw harness automated measure 표
+- **lmstudio**: § 3.6 KittyPaw harness automated measure 표 (placeholder — 측정 row 박제 시 신규 추가)
+
+박제 항목:
 - **quality**: 1=fail / 2=어색 / 3=OK / 4=좋음 / 5=완벽 (한국어 자연스러움 + 코드 정확도 종합)
 - **latency**: cold = 첫 호출 (모델 로딩 포함), warm = 두 번째 호출 — 둘 다 측정해서 로딩 영향 분리
-- **context_window**: 응답 길이 + 모델 spec 비교 (Q4 양자화 시 줄어들 수 있음)
+- **context_window**: 응답 길이 + 모델 spec 비교 (Q4 양자화 시 줄어들 수 있음. MLX 4bit는 thinking 없는 instruct variant 우세 — § 3.3)
 
-자동 eval (BLEU 등) ❌ — § 4 매트릭스 패턴은 사용자 직접 박제.
+자동 eval (BLEU 등) ❌ — § 2 / § 3 매트릭스 패턴은 사용자 직접 박제.
 
 ### tunnel fail mode
 
 | 증상 | 원인 / 진단 |
 |---|---|
 | `ssh emac fail — emac off?` | emac off / sleep / SSH 설정 누락. `ssh emac` 직접 시도 |
-| `tunnel down — make dev-models-tunnel` | tunnel 안 띄움 또는 `ssh -O exit` 후 |
-| `tunnel orphan (forward unreachable)` | ControlSocket 살았는데 SSH connection reset. `make dev-models-tunnel-stop && make dev-models-tunnel` |
+| `tunnel down — make dev-models-tunnel-ollama` (또는 `-lms`) | tunnel 안 띄움 또는 `ssh -O exit` 후 |
+| `tunnel orphan (forward unreachable)` | ControlSocket 살았는데 SSH connection reset. `make dev-models-tunnel-{ollama|lms}-stop && make dev-models-tunnel-{ollama|lms}` |
 | `kittypaw daemon not listening on :3001` | dev-models 시작 안 됨. `make dev-models-stop && make dev-models` |
-| `ollama pull failed` | emac 네트워크 / 디스크 부족 |
+| `ollama pull failed` (ollama only) | emac 네트워크 / 디스크 부족 |
+| `model not loaded in LM Studio: <model>` (lmstudio only) | LM Studio app GUI에서 해당 모델 load 안 됨. Settings → Developer → Server에서 load 후 재시도 |
+| `tunnel orphan (forward unreachable — LM Studio HTTP server stopped?)` (lmstudio) | LM Studio app은 떠있으나 HTTP server 비활성화. Settings → Developer → Server toggle 확인 |
 
 ### 보안
 
-- SSH tunnel = OpenSSH `ControlMaster=auto` + `ControlPath=/tmp/kittypaw-dev-models-tunnel-%C` (사용자 `~/.ssh/config` 무영향, `-o` inline 옵션만)
+- SSH tunnel = OpenSSH `ControlMaster=auto` + `ControlPath=/tmp/kittypaw-dev-models-tunnel-{ollama|lms}-%C` (사용자 `~/.ssh/config` 무영향, `-o` inline 옵션만). `%C` placeholder는 사용자/호스트/포트 hash라 multi-user 호환.
 - `pkill -f` ❌ — `ssh -O exit`로 해당 tunnel만 정확히 종료 (다른 ssh process 영향 X)
-- LAN bind (`OLLAMA_HOST=0.0.0.0`) 회피 — LAN의 다른 기기 노출 risk
+- LAN bind (`OLLAMA_HOST=0.0.0.0` / LM Studio Server "Network Visible") 회피 — LAN의 다른 기기 노출 risk. SSH tunnel은 SSH 인증으로 가려져 안전.
 - SSH keepalive (`ServerAliveInterval=10 ServerAliveCountMax=3`) — emac sleep 시 hang 회피
+- LM Studio HTTP API는 인증 없음 — emac에서 `lsof -i :1234`로 LISTEN 주소 확인 (`127.0.0.1:1234`만 OK; `*:1234` 공개 시 LAN 차단 필요)
 
 ### Race 박제 — 단일 사용자 가정
 
@@ -251,9 +307,11 @@ dev-models harness는 **단일 사용자 가정** (사용자 본인). 측정 중
 
 측정 중 다른 chat 요청 X 권장. 동시성이 필요한 시나리오는 별도 phase.
 
-### lm-studio 등 다른 self-hosted
+두 backend 동시 측정 (e.g., ollama + lmstudio 병렬)도 같은 race 패턴 — config 단일 swap 지점 (`[llm].default`) 공유 → 순차 실행 권장.
 
-별도 phase. `provider="lmstudio"` case 추가 + LM_STUDIO_API_KEY env 처리. 본 phase는 ollama 전용.
+### llama.cpp 등 다른 self-hosted
+
+별도 phase. llama.cpp는 OpenAI Chat Completions wire 호환 — `provider="lmstudio"` 또는 `provider="openai" + base_url` 우회 가능성 있으나, 본 phase는 ollama + LM Studio MLX 두 backend 한정.
 
 ---
 

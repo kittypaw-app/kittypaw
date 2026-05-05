@@ -29,10 +29,14 @@ KittyPaw에 `provider="lmstudio"` 신규 case 추가 + dev-models harness에 LM 
 
 - [x] **T5 — 회귀 검증**: `make build` + `make test-unit` + `make lint` (0 issues) + `go test -race ./engine/... ./llm/...` + bats 24/24 모두 PASS.
 
-- [ ] **T6 — docs 갱신** (20분):
-  - `docs/DEV_MODELS.md`: LM Studio 섹션 (사전 GUI load + tunnel + measure)
-  - `docs/MODEL_GUIDE.md` § 3: KittyPaw harness 재현 row placeholder
-  - **commit**: `docs(dev-models,model-guide): LM Studio MLX 흐름 + § 3 placeholder`
+- [x] **T6 — docs 갱신**:
+  - `docs/DEV_MODELS.md`: SSH 섹션 dual-backend로 refactor (공통 사전 + Quick Start ollama/lms 분리 + measure backend matrix + tunnel fail mode lms 케이스 추가). 등록 모델 6→7 (lmstudio-qwen3-30b-mlx). env vars 4 (groq+mistral+gemini+openrouter). provider case 8→10. 상기 stale Make refs (`dev-models-ollama-measure`, `dev-models-tunnel{,-stop,-status}`) 모두 신 명령으로 갱신.
+  - `docs/MODEL_GUIDE.md`:
+    - § 2.4 헤더 갱신 (`make dev-models-measure BACKEND=ollama`)
+    - § 3.5 KittyPaw integration test에 harness Option B 추가 (`make dev-models-measure BACKEND=lmstudio`) + provider="lmstudio" 신규 case 박제
+    - § 3.6 신설 — qwen3-30b-a3b-instruct-2507 KittyPaw harness 측정 row placeholder (T7에서 사용자 측정 후 박힘)
+    - § 5.1.4 stale `make` 명령 갱신
+    - 변경 이력 v1.8 추가
 
 - [ ] **T7 — 사용자 검증 + § 3 박제** (수동 게이트): `make dev-models-tunnel-lms` + `make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='ping'` → cold/warm + 5점 척도 박제. **commit**: `docs(model-guide): § 3 KittyPaw harness measured fact (qwen3-30b-mlx)`
 
