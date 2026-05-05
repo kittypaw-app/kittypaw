@@ -6,7 +6,56 @@ KittyPaw 작업 현황. 완료된 Plan 은 Archive 에 한 줄 요약 + 커밋 �
 
 ## 🔨 In Progress
 
-### Plan: dev-models — LM Studio MLX backend (emac SSH tunnel) ← 현재
+### Plan A — KittyPaw 짜깁기 cleanup (tunnel.sh + dev-models-measure DELETE + CLAUDE.md) ← 현재
+*(plan: `~/.claude/plans/kp-eval-models.md` v5, spec: `.ina/specs/20260506-0112-think-kp-eval-models.md`)*
+
+KittyPaw `apps/kittypaw/scripts/dev-models*` 짜깁기 cleanup. tunnel 부분만 generic helper로 정정. eval framework 변경 X (Plan B 별도 ina:think). 사용자 박힌 결정 (2026-05-06): scope 분할 (Plan A 작게 + Plan B 별도) + Plan B 시 `eval/models.toml` source-of-truth + dev-models config generate (option "a").
+
+**핵심 결정** (Phase 1 시도 5 합의 + Phase 2 Architect+Critic+CEO APPROVED):
+- T1 generic tunnel.sh: lsof 5×1s + curl -fsS + idempotent stop + ControlPath name-based (`/tmp/kittypaw-tunnel-${name}.sock`, %C 제거, 단일-host scope)
+- T2 짜깁기 cleanup: 18 hit 5-class 분류 (DELETE-self / EDIT-cascade / KEEP-historical)
+- T3 CLAUDE.md `KITTYPAW_HOME` stale → `KITTYPAW_CONFIG_DIR` (load-bearing per `core/config.go:482`)
+
+- [x] **T1 — RED→GREEN: scripts/tunnel.sh generic + bats 2 신규 RED cases (v6 minimalism)**: `tunnel.sh start <name> <local> <remote> <probe>` / `stop` / `status` 인터페이스. 내부 동작: `ssh -fN -o ControlMaster=auto -L $local:localhost:$remote -o ControlPath=/tmp/kittypaw-tunnel-${name}.sock emac` + `lsof :$port` 5×1s retry + `curl -fsS --max-time 5 http://localhost:$port$probe` status + idempotent stop. bats 15 → 17 (**2 신규 RED cases — 진짜 새 동작만**): HTTP 502 → down (curl `-fsS` exit 22, 4xx/5xx path — 기존 #6/#14 exit 7 COULDNT_CONNECT와 다른 시그널), stop idempotent (ControlPath 없음 시 exit 0 — 현 코드 단일 `ssh -O exit emac` 실패 시 비제로 exit). dev-models.sh tunnel block 위임 (6 함수 → tunnel.sh case 분기). 기존 15 cases 의 `ControlPath=/tmp/kittypaw-dev-models-tunnel-${name}-%C` assertion 도 `kittypaw-tunnel-${name}.sock`로 동시 정정 (L68, L86, L167-169, L180). **기존 redundant cases (port reachability #9/#15, ControlPath name #2/#8) keep — delegation 후에도 GREEN — 추상화 검증 통합 테스트로 충분**. RED 검증 의무: `not ok 16-17` 명시 확인 후 GREEN.
+  - **C1**: `feat(scripts,tests): generic tunnel.sh helper + 2 RED cases (HTTP 5xx + stop idempotent)`
+
+- [x] **T2 — 짜깁기 cleanup (5-class DELETE cascade)**: `grep -rn 'dev-models-measure' .` 18 hit 분류:
+  - DELETE-self: `scripts/dev-models-measure.sh` + `tests/dev-models-measure.bats`
+  - EDIT-cascade: `Makefile` (.PHONY + target + 주석 2줄), `scripts/dev-models.sh:428-429` (help text 2줄), `docs/MODEL_GUIDE.md` § 2.4/3.5/3.6/5.2 (measure 명령 reference 빼고 raw 측정 fact keep), `docs/DEV_MODELS.md` "측정 자동화" 섹션 (한 줄 축약 — Plan B 명시)
+  - KEEP-historical: `TASKS.md` (완료 체크리스트, 보존)
+
+  staged cloud BACKEND 변경 (working tree) 자동 폐기 (DELETE에 포함). git history 보존 의무 (`git log --diff-filter=A -- scripts/dev-models-measure.sh` 박음, commit message에 "Plan B에서 eval framework rebuild" 박힘). 회귀 검증: `make smoke` + `bats tests/dev-models-tunnel.bats` + `make build && make lint`.
+  - **C2**: `refactor(scripts,tests,build,docs): drop dev-models-measure 짜깁기 + cascade docs (Plan B에서 eval framework rebuild)`
+
+- [x] **T3 — CLAUDE.md `KITTYPAW_HOME` stale → `KITTYPAW_CONFIG_DIR`**: 
+  - Step 1: `grep -rn 'KITTYPAW_HOME\|KITTYPAW_CONFIG_DIR' . --include='*.md' --include='*.sh' --include='*.go' --include='*.toml' --exclude-dir={node_modules,.git,.worktrees}` (양 변수 + 의미 분기 검증)
+  - Step 2: load-bearing fact 박음 — `core/config.go:482` `CONFIG_DIR` only (HOME 없음, single env), `core/secrets_test.go:175,221,260,272` + `core/registry_test.go:33,59` `CONFIG_DIR` 사용 ✓ (verified 2026-05-06 grep)
+  - Step 3: 각 hit 3분류 (delete / replace / keep + 이유)
+    - CLAUDE.md "Testing Isolation (KITTYPAW_HOME) — load-bearing" 섹션: replace → `KITTYPAW_CONFIG_DIR` (코드 안 읽음 stale)
+    - DEV_MODELS.md "격리 메커니즘" 섹션: keep (이미 정정됨, load-bearing fact 박힘)
+  - Step 4: `~/.claude/...` memory 파일 보존 (user 책임, repo 외)
+  - **C3**: `docs(claude): KITTYPAW_HOME stale → KITTYPAW_CONFIG_DIR (load-bearing fact)`
+
+**합리화 차단** (Critic v4-v5 박힘):
+- "기존 15 case pass = OK" → 신규 4 case `not ok 16-19` 명시 확인 의무
+- "DELETE 안전성" → `grep -rn 'dev-models-measure' .` 18 hit 5-class precheck 의무
+- "CLAUDE.md cross-ref 부분만" → grep `HOME` + `CONFIG_DIR` 둘 다 + 각 hit 3분류
+- "verification gate 일부 스킵" → `make build && make test-unit && make lint && go test -race ./engine/... ./llm/... && make smoke && bats tests/dev-models-tunnel.bats` 전수 의무
+
+**Out of Scope** (Plan B 별도 ina:think):
+- eval framework rebuild (run.sh `--model` flag, run-models.sh, eval/models.toml source-of-truth)
+- per-run daemon vs single shared 결정
+- status enum 6 + drift baseline 다축
+- docs/models.md (use case별 추천)
+- latency p50/p95 (raw + e2e) + cost
+- judge bias 통제 + rate-limit retry
+- docker compose
+
+→ Plan B 진입 시 사용자 "a" 결정 박힘: `eval/models.toml` source-of-truth + `dev-models config` generate.
+
+---
+
+### Plan: dev-models — LM Studio MLX backend (emac SSH tunnel) ✅ 완료
 *(plan: `~/.claude/plans/lmstudio-mlx-tunnel.md`, spec: `.ina/specs/20260505-1723-think-dev-models-lmstudio.md`)*
 
 KittyPaw에 `provider="lmstudio"` 신규 case 추가 + dev-models harness에 LM Studio MLX backend 통합 (SSH tunnel `localhost:11600 → emac:1234`). 측정 자동화 generalize (`BACKEND={ollama|lmstudio}` matrix). § 5.1.4 가설 (cloud full precision vs ollama Q4 quantization) MLX wire 추가.

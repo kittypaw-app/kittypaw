@@ -152,7 +152,7 @@ setup wizard가 `--password-stdin --no-chat --no-service --force`로 비interact
 
 `server.toml`에 `bind = "127.0.0.1:3001"` + 무작위 `master_api_key` 박음. chat client (`client/daemon.go:Connect`)가 이 둘을 읽어 BaseURL + APIKey 결정 — 박지 않으면 WS 401 또는 health-check 10초 timeout.
 
-> **CLAUDE.md "Testing Isolation" 섹션의 `KITTYPAW_HOME` 명시는 stale docs**. 코드는 `KITTYPAW_HOME` env var를 안 봄 (검증 2026-05-05). 격리 환경 만들 때는 `KITTYPAW_CONFIG_DIR` 사용 — 본 harness가 그 패턴 박제.
+> **격리 메커니즘 fact**: `KITTYPAW_CONFIG_DIR` 만 코드가 읽음 (verified `core/config.go:482`). CLAUDE.md "Testing Isolation" 섹션도 동일 환경변수 박은 후 일관 (Plan A T3, 2026-05-06).
 
 ---
 
@@ -209,12 +209,7 @@ emac (별도 mac M3 Pro 36GB 등) 같은 별도 머신에 ollama 또는 LM Studi
 
 ```bash
 make dev-models-tunnel-ollama        # SSH tunnel :11500 → emac:11434 (background, idempotent)
-make dev-models                      # daemon + chat REPL (cloud 모델 swap 가능)
-
-# 다른 터미널에서 측정
-make dev-models-measure BACKEND=ollama MODEL=qwen2.5:7b
-make dev-models-measure BACKEND=ollama MODEL=qwen2.5-coder:7b PROMPT='Go에서 fizzbuzz 함수 한 줄'
-
+make dev-models                      # daemon + chat REPL (cloud 모델 swap 가능 + /model 명령)
 make dev-models-tunnel-ollama-stop   # 끝
 ```
 
@@ -222,65 +217,34 @@ make dev-models-tunnel-ollama-stop   # 끝
 
 ```bash
 # 사전: LM Studio app GUI에서 HTTP server 켜져 있고 (Settings → Developer → Server),
-# 측정 대상 모델 download 완료. 모델 load는 measure script가 자동.
+# 측정 대상 모델 download + GUI load 완료.
 make dev-models-tunnel-lms           # SSH tunnel :11600 → emac:1234
 make dev-models                      # daemon + chat REPL
-
-# /model lmstudio-qwen3-30b-mlx       # chat REPL 안에서 swap 가능 (default config 7번째 entry)
-
-# 다른 터미널에서 측정 — script가 ssh emac으로 lms load 자동 호출 (-y --gpu max --ttl 300)
-make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
-make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='Go에서 fizzbuzz 함수 한 줄'
-
+# /model lmstudio-qwen3-30b-mlx       # chat REPL 안에서 swap (default config 7번째 entry)
 make dev-models-tunnel-lms-stop      # 끝
 ```
 
-두 backend 동시 운용도 가능 (`make dev-models-tunnel-ollama && make dev-models-tunnel-lms`). ControlPath suffix가 다르고 (`-ollama-` / `-lms-`) port도 분리되어 race 없음.
+두 backend 동시 운용도 가능 (`make dev-models-tunnel-ollama && make dev-models-tunnel-lms`). ControlPath suffix가 다르고 (`-ollama` / `-lms`) port도 분리되어 race 없음.
 
-### 측정 자동화 흐름 (`scripts/dev-models-measure.sh BACKEND={ollama|lmstudio}`)
+### 자동 측정 — Plan B 별도 phase
 
-```
-공통:
-1. command -v 사전요건 검증 (ssh, jq, lsof, curl, awk, sed; ollama backend는 ollama 추가)
-2. master_api_key 파싱 (awk -F'"' '/^master_api_key/{print $2}' server.toml)
-3. ssh emac true (3s timeout — emac off / sleep / alias 누락 감지)
-4. tunnel 2단계 probe (lsof :PORT + curl http://localhost:PORT/PATH — orphan ControlSocket 검출)
-5. daemon 헬스 (lsof :3001)
-6. backend별 모델 load:
-   - ollama: `ssh emac "ollama pull <model>"`  (PATH probe로 /usr/local/bin, /opt/homebrew/bin fallback)
-   - lmstudio: `ssh emac "lms load <modelKey> -y --gpu max --ttl 300"` (PATH probe로 ~/.lmstudio/bin, /opt/homebrew/bin fallback). `-y` = disambiguation prompt 자동 승인 (non-interactive SSH 무한 hang 회피), `--gpu max` = full Apple Metal offload (cold ~9.67s vs auto ~30s, n=1 2026-05-05), `--ttl 300` = idle 5분 후 auto-unload (메모리 leak 회피). 미설치 시 "Install lms CLI" hint + fail-fast.
-7. config.toml 백업 + [[llm.models]] id="<backend>-measure" 추가 + base_url override + [llm].default swap
-8. POST /api/v1/reload (Authorization: Bearer master_api_key)
-9. POST /api/v1/chat (jq -nc --arg JSON 빌드 — 특수문자 prompt safe)
-10. 응답 + latency 출력
-11. trap EXIT/INT/TERM → config 원복 + reload (Ctrl-C도 OK)
+raw 측정 자동화 (LLM judge + use case별 추천 + drift baseline) 는 **별도 phase**로 박힘 — `eval/secretary_smoke` + `eval/user_vision_flows` framework rebuild + `eval/models.toml` source-of-truth (사용자 박은 `a` 결정). 본 dev-models harness는 chat REPL `/model` 명령으로 *수동* 측정 + provider/model swap 박는 entry로 keep — automation은 eval framework로.
 
-backend별 차이:
-| | ollama | lmstudio |
-|---|---|---|
-| 로컬 포트 | :11500 | :11600 |
-| 사전 요건 cmd | + ollama | + lms |
-| probe path | /api/tags | /v1/models |
-| 모델 load | `ssh emac ollama pull <model>` | `ssh emac lms load <modelKey> -y --gpu max --ttl 300` |
-| 미설치 hint | `brew install ollama` | LM Studio app → Settings → Developer → "Install lms CLI" |
-| ControlPath | /tmp/kittypaw-dev-models-tunnel-ollama-%C | /tmp/kittypaw-dev-models-tunnel-lms-%C |
-```
+**load-bearing fact**: KittyPaw `core.ChatPayload` (core/types.go:97) 에 model 필드 없음 + `handleChat` (server/api.go:472)이 `nil` RunOptions로 Run 호출 → `POST /api/v1/chat`은 항상 `[llm].default` 사용. 측정 모델 swap 유일한 방법 = config 임시 변경 + `/api/v1/reload` (eval framework 가 박음).
 
-**load-bearing fact**: KittyPaw `core.ChatPayload` (core/types.go:97) 에 model 필드 없음 + `handleChat` (server/api.go:472)이 `nil` RunOptions로 Run 호출 → `POST /api/v1/chat`은 항상 `[llm].default` 사용. 측정 모델 swap 유일한 방법 = config 임시 변경 + `/api/v1/reload`.
+### 박제 가이드 — 수동 측정 후 사용자 직접 기록
 
-### 박제 가이드 — 측정 후 사용자 직접 기록
+수동 측정 (chat REPL `/model` swap + 직접 prompt) 후 `apps/kittypaw/docs/MODEL_GUIDE.md` 표 직접 채우기:
 
-측정 후 `apps/kittypaw/docs/MODEL_GUIDE.md` 표 직접 채우기:
-
-- **ollama**: § 2.4 KittyPaw harness automated measure 표
-- **lmstudio**: § 3.6 KittyPaw harness automated measure 표 (placeholder — 측정 row 박제 시 신규 추가)
+- **ollama**: § 2.4 raw 측정 fact 표
+- **lmstudio**: § 3.6 raw 측정 fact 표
 
 박제 항목:
 - **quality**: 1=fail / 2=어색 / 3=OK / 4=좋음 / 5=완벽 (한국어 자연스러움 + 코드 정확도 종합)
-- **latency**: cold = 첫 호출 (모델 로딩 포함), warm = 두 번째 호출 — 둘 다 측정해서 로딩 영향 분리
+- **latency**: warm chat (cold load는 부수적 — 띄워두고 쓰는 가정)
 - **context_window**: 응답 길이 + 모델 spec 비교 (Q4 양자화 시 줄어들 수 있음. MLX 4bit는 thinking 없는 instruct variant 우세 — § 3.3)
 
-자동 eval (BLEU 등) ❌ — § 2 / § 3 매트릭스 패턴은 사용자 직접 박제.
+자동 eval (LLM judge + drift baseline) 은 Plan B에서 박힘 — 본 박제 가이드는 수동 측정 entry로 keep.
 
 ### tunnel fail mode
 
@@ -297,7 +261,7 @@ backend별 차이:
 
 ### 보안
 
-- SSH tunnel = OpenSSH `ControlMaster=auto` + `ControlPath=/tmp/kittypaw-dev-models-tunnel-{ollama|lms}-%C` (사용자 `~/.ssh/config` 무영향, `-o` inline 옵션만). `%C` placeholder는 사용자/호스트/포트 hash라 multi-user 호환.
+- SSH tunnel = OpenSSH `ControlMaster=auto` + `ControlPath=/tmp/kittypaw-tunnel-{ollama|lms}.sock` (사용자 `~/.ssh/config` 무영향, `-o` inline 옵션만). 단일-host scope (emac 한정) — multi-host 확장 시 host 접미사 박음 (Plan B).
 - `pkill -f` ❌ — `ssh -O exit`로 해당 tunnel만 정확히 종료 (다른 ssh process 영향 X)
 - LAN bind (`OLLAMA_HOST=0.0.0.0` / LM Studio Server "Network Visible") 회피 — LAN의 다른 기기 노출 risk. SSH tunnel은 SSH 인증으로 가려져 안전.
 - SSH keepalive (`ServerAliveInterval=10 ServerAliveCountMax=3`) — emac sleep 시 hang 회피
@@ -323,5 +287,5 @@ dev-models harness는 **단일 사용자 가정** (사용자 본인). 측정 중
 ## 관련 문서
 
 - `apps/kittypaw/docs/MODEL_GUIDE.md` — 측정 fact 박제 (각 모델의 한국어 응답, latency, 함정)
-- `apps/kittypaw/CLAUDE.md` — KittyPaw architecture (단 "Testing Isolation" 섹션의 `KITTYPAW_HOME`은 stale fact, 별도 phase에서 fix 예정)
+- `apps/kittypaw/CLAUDE.md` — KittyPaw architecture ("Testing Isolation" 섹션은 `KITTYPAW_CONFIG_DIR` load-bearing fact 박힘, Plan A T3에서 정정)
 - `scripts/dev-models.sh help` — 짧은 CLI help

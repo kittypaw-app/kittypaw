@@ -65,7 +65,7 @@ teardown() {
   run "$SCRIPT_PATH" tunnel-ollama-start
   [ "$status" -eq 0 ]
   grep -q "ControlMaster=auto" "$BATS_SSH_LOG"
-  grep -q "ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C" "$BATS_SSH_LOG"
+  grep -q "ControlPath=/tmp/kittypaw-tunnel-ollama.sock" "$BATS_SSH_LOG"
 }
 
 @test "tunnel-ollama-start: SSH keepalive options included (Architect spec)" {
@@ -83,7 +83,7 @@ teardown() {
   run "$SCRIPT_PATH" tunnel-ollama-stop
   [ "$status" -eq 0 ]
   grep -q -- "-O exit" "$BATS_SSH_LOG"
-  grep -q "ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C" "$BATS_SSH_LOG"
+  grep -q "ControlPath=/tmp/kittypaw-tunnel-ollama.sock" "$BATS_SSH_LOG"
 }
 
 # ---------------------------------------------------------------------------
@@ -164,9 +164,9 @@ LSOF
   run "$SCRIPT_PATH" tunnel-lms-start
   [ "$status" -eq 0 ]
   grep -q "ControlMaster=auto" "$BATS_SSH_LOG"
-  grep -q "ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C" "$BATS_SSH_LOG"
+  grep -q "ControlPath=/tmp/kittypaw-tunnel-lms.sock" "$BATS_SSH_LOG"
   # Sanity: not the ollama suffix (separate multiplex sessions)
-  ! grep -q "ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C" "$BATS_SSH_LOG"
+  ! grep -q "ControlPath=/tmp/kittypaw-tunnel-ollama.sock" "$BATS_SSH_LOG"
 }
 
 # ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ LSOF
   run "$SCRIPT_PATH" tunnel-lms-stop
   [ "$status" -eq 0 ]
   grep -q -- "-O exit" "$BATS_SSH_LOG"
-  grep -q "ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C" "$BATS_SSH_LOG"
+  grep -q "ControlPath=/tmp/kittypaw-tunnel-lms.sock" "$BATS_SSH_LOG"
 }
 
 # ---------------------------------------------------------------------------
@@ -240,4 +240,44 @@ LSOF
   [[ "$output" == *"forward bind failed"* ]]
   [[ "$output" == *":11600"* ]]
   ! [[ "$output" == *"tunnel up"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# tunnel.sh direct (generic helper, v6 박힘 — Plan A T1)
+# ---------------------------------------------------------------------------
+
+@test "tunnel.sh status: HTTP 5xx (curl -fsS exit 22) → down (false-positive 회피)" {
+  # 기존 #6/#14는 exit 7 (COULDNT_CONNECT) 만 박음. -fsS는 4xx/5xx 시 exit 22 —
+  # 즉 LM Studio가 405/502 등 프로토콜 에러를 돌려줘도 status가 'down' 박혀야.
+  TUNNEL_SH="$(cd "$TESTS_DIR/../scripts" && pwd)/tunnel.sh"
+  cat > "$TEST_DIR/bin/lsof" <<'LSOF'
+#!/usr/bin/env bash
+exit 0
+LSOF
+  chmod +x "$TEST_DIR/bin/lsof"
+  cat > "$TEST_DIR/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+exit 22   # -fsS on 4xx/5xx
+CURL
+  chmod +x "$TEST_DIR/bin/curl"
+
+  run "$TUNNEL_SH" status ollama 11500 /api/tags
+  [ "$status" -ne 0 ]
+  [ "$status" -ne 127 ]   # tunnel.sh must exist — vacuous pass 차단
+}
+
+@test "tunnel.sh stop: Master 없을 때 (ssh -O exit fail) 박혀도 exit 0 (idempotent)" {
+  # 현 dev-models.sh의 tunnel-stop은 ssh -O exit emac 단일 호출 — Master 없으면
+  # 비제로 exit 박음. tunnel.sh stop은 || true로 idempotent 박혀야 (재호출 깨끗).
+  # mock ssh exit 1 박은 시나리오 = Master 없음 — vacuous pass 차단.
+  TUNNEL_SH="$(cd "$TESTS_DIR/../scripts" && pwd)/tunnel.sh"
+  cat > "$TEST_DIR/bin/ssh" <<'SSH'
+#!/usr/bin/env bash
+exit 1   # Master 없음 — ssh -O exit fail
+SSH
+  chmod +x "$TEST_DIR/bin/ssh"
+
+  run "$TUNNEL_SH" stop idempotent-test
+  [ "$status" -eq 0 ]
+  [ "$status" -ne 127 ]   # tunnel.sh found
 }

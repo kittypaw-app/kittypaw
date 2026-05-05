@@ -239,28 +239,29 @@ make test-unit      # Unit tests only (fast)
 go test ./store/... # Single package
 ```
 
-### Testing Isolation (KITTYPAW_HOME) — load-bearing
+### Testing Isolation (KITTYPAW_CONFIG_DIR) — load-bearing
 
-Smoke / eval / 실 LLM endpoint 검증을 돌릴 때 **반드시** `KITTYPAW_HOME=/tmp/kittypaw-<purpose>`를
+Smoke / eval / 실 LLM endpoint 검증을 돌릴 때 **반드시** `KITTYPAW_CONFIG_DIR=/tmp/kittypaw-<purpose>`를
 설정해 사용자의 `~/.kittypaw/` (live daemon, 실 계정 시크릿, 채널 토큰 보유)와
-격리한다. home은 `accounts/`, `cache/`, `daemon.pid` 등의 루트.
+격리한다. 이 디렉토리는 `accounts/`, `cache/`, `daemon.pid` 등의 루트가 된다 — `core/config.go:482`이
+값을 verbatim base directory로 사용 (no `.kittypaw/` join, no `os.UserHomeDir` lookup).
 
 ```bash
-export KITTYPAW_HOME=/tmp/kittypaw-smoke
-mkdir -p "$KITTYPAW_HOME/accounts/default"
-cat > "$KITTYPAW_HOME/accounts/default/config.toml" <<'EOF'
+export KITTYPAW_CONFIG_DIR=/tmp/kittypaw-smoke
+mkdir -p "$KITTYPAW_CONFIG_DIR/accounts/default"
+cat > "$KITTYPAW_CONFIG_DIR/accounts/default/config.toml" <<'EOF'
 [llm]
 provider = "cerebras"   # or anthropic / openai / ollama / groq / ...
 model = "qwen-3-235b-a22b-instruct-2507"
 max_tokens = 1024
 EOF
-touch "$KITTYPAW_HOME/server.toml"
+touch "$KITTYPAW_CONFIG_DIR/server.toml"
 
 ./bin/kittypaw chat "메시지" --account default
 ```
 
 사용자의 live daemon(`~/.kittypaw/daemon.pid`)은 영향 없음 — 격리된 실행은
 `~/.kittypaw/` 아래 어떤 흔적도 남기지 않는다. eval framework
-(`--features llm-eval`)도 동일 패턴 — `KITTYPAW_HOME`을 sandbox 디렉토리로
+(`--features llm-eval`)도 동일 패턴 — `KITTYPAW_CONFIG_DIR`을 sandbox 디렉토리로
 설정하고 끝나면 제거한다. 격리 없이 실 endpoint를 호출하면 daemon에 저장된
 대화 기록·secrets에 오염이 들어가고 채널 메시지가 실제로 발송될 수 있다.

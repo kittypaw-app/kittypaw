@@ -19,14 +19,13 @@
 set -euo pipefail
 
 TEST_HOME="${KITTYPAW_DEV_HOME:-/tmp/kittypaw-dev-models}"
-# core/config.go:481: when KITTYPAW_CONFIG_DIR is set it is used verbatim as
+# core/config.go:482: when KITTYPAW_CONFIG_DIR is set it is used verbatim as
 # the base directory (no .kittypaw/ join, no os.UserHomeDir lookup), so
 # accounts/ and server.toml live directly under $TEST_HOME. This is the
-# documented isolation knob — CLAUDE.md "Testing Isolation" wording uses
-# KITTYPAW_HOME, which is stale (no env lookup wired). The daemon and the
-# chat client both honor KITTYPAW_CONFIG_DIR via the same code path, so
-# auto-discovery (daemon.pid) routes the client to our isolated daemon
-# without explicit base-url plumbing.
+# load-bearing isolation knob — CLAUDE.md "Testing Isolation" 섹션 일관 (Plan
+# A T3, 2026-05-06). The daemon and the chat client both honor
+# KITTYPAW_CONFIG_DIR via the same code path, so auto-discovery (daemon.pid)
+# routes the client to our isolated daemon without explicit base-url plumbing.
 TEST_PORT="${KITTYPAW_DEV_PORT:-3001}"
 # Loopback by default — the daemon holds vendor API keys and binding to all
 # interfaces (0.0.0.0) would expose them to the LAN. Override with
@@ -248,110 +247,12 @@ status)
   done
   ;;
 
-tunnel-ollama-start)
-  # OpenSSH ControlMaster + LocalForward to emac:11434 → localhost:11500.
-  # Idempotent: -O exit cleans any stale ControlSocket from a prior aborted
-  # tunnel before spawning -fN. ssh alias `emac` must resolve in ~/.ssh/config.
-  # ServerAliveInterval guards against emac sleep. Local port 11500 is the
-  # § 2 convention (avoids collision with a host-side ollama on :11434).
-  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
-            -o ConnectTimeout=3
-            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C)
-  ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
-  ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11500:localhost:11434 emac
-  # `-fN` exits 0 even when the LocalForward bind fails ("Address
-  # already in use" lands on stderr but the SSH process still forks the
-  # ControlMaster). Without this guard a stale tunnel from a manual SSH
-  # session masks the failure and the next measure call dials a dead
-  # forward (verified 2026-05-05). Short retry loop covers the small
-  # race between fork and the listener actually binding.
-  for i in 1 2 3 4 5; do
-    if lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then break; fi
-    sleep 0.3
-  done
-  if ! lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "tunnel-ollama-start: forward bind failed (lsof :11500 empty after spawn)" >&2
-    echo "  diagnose: lsof -nP -iTCP:11500   # which process holds the port?" >&2
-    echo "  if it is a stale ssh: kill the PID, then re-run this target." >&2
-    exit 1
-  fi
-  echo "tunnel up: localhost:11500 → emac:11434  (stop: make dev-models-tunnel-ollama-stop)"
-  ;;
-
-tunnel-ollama-stop)
-  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
-            -o ConnectTimeout=3
-            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C)
-  ssh "${ssh_opts[@]}" -O exit emac
-  ;;
-
-tunnel-ollama-status)
-  # Two-stage liveness probe (Architect): lsof catches the local LocalForward
-  # bind, curl /api/tags catches an "orphan" ControlSocket where the SSH
-  # session was reset but the bind survives. lsof OK + curl fail = orphan.
-  if ! lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "tunnel down — make dev-models-tunnel-ollama" >&2
-    exit 1
-  fi
-  if ! curl -fsS --max-time 5 http://localhost:11500/api/tags >/dev/null 2>&1; then
-    echo "tunnel orphan (forward unreachable) — restart: make dev-models-tunnel-ollama-stop && make dev-models-tunnel-ollama" >&2
-    exit 1
-  fi
-  echo "tunnel ok: localhost:11500 → emac:11434 (ollama /api/tags responding)"
-  ;;
-
-tunnel-lms-start)
-  # LM Studio MLX backend on emac (M3 Pro 36GB). LocalForward emac:1234 →
-  # localhost:11600 (no auth — LM Studio HTTP server runs unauthenticated).
-  # Same ControlMaster + idempotent -O exit pattern as tunnel-ollama; the
-  # ControlPath is suffixed -lms- so both tunnels can coexist (different
-  # multiplex sessions, different ports). Pre-req: emac LM Studio app
-  # running with HTTP server enabled (Settings → Developer → Server) and
-  # the desired model loaded via GUI — `lms` CLI is intentionally unused
-  # (see MODEL_GUIDE.md § 3.4 daemon-stall fact).
-  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
-            -o ConnectTimeout=3
-            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C)
-  ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
-  ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11600:localhost:1234 emac
-  # See tunnel-ollama-start above for the rationale — same `-fN` exit-0-on-
-  # bind-failure trap. Verified 2026-05-05 against a stale manual ssh
-  # tunnel (`m3-enuma.local` alias) that survived a prior session and
-  # silently shadowed this script's bind.
-  for i in 1 2 3 4 5; do
-    if lsof -nP -iTCP:11600 -sTCP:LISTEN >/dev/null 2>&1; then break; fi
-    sleep 0.3
-  done
-  if ! lsof -nP -iTCP:11600 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "tunnel-lms-start: forward bind failed (lsof :11600 empty after spawn)" >&2
-    echo "  diagnose: lsof -nP -iTCP:11600   # which process holds the port?" >&2
-    echo "  if it is a stale ssh: kill the PID, then re-run this target." >&2
-    exit 1
-  fi
-  echo "tunnel up: localhost:11600 → emac:1234   (stop: make dev-models-tunnel-lms-stop)"
-  ;;
-
-tunnel-lms-stop)
-  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
-            -o ConnectTimeout=3
-            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C)
-  ssh "${ssh_opts[@]}" -O exit emac
-  ;;
-
-tunnel-lms-status)
-  # Two-stage probe — lsof catches the local bind, curl /v1/models catches
-  # an orphan ControlSocket. (LM Studio uses OpenAI-compat /v1/models, not
-  # ollama's /api/tags.)
-  if ! lsof -nP -iTCP:11600 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "tunnel down — make dev-models-tunnel-lms" >&2
-    exit 1
-  fi
-  if ! curl -fsS --max-time 5 http://localhost:11600/v1/models >/dev/null 2>&1; then
-    echo "tunnel orphan (forward unreachable — LM Studio HTTP server stopped?) — restart: make dev-models-tunnel-lms-stop && make dev-models-tunnel-lms" >&2
-    exit 1
-  fi
-  echo "tunnel ok: localhost:11600 → emac:1234 (LM Studio /v1/models responding)"
-  ;;
+tunnel-ollama-start)   "$SCRIPT_DIR/tunnel.sh" start  ollama 11500 11434 /api/tags ;;
+tunnel-ollama-stop)    "$SCRIPT_DIR/tunnel.sh" stop   ollama ;;
+tunnel-ollama-status)  "$SCRIPT_DIR/tunnel.sh" status ollama 11500 /api/tags ;;
+tunnel-lms-start)      "$SCRIPT_DIR/tunnel.sh" start  lms    11600 1234  /v1/models ;;
+tunnel-lms-stop)       "$SCRIPT_DIR/tunnel.sh" stop   lms ;;
+tunnel-lms-status)     "$SCRIPT_DIR/tunnel.sh" status lms    11600 /v1/models ;;
 
 go)
   # One-shot: setup → server → chat. Stops nothing on exit so the user
@@ -425,8 +326,6 @@ Typical flow (Makefile aliases shown):
 Local backend on emac (M3 Pro 36GB, ssh emac alias required):
   make dev-models-tunnel-ollama                # ollama serve  → :11500
   make dev-models-tunnel-lms                   # LM Studio app → :11600 (load model via GUI)
-  make dev-models-measure BACKEND=ollama   MODEL=qwen2.5:7b
-  make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
 USAGE
   ;;
 esac

@@ -85,13 +85,15 @@ prompt: `안녕? 한 줄로 자기소개 해줘.`
 ### 2.3 KittyPaw integration test
 
 ```bash
-# 격리된 KITTYPAW_HOME 셋업 권장 (apps/kittypaw/CLAUDE.md `Testing Isolation` 섹션 참조)
+# 격리된 KITTYPAW_CONFIG_DIR 셋업 권장 (apps/kittypaw/CLAUDE.md `Testing Isolation` 섹션 참조)
 OLLAMA_TEST_MODEL=gemma4:latest \
 OLLAMA_BASE_URL=http://localhost:11500/v1/chat/completions \
   go test -tags ollama_integration -v -run TestOllamaLiveSmoke ./llm/
 ```
 
-### 2.4 KittyPaw harness automated measure (`make dev-models-measure BACKEND=ollama`)
+### 2.4 KittyPaw harness measure (raw 측정 fact)
+
+> 측정 자동화 entry는 **별도 phase에서 eval framework rebuild 박힘** (Plan B — `eval/secretary_smoke` + LLM judge). 본 § 2.4 fact는 dev-models harness 짜깁기 시기 raw 측정 history 박은 것 — 보존 가치.
 
 prompt: `안녕? 한 줄로 자기소개 해줘.` (§ 2.2 일관). 측정 2026-05-05. 시스템 프롬프트는 KittyPaw 비서 페르소나 + skill loop의 JS sandbox 형식 강제.
 
@@ -139,7 +141,7 @@ prompt 동일.
 
 ### 3.4 다운로드 (`lms get` daemon stall 우회 — § 5.2)
 
-`lms get` (모델 download) 만 daemon stall 재현 2회 — `hf download` direct 우회. **CLI 본체 (load / ls / ps / unload) 는 정상**(검증 2026-05-05): non-interactive SSH에서 `-y` 플래그로 disambiguation prompt 자동 승인, `--gpu max` 명시로 cold load 9.67s, `--ttl <s>` 자동 unload 가능. dev-models harness `make dev-models-measure BACKEND=lmstudio` 가 이 자동화를 통합한다 (§ 3.5 / § 3.6).
+`lms get` (모델 download) 만 daemon stall 재현 2회 — `hf download` direct 우회. **CLI 본체 (load / ls / ps / unload) 는 정상**(검증 2026-05-05): non-interactive SSH에서 `-y` 플래그로 disambiguation prompt 자동 승인, `--gpu max` 명시로 cold load 9.67s, `--ttl <s>` 자동 unload 가능.
 
 ```bash
 # Download — lms get 회피, hf direct 사용:
@@ -159,20 +161,16 @@ lms load qwen3-30b-a3b-instruct-2507 -y --gpu max --ttl 300
 ### 3.5 KittyPaw integration test
 
 ```bash
-# Option A — go test with ollama integration tag (base_url override만 바꿔 LMS로 재사용)
-ssh -fN -L 11600:localhost:1234 emac
+# go test with ollama integration tag (base_url override만 바꿔 LMS로 재사용)
+make dev-models-tunnel-lms
 OLLAMA_TEST_MODEL=qwen3-30b-a3b-instruct-2507 \
 OLLAMA_BASE_URL=http://localhost:11600/v1/chat/completions \
   go test -tags ollama_integration -v -run TestOllamaLiveSmoke ./llm/
-
-# Option B — KittyPaw harness automated measure (recommended)
-make dev-models-tunnel-lms
-make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507
 ```
 
-LM Studio는 OpenAI Chat Completions 호환 endpoint 노출. KittyPaw 본 phase에서 `provider="lmstudio"` 신규 case 추가 (`llm/registry.go`, `lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"`) — `provider="openai" + base_url` 우회보다 telemetry/log clarity 우위 (mistral case 일관 mental model). `make dev-models-measure BACKEND=lmstudio` 는 § 3.6 KittyPaw harness 측정 흐름을 자동화한다.
+LM Studio는 OpenAI Chat Completions 호환 endpoint 노출. KittyPaw 본 phase에서 `provider="lmstudio"` 신규 case 추가 (`llm/registry.go`, `lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"`) — `provider="openai" + base_url` 우회보다 telemetry/log clarity 우위 (mistral case 일관 mental model).
 
-### 3.6 KittyPaw harness automated measure (`make dev-models-measure BACKEND=lmstudio`)
+### 3.6 KittyPaw harness measure — LM Studio MLX raw fact
 
 prompt: `안녕? 한 줄로 자기소개 해줘.` (§ 2.4 일관). 시스템 프롬프트는 KittyPaw 비서 페르소나 + skill loop의 JS sandbox 형식 강제 (§ 2.4와 동일 구조).
 
@@ -353,7 +351,7 @@ prompt 동일.
 
 `llama3.3:70b` Q4_K_M (42 GB) vs `qwen2.5:32b-instruct` Q4_K_M (19 GB) — 70B 모델이 32B 모델보다 KittyPaw skill loop의 JS sandbox 형식 instruction following ✗.
 
-`make dev-models-measure BACKEND=ollama MODEL=llama3.3:70b` 결과:
+KittyPaw harness raw 측정 결과 (`llama3.3:70b` Q4_K_M, 2026-05-05):
 - attempt 0: 자연어 + Go code block (markdown) → SyntaxError (8 errors)
 - attempt 1: ` ```go ... ``` ` markdown → ILLEGAL token (2 errors)
 - attempt 2: code_len=0 (LLM이 retry budget 소진 후 빈 응답)

@@ -3,7 +3,7 @@ PKG       := ./cli
 BUILDTIME := $(shell TZ=Asia/Seoul date +%Y-%m-%d\ %H:%M\ KST)
 LDFLAGS   := -X 'main.version=dev ($(BUILDTIME))'
 
-.PHONY: build test test-unit test-integration test-e2e test-ci lint fmt run clean eval-secretary eval-user-flows eval-local smoke dev-models dev-models-setup dev-models-server dev-models-chat dev-models-stop dev-models-clean dev-models-status dev-models-tunnel-ollama dev-models-tunnel-ollama-stop dev-models-tunnel-ollama-status dev-models-tunnel-lms dev-models-tunnel-lms-stop dev-models-tunnel-lms-status dev-models-measure
+.PHONY: build test test-unit test-integration test-e2e test-ci lint fmt run clean eval-secretary eval-user-flows eval-local smoke dev-models dev-models-setup dev-models-server dev-models-chat dev-models-stop dev-models-clean dev-models-status dev-models-tunnel-ollama dev-models-tunnel-ollama-stop dev-models-tunnel-ollama-status dev-models-tunnel-lms dev-models-tunnel-lms-stop dev-models-tunnel-lms-status
 
 build:
 	@mkdir -p bin
@@ -100,13 +100,3 @@ dev-models-tunnel-lms-stop:
 
 dev-models-tunnel-lms-status:
 	scripts/dev-models.sh tunnel-lms-status
-
-# One-shot measurement against an ollama or LM Studio model on emac.
-# ollama path pulls the model first; lmstudio path verifies it is loaded
-# in the GUI. Both swap [llm].default + reload, fire one chat round,
-# print latency + response, and trap-restore the original config.
-# Usage:
-#   make dev-models-measure BACKEND=ollama   MODEL=qwen2.5:7b [PROMPT='...']
-#   make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 [PROMPT='...']
-dev-models-measure: build
-	scripts/dev-models-measure.sh $(BACKEND) $(MODEL) $(PROMPT)
