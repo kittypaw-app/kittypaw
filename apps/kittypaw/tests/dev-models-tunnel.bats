@@ -28,9 +28,12 @@ exit 0
 SSH
   chmod +x "$TEST_DIR/bin/ssh"
 
+  # Default: lsof exits 0 (port LISTEN) — happy path for tunnel-start
+  # post-spawn forward verify and tunnel-status when the forward is up.
+  # The "tunnel down" cases below override to exit 1 explicitly.
   cat > "$TEST_DIR/bin/lsof" <<'LSOF'
 #!/usr/bin/env bash
-exit 1   # default: nothing listening
+exit 0
 LSOF
   chmod +x "$TEST_DIR/bin/lsof"
 
@@ -118,10 +121,32 @@ CURL
 }
 
 @test "tunnel-ollama-status: tunnel down (lsof empty) reported" {
-  # default lsof exits 1 — port not listening
+  cat > "$TEST_DIR/bin/lsof" <<'LSOF'
+#!/usr/bin/env bash
+exit 1   # nothing listening
+LSOF
+  chmod +x "$TEST_DIR/bin/lsof"
+
   run "$SCRIPT_PATH" tunnel-ollama-status
   [ "$status" -ne 0 ]
   [[ "$output" == *"down"* || "$output" == *"미가동"* || "$output" == *"not running"* ]]
+}
+
+@test "tunnel-ollama-start: detects forward bind failure (lsof empty after spawn)" {
+  # `-fN` exit 0 even when "Address already in use" — must verify
+  # post-spawn that the listener actually bound. Stale-tunnel guard.
+  cat > "$TEST_DIR/bin/lsof" <<'LSOF'
+#!/usr/bin/env bash
+exit 1   # bind failed — port empty after -fN spawn
+LSOF
+  chmod +x "$TEST_DIR/bin/lsof"
+
+  run "$SCRIPT_PATH" tunnel-ollama-start
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"forward bind failed"* ]]
+  [[ "$output" == *":11500"* ]]
+  # Must NOT print the cheerful "tunnel up" line on failure.
+  ! [[ "$output" == *"tunnel up"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -190,7 +215,29 @@ CURL
 }
 
 @test "tunnel-lms-status: tunnel down (lsof empty) reported" {
+  cat > "$TEST_DIR/bin/lsof" <<'LSOF'
+#!/usr/bin/env bash
+exit 1
+LSOF
+  chmod +x "$TEST_DIR/bin/lsof"
+
   run "$SCRIPT_PATH" tunnel-lms-status
   [ "$status" -ne 0 ]
   [[ "$output" == *"down"* ]]
+}
+
+@test "tunnel-lms-start: detects forward bind failure (lsof empty after spawn)" {
+  # Mirror of tunnel-ollama-start — same `-fN` exit-0-on-bind-failure
+  # trap on port :11600.
+  cat > "$TEST_DIR/bin/lsof" <<'LSOF'
+#!/usr/bin/env bash
+exit 1
+LSOF
+  chmod +x "$TEST_DIR/bin/lsof"
+
+  run "$SCRIPT_PATH" tunnel-lms-start
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"forward bind failed"* ]]
+  [[ "$output" == *":11600"* ]]
+  ! [[ "$output" == *"tunnel up"* ]]
 }

@@ -259,6 +259,22 @@ tunnel-ollama-start)
             -o ControlPath=/tmp/kittypaw-dev-models-tunnel-ollama-%C)
   ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
   ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11500:localhost:11434 emac
+  # `-fN` exits 0 even when the LocalForward bind fails ("Address
+  # already in use" lands on stderr but the SSH process still forks the
+  # ControlMaster). Without this guard a stale tunnel from a manual SSH
+  # session masks the failure and the next measure call dials a dead
+  # forward (verified 2026-05-05). Short retry loop covers the small
+  # race between fork and the listener actually binding.
+  for i in 1 2 3 4 5; do
+    if lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then break; fi
+    sleep 0.3
+  done
+  if ! lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "tunnel-ollama-start: forward bind failed (lsof :11500 empty after spawn)" >&2
+    echo "  diagnose: lsof -nP -iTCP:11500   # which process holds the port?" >&2
+    echo "  if it is a stale ssh: kill the PID, then re-run this target." >&2
+    exit 1
+  fi
   echo "tunnel up: localhost:11500 → emac:11434  (stop: make dev-models-tunnel-ollama-stop)"
   ;;
 
@@ -298,6 +314,20 @@ tunnel-lms-start)
             -o ControlPath=/tmp/kittypaw-dev-models-tunnel-lms-%C)
   ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
   ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11600:localhost:1234 emac
+  # See tunnel-ollama-start above for the rationale — same `-fN` exit-0-on-
+  # bind-failure trap. Verified 2026-05-05 against a stale manual ssh
+  # tunnel (`m3-enuma.local` alias) that survived a prior session and
+  # silently shadowed this script's bind.
+  for i in 1 2 3 4 5; do
+    if lsof -nP -iTCP:11600 -sTCP:LISTEN >/dev/null 2>&1; then break; fi
+    sleep 0.3
+  done
+  if ! lsof -nP -iTCP:11600 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "tunnel-lms-start: forward bind failed (lsof :11600 empty after spawn)" >&2
+    echo "  diagnose: lsof -nP -iTCP:11600   # which process holds the port?" >&2
+    echo "  if it is a stale ssh: kill the PID, then re-run this target." >&2
+    exit 1
+  fi
   echo "tunnel up: localhost:11600 → emac:1234   (stop: make dev-models-tunnel-lms-stop)"
   ;;
 

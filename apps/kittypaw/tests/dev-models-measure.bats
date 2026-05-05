@@ -34,21 +34,26 @@ CFG
 
   export PATH="$TEST_DIR/bin:$PATH"
 
-  # ssh: success by default. The ollama pull path captures stdout via
-  # `EMAC_OLLAMA=$(ssh emac '...')`, and the lmstudio path captures
-  # stdout via `EMAC_LMS=$(ssh emac '...')`, so when the script asks
-  # `command -v {ollama|lms}` we need to print a plausible path;
-  # otherwise the script fails-fast with "{ollama|lms} not found on
-  # emac".
+  # ssh: success by default with command-specific simulation:
+  # - `command -v {ollama|lms}` → echo a plausible path (otherwise the
+  #   script fails-fast with "not found on emac").
+  # - `lms ps` → exit 1 (default: nothing loaded — script proceeds to
+  #   load). Idempotent-skip cases override to exit 0 so the script's
+  #   `grep -qE` matches and lms load is skipped.
+  # - `lms load` → exit 0 (default: load succeeds). Bad-modelKey cases
+  #   override to exit 1.
+  # mocks of ssh-wrapped pipelines (`lms ps | grep ...`) only simulate
+  # exit codes — the real grep doesn't run inside the mock.
   cat > "$TEST_DIR/bin/ssh" <<'SSH'
 #!/usr/bin/env bash
 echo "ssh $*" >> "$TEST_DIR/ssh.log"
 case "$*" in
-  *"command -v ollama"*) echo "/usr/local/bin/ollama" ;;
-  *"command -v lms"*)    echo "/Users/test/.lmstudio/bin/lms" ;;
-  *) ;;
+  *"command -v ollama"*) echo "/usr/local/bin/ollama"; exit 0 ;;
+  *"command -v lms"*)    echo "/Users/test/.lmstudio/bin/lms"; exit 0 ;;
+  *"lms ps"*) exit 1 ;;
+  *"lms load"*) exit 0 ;;
+  *) exit 0 ;;
 esac
-exit 0
 SSH
   chmod +x "$TEST_DIR/bin/ssh"
 
@@ -222,14 +227,11 @@ and $env got expanded'
   cat > "$TEST_DIR/bin/ssh" <<'SSH'
 #!/usr/bin/env bash
 echo "ssh $*" >> "$TEST_DIR/ssh.log"
-# command -v ollama still works (probe only triggers for ollama backend);
-# command -v lms returns nothing → script fails on the EMAC_LMS check.
 case "$*" in
-  *"command -v ollama"*) echo "/usr/local/bin/ollama" ;;
-  *"command -v lms"*) ;;
-  *) ;;
+  *"command -v ollama"*) echo "/usr/local/bin/ollama"; exit 0 ;;
+  *"command -v lms"*) exit 0 ;;  # empty stdout → EMAC_LMS empty
+  *) exit 0 ;;
 esac
-exit 0
 SSH
   chmod +x "$TEST_DIR/bin/ssh"
 
@@ -242,15 +244,16 @@ SSH
 }
 
 @test "lmstudio: fail when lms load returns non-zero (bad modelKey)" {
-  # ssh mock returns lms path on `command -v lms`, but `lms load <model>`
-  # fails (e.g., user passed a path instead of the modelKey, ambiguous
-  # match without -y, etc). Script must surface the failure with the
-  # `lms ls` hint, not silently proceed to chat.
+  # `lms ps` returns exit 1 (model not loaded) → script proceeds to load.
+  # `lms load` then fails (bad modelKey, user passed a path instead of
+  # modelKey, network error, etc). Script must surface the failure with
+  # the `lms ls` hint, not silently proceed to chat.
   cat > "$TEST_DIR/bin/ssh" <<'SSH'
 #!/usr/bin/env bash
 echo "ssh $*" >> "$TEST_DIR/ssh.log"
 case "$*" in
   *"command -v lms"*) echo "/Users/test/.lmstudio/bin/lms"; exit 0 ;;
+  *"lms ps"*) exit 1 ;;
   *"lms load "*) exit 1 ;;
   *) exit 0 ;;
 esac
@@ -261,6 +264,36 @@ SSH
   [ "$status" -ne 0 ]
   [[ "$output" == *"lms load failed"* || "$output" == *"modelKey"* ]]
   ! grep -q "/api/v1/chat" "$TEST_DIR/curl.log"
+}
+
+@test "lmstudio: idempotent — skip lms load when model already loaded" {
+  # `lms load` is non-idempotent — a second invocation while the model
+  # is already loaded triggers LM Studio's memory guard ("insufficient
+  # system resources"). The script must `lms ps | grep -qE` first and
+  # skip the load on a hit (verified 2026-05-05 — bug surfaced when a
+  # second measure run failed).
+  cat > "$TEST_DIR/bin/ssh" <<'SSH'
+#!/usr/bin/env bash
+echo "ssh $*" >> "$TEST_DIR/ssh.log"
+case "$*" in
+  *"command -v lms"*) echo "/Users/test/.lmstudio/bin/lms"; exit 0 ;;
+  *"lms ps"*) exit 0 ;;   # grep -qE in script matches → already loaded
+  *"lms load"*) exit 0 ;; # would succeed, but must NOT be invoked
+  *) exit 0 ;;
+esac
+SSH
+  chmod +x "$TEST_DIR/bin/ssh"
+
+  run "$SCRIPT_PATH" lmstudio qwen3-30b-a3b-instruct-2507 "ping"
+  [ "$status" -eq 0 ]
+  # Idempotent skip message present.
+  [[ "$output" == *"already loaded"* || "$output" == *"idempotent"* ]]
+  # `lms ps` probe ran (the idempotent check itself).
+  grep -qE "lms ps" "$TEST_DIR/ssh.log"
+  # `lms load` MUST NOT have been invoked.
+  ! grep -qE "lms load" "$TEST_DIR/ssh.log"
+  # Chat must still be reached (skip the load, do everything else).
+  grep -q "/api/v1/chat" "$TEST_DIR/curl.log"
 }
 
 @test "lmstudio: fail when tunnel down (lsof :11600 empty)" {

@@ -157,7 +157,7 @@ else
   # `--gpu max` forces full Apple Metal offload (cold load ~9.67s vs
   # ~30s on auto, n=1). `--ttl 300` auto-unloads after 5 min idle so a
   # measurement run doesn't leak 17 GB indefinitely.
-  echo "[1/4] LM Studio: load $MODEL via lms CLI on emac..."
+  echo "[1/4] LM Studio: ensure $MODEL is loaded on emac..."
   EMAC_LMS=$(ssh "${SSH_OPTS[@]}" emac \
     'command -v lms 2>/dev/null || \
      for p in ~/.lmstudio/bin/lms ~/.cache/lm-studio/bin/lms /usr/local/bin/lms /opt/homebrew/bin/lms; do \
@@ -168,8 +168,21 @@ else
     echo "  install: LM Studio app on emac → Settings → Developer → 'Install lms CLI'" >&2
     exit 1
   fi
-  ssh "${SSH_OPTS[@]}" emac "$EMAC_LMS load \"$MODEL\" -y --gpu max --ttl 300" \
-    || { echo "lms load failed for $MODEL — verify modelKey: ssh emac '$EMAC_LMS ls'" >&2; exit 1; }
+  # Idempotent guard: `lms ps` rows start with the IDENTIFIER (defaults to
+  # the modelKey when --identifier is omitted). If the model is already
+  # loaded we MUST skip the load — `lms load` is non-idempotent and a
+  # second invocation triggers LM Studio's memory guard ("Model loading
+  # was stopped due to insufficient system resources") because the
+  # 17 GB MLX weights would be allocated twice on the 36 GB emac
+  # (verified 2026-05-05 — 2nd run of an otherwise-identical measure
+  # call failed). The grep anchor `^$MODEL[[:space:]]` matches the
+  # data row but not the "IDENTIFIER" header column.
+  if ssh "${SSH_OPTS[@]}" emac "$EMAC_LMS ps 2>/dev/null | grep -qE '^${MODEL}[[:space:]]'" 2>/dev/null; then
+    echo "  $MODEL already loaded on emac — skipping lms load (idempotent)"
+  else
+    ssh "${SSH_OPTS[@]}" emac "$EMAC_LMS load \"$MODEL\" -y --gpu max --ttl 300" \
+      || { echo "lms load failed for $MODEL — verify modelKey: ssh emac '$EMAC_LMS ls'" >&2; exit 1; }
+  fi
 fi
 
 # 5. config swap + reload

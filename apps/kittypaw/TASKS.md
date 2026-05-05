@@ -40,7 +40,11 @@ KittyPaw에 `provider="lmstudio"` 신규 case 추가 + dev-models harness에 LM 
 
 - [x] **T6.5 — `lms` CLI 자동화 (B 갈래 P 진입)**: emac에 `lms` CLI 이미 설치됨 (`~/.lmstudio/bin/lms`, 이전 박힌 "미설치" fact stale). `lms load <modelKey> -y --gpu max --ttl 300` 작동 검증 (cold 9.67s, n=1, 2026-05-05). measure script `BACKEND=lmstudio` path 갱신 — `/v1/models` advertised check 제거, `lms load` 자동 호출로 변경. § 3.4 fact 정정 — stall은 `lms get` (download) 한정, CLI 본체 정상. § 3.3 cold load 30.57s → 9.67s (`--gpu max`, n=1). bats 12 cases GREEN.
 
-- [ ] **T7 — 사용자 검증 + § 3.6 박제** (수동 게이트): `make dev-models-tunnel-lms` + `make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='안녕? 한 줄로 자기소개 해줘.'` → warm chat latency 박제 (lms load는 script 자동, cold chat은 별도 측정 — § 3.6 흐름 참조). **commit**: `docs(model-guide): § 3.6 KittyPaw harness measured fact (qwen3-30b-mlx)`
+- [x] **T7 — 사용자 검증 + § 3.6 박제 (n=3 fact)**: 사용자 1차 + 자동 측정 2차 (`make dev-models-measure BACKEND=lmstudio MODEL=qwen3-30b-a3b-instruct-2507 PROMPT='안녕? 한 줄로 자기소개 해줘.'`). warm chat 0-1s (정수 초 분해능 한계), cold load n=3 분산 6.75-9.67s, 응답 페르소나 일관 (3회 분산: KittyPaw 자칭 1/3, 비서 톤 OK 3/3). § 5.1.4 가설 (cloud full vs ollama Q4 vs LM Studio MLX) **3-wire 대조 박힘** — MLX instruct variant가 ollama thinking variant 대비 5-15× warm 빠름.
+
+- [x] **T7-fix — tunnel forward verify bug + lms load idempotent guard**: 본 측정 진행 중 발견된 critical bug 2개:
+  - **(a) tunnel-{ollama,lms}-start**: SSH `-fN` exit 0 무관 forward bind 실패 시 거짓 "tunnel up" 보고. stale ssh tunnel (e.g., 사용자가 별도 alias로 띄운 잔재) 시 reproduce. post-spawn `lsof` retry loop (5 × 0.3s) 추가 + bats forward-fail mock 케이스 추가.
+  - **(b) lms load non-idempotent**: 2번째 호출 시 LM Studio "Model loading was stopped due to insufficient system resources" trigger (17 GB × 2 = 34 GB > 36 GB emac). measure script `lms ps | grep -qE '^${MODEL}[[:space:]]'` idempotent guard 추가 + bats 케이스. § 3.4 fact 추가 박제.
 
 **합리화 차단**:
 - "openai+base_url 우회로 작은 변경" → telemetry/log clarity + future backend 패턴 안정화, 거부
