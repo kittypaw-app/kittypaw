@@ -39,6 +39,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 KP_BIN="$APP_ROOT/bin/kittypaw"
 
+# Auto-load vendor keys from sibling .env.dev-models if present.
+# .env.* is git-ignored (apps/kittypaw/.gitignore) so this never enters the
+# repo. Lets `make dev-models-server` work without re-exporting keys in
+# every shell. Override with explicit env vars wins (set -a not used).
+ENV_FILE="$APP_ROOT/.env.dev-models"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+
 cmd="${1:-help}"
 shift || true
 
@@ -102,6 +112,18 @@ id = "ministral-8b"
 provider = "mistral"
 model = "ministral-8b-latest"
 max_tokens = 1024
+
+[[llm.models]]
+id = "gemini-flash-lite"
+provider = "gemini"
+model = "gemini-2.5-flash-lite"
+max_tokens = 1024
+
+[[llm.models]]
+id = "openrouter-llama-3.3"
+provider = "openrouter"
+model = "meta-llama/llama-3.3-70b-instruct:free"
+max_tokens = 1024
 TOML
   # server.toml carries bind + master_api_key (CLAUDE.md "Server-wide
   # settings"). The chat client's DaemonConn reads these to derive
@@ -121,17 +143,21 @@ bind = "$TEST_BIND"
 master_api_key = "$master_key"
 TOML
   umask 022
-  echo "wrote $cfg (4 models — groq-qwen / groq-llama / mistral-medium / ministral-8b)"
+  echo "wrote $cfg (6 models — groq-qwen / groq-llama / mistral-medium / ministral-8b / gemini-flash-lite / openrouter-llama-3.3)"
 }
 
 require_keys() {
   local missing=()
   if [[ -z "${GROQ_API_KEY:-}" ]]; then missing+=("GROQ_API_KEY"); fi
   if [[ -z "${MISTRAL_API_KEY:-}" ]]; then missing+=("MISTRAL_API_KEY"); fi
+  if [[ -z "${GEMINI_API_KEY:-}" ]]; then missing+=("GEMINI_API_KEY"); fi
+  if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then missing+=("OPENROUTER_API_KEY"); fi
   if (( ${#missing[@]} > 0 )); then
     echo "missing env: ${missing[*]}" >&2
-    echo "  Groq:    https://console.groq.com/keys" >&2
-    echo "  Mistral: https://console.mistral.ai/api-keys (Experiment plan, no card)" >&2
+    echo "  Groq:       https://console.groq.com/keys" >&2
+    echo "  Mistral:    https://console.mistral.ai/api-keys (Experiment plan, no card)" >&2
+    echo "  Gemini:     https://aistudio.google.com/apikey" >&2
+    echo "  OpenRouter: https://openrouter.ai/keys (free :free models, no card)" >&2
     return 1
   fi
 }
@@ -207,13 +233,49 @@ status)
   else
     echo "daemon: not running"
   fi
-  for v in GROQ_API_KEY MISTRAL_API_KEY; do
+  for v in GROQ_API_KEY MISTRAL_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY; do
     if [[ -n "${!v:-}" ]]; then
       echo "$v: set"
     else
       echo "$v: missing"
     fi
   done
+  ;;
+
+tunnel-start)
+  # OpenSSH ControlMaster + LocalForward to emac:11434 → localhost:11500.
+  # Idempotent: -O exit cleans any stale ControlSocket from a prior aborted
+  # tunnel before spawning -fN. ssh alias `emac` must resolve in ~/.ssh/config.
+  # ServerAliveInterval guards against emac sleep. Local port 11500 is the
+  # § 2 convention (avoids collision with a host-side ollama on :11434).
+  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
+            -o ConnectTimeout=3
+            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-%C)
+  ssh "${ssh_opts[@]}" -O exit emac >/dev/null 2>&1 || true
+  ssh "${ssh_opts[@]}" -fN -o ControlMaster=auto -L 11500:localhost:11434 emac
+  echo "tunnel up: localhost:11500 → emac:11434  (stop: make dev-models-tunnel-stop)"
+  ;;
+
+tunnel-stop)
+  ssh_opts=(-o ServerAliveInterval=10 -o ServerAliveCountMax=3
+            -o ConnectTimeout=3
+            -o ControlPath=/tmp/kittypaw-dev-models-tunnel-%C)
+  ssh "${ssh_opts[@]}" -O exit emac
+  ;;
+
+tunnel-status)
+  # Two-stage liveness probe (Architect): lsof catches the local LocalForward
+  # bind, curl /api/tags catches an "orphan" ControlSocket where the SSH
+  # session was reset but the bind survives. lsof OK + curl fail = orphan.
+  if ! lsof -nP -iTCP:11500 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "tunnel down — make dev-models-tunnel" >&2
+    exit 1
+  fi
+  if ! curl -fsS --max-time 5 http://localhost:11500/api/tags >/dev/null 2>&1; then
+    echo "tunnel orphan (forward unreachable) — restart: make dev-models-tunnel-stop && make dev-models-tunnel" >&2
+    exit 1
+  fi
+  echo "tunnel ok: localhost:11500 → emac:11434 (ollama /api/tags responding)"
   ;;
 
 go)

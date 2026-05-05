@@ -45,6 +45,7 @@ prompt: `안녕? 한 줄로 자기소개 해줘.`
 | `granite4.1:8b` | Q4_K_M | 5.3 GB | completion + tools | ★ (system prompt 강제 시 ★★) — 정체성 hallucination 매번 다름 (ChatGPT/Gemini/Granite 자칭) |
 | `mistral-nemo:12b-instruct-2407-q4_K_M` | Q4_K_M | 7.5 GB | completion + tools | ✗ 한국어 안정성 부족 (영어/러시아어 혼용 응답) |
 | **`qwen2.5:32b-instruct`** | Q4_K_M | 19 GB | completion + tools (no thinking) | ★★★ — thinking 없음, 정체성 일관, 한국어 자연. **36GB 비서 1순위** |
+| `llama3.3:70b` | Q4_K_M | 42 GB | completion + tools | ✗ KittyPaw instruction following 실패 (실측 2026-05-05 — markdown/Go code block 직접 출력 → JS sandbox 3 retry SyntaxError → empty fallback). 36GB UMS swap는 가능 (Apple Metal) but 형식 instruction 무시. § 5.1.4 |
 
 ### 2.2 매트릭스 (raw)
 
@@ -89,6 +90,24 @@ OLLAMA_TEST_MODEL=gemma4:latest \
 OLLAMA_BASE_URL=http://localhost:11500/v1/chat/completions \
   go test -tags ollama_integration -v -run TestOllamaLiveSmoke ./llm/
 ```
+
+### 2.4 KittyPaw harness automated measure (`make dev-models-ollama-measure`)
+
+prompt: `안녕? 한 줄로 자기소개 해줘.` (§ 2.2 일관). 측정 2026-05-05. 시스템 프롬프트는 KittyPaw 비서 페르소나 + skill loop의 JS sandbox 형식 강제.
+
+| Model | latency (KittyPaw) | 응답 preview | 비서 결과 |
+|---|---|---|---|
+| `gemma4:latest` 8B | 1s | "안녕하세요! 나는 KittyPaw입니다. 작업 자동화와 질문 응답을 도와드려요." | ★★★ 즉답 + 페르소나 일관 (§ 2.2 0.82s 캐시 일치) |
+| `qwen3:latest` 8B | 1s | "안녕하세요! KittyPaw입니다. 어떤 작업을 도와드릴까요? 😊" | ★★★ 즉답 + 친근 |
+| `phi4-mini:latest` 3.8B | <1s | "안녕하세요! KittyPaw입니다. 도와드릴 작업이 있으신가요? 🐱" | ★★★ **최고 즉답** — 16GB MBA 후보 |
+| `granite4.1:8b` | 1s | "안녕하세요! KittyPaw입니다. 😊 혹시 궁금한 점이 있나요? 도와드릴 수 있어요!" | ★★★ **KittyPaw 시스템 프롬프트가 정체성 강제 통과** — § 5.1.2 raw ollama 정체성 hallucination을 KittyPaw harness가 system prompt로 가드. 부분 정정 fact |
+| `qwen2.5:32b-instruct` Q4_K_M | 5s | "안녕하세요! 나는 KittyPaw입니다. 작업 자동화와 질문 답변을 도와요." + Go FizzBuzz | ★★★ § 2.2 warm 5.42s 일치 (재현) |
+| `llama3.3:70b` Q4_K_M | 9s+8.6s (3 retry) | "응답이 비어 있어요. 질문을 다시 한 번 말씀해 주시겠어요?" (KittyPaw fallback) | **✗ instruction following 실패** — markdown/Go code block 직접 출력. § 5.1.4 |
+
+핵심 fact (Round 측정에서 새로 발견):
+
+1. **KittyPaw 시스템 프롬프트가 작은 모델 정체성 hallucination을 강제 통과** — granite4.1:8b raw ollama (§ 5.1.2)에서 ChatGPT/Gemini/Granite 매번 자칭 다름이지만 KittyPaw harness (system prompt "KittyPaw 비서") 통해선 일관. KittyPaw 환경 한정 사용 가능 → ★★★.
+2. **모델 크기 ≠ KittyPaw instruction following 품질** — 70B llama가 32B qwen2.5보다 약함 (§ 5.1.4 신규).
 
 ---
 
@@ -223,6 +242,7 @@ prompt 동일.
 - `:free` 접미사 모델: **20 RPM / 200 RPD**
 - 무료 모델 RPD: **<$10 credit → 50 RPD**, **≥$10 credit → 1,000 RPD** (영구)
 - provider routing 변동 (어떤 backend로 라우팅되는지 가변) — production 비추, 다양화 후보로만
+- **실측 통과** (KittyPaw harness 2026-05-05, `meta-llama/llama-3.3-70b-instruct:free`): 1s, 한국어 자연 + KittyPaw 페르소나 + JS sandbox 통과. 카드 ❌, 발급 즉시 사용 가능. dev-models 6번째 entry로 박힘.
 - OpenAI 호환: ✅
 
 ### 4.7 DeepSeek (2026-05-05 docs)
@@ -295,6 +315,29 @@ prompt 동일.
   - 호출 3: 정상 한국어 (단 24자, 매우 짧음)
 - **Tekken은 토큰 효율(글자/토큰 비율)이지 한국어 품질 보증 아님**. 비서 비추 — 영어 코드/툴 보조 용도라면 별도.
 - 두 번째 "마케팅 ≠ 실측" 사례 (granite4.1 hallucination에 이은).
+
+### 5.1.4 모델 크기 ≠ KittyPaw instruction following 품질 (실측 2026-05-05)
+
+`llama3.3:70b` Q4_K_M (42 GB) vs `qwen2.5:32b-instruct` Q4_K_M (19 GB) — 70B 모델이 32B 모델보다 KittyPaw skill loop의 JS sandbox 형식 instruction following ✗.
+
+`make dev-models-ollama-measure MODEL=llama3.3:70b` 결과:
+- attempt 0: 자연어 + Go code block (markdown) → SyntaxError (8 errors)
+- attempt 1: ` ```go ... ``` ` markdown → ILLEGAL token (2 errors)
+- attempt 2: code_len=0 (LLM이 retry budget 소진 후 빈 응답)
+- 총 8.6s, retry 3회 한도 도달 후 KittyPaw fallback "응답이 비어 있어요"
+
+대조: `qwen2.5:32b-instruct` 5s + JS sandbox 통과 + 정체성 일관 응답.
+
+추정: Llama 3.3 70B는 자연어 응답 RLHF가 강해서 KittyPaw의 strict "JS code only" 시스템 프롬프트 형식을 무시 + markdown/code block 직접 출력. 모델 크기 ↑ ≠ KittyPaw 호환 ↑. **KittyPaw 비서 부적합 — qwen2.5:32b-instruct 또는 작은 8B 모델 (gemma4/qwen3/phi4-mini/granite4.1)이 정공**.
+
+Apple Metal Unified Memory 효과: 36GB UMS에서 42 GB 모델이 swap heavy 예상이지만 9s 응답 도착 = swap 동작 가능. 다만 응답 quality와 instruction following이 swap 영향 X (raw ollama 형식 차이). § 2.4 매트릭스 row 박제.
+
+**대조 fact (cloud llama3.3:70b vs ollama Q4)**: 같은 모델이 cloud (Groq § 4.2 + OpenRouter `:free` § 4.6)에서는 ★★ 한국어 자연 + KittyPaw harness JS sandbox **통과** (1s warm), ollama Q4_K_M (42 GB)에서는 **✗** instruction following 실패. 가능 원인:
+1. **Q4_K_M quantization이 instruction following 품질 떨어뜨림** — cloud는 full precision/bf16, ollama는 Q4. 큰 모델일수록 quantization 영향 ↑ 추정.
+2. ollama serve의 시스템 프롬프트 처리 차이 (cloud OpenAI 호환 wire와 다른 message 포맷팅)
+3. emac UMS swap 중 partial state로 inference (작은 응답이 swap state로 incomplete)
+
+3개 가능성 모두 측정 가치 있음. 다만 KittyPaw 비서로 llama3.3:70b 사용 = **cloud (Groq/OpenRouter) 권장**, ollama Q4 비추.
 
 ### 5.2 LM Studio 다운로드 daemon stall — `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` ✅ resolved via `hf download`
 
