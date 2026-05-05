@@ -240,6 +240,7 @@ prompt 동일.
 - `:free` 접미사 모델: **20 RPM / 200 RPD**
 - 무료 모델 RPD: **<$10 credit → 50 RPD**, **≥$10 credit → 1,000 RPD** (영구)
 - provider routing 변동 (어떤 backend로 라우팅되는지 가변) — production 비추, 다양화 후보로만
+- **실측 통과** (KittyPaw harness 2026-05-05, `meta-llama/llama-3.3-70b-instruct:free`): 1s, 한국어 자연 + KittyPaw 페르소나 + JS sandbox 통과. 카드 ❌, 발급 즉시 사용 가능. dev-models 6번째 entry로 박힘.
 - OpenAI 호환: ✅
 
 ### 4.7 DeepSeek (2026-05-05 docs)
@@ -328,6 +329,13 @@ prompt 동일.
 추정: Llama 3.3 70B는 자연어 응답 RLHF가 강해서 KittyPaw의 strict "JS code only" 시스템 프롬프트 형식을 무시 + markdown/code block 직접 출력. 모델 크기 ↑ ≠ KittyPaw 호환 ↑. **KittyPaw 비서 부적합 — qwen2.5:32b-instruct 또는 작은 8B 모델 (gemma4/qwen3/phi4-mini/granite4.1)이 정공**.
 
 Apple Metal Unified Memory 효과: 36GB UMS에서 42 GB 모델이 swap heavy 예상이지만 9s 응답 도착 = swap 동작 가능. 다만 응답 quality와 instruction following이 swap 영향 X (raw ollama 형식 차이). § 2.4 매트릭스 row 박제.
+
+**대조 fact (cloud llama3.3:70b vs ollama Q4)**: 같은 모델이 cloud (Groq § 4.2 + OpenRouter `:free` § 4.6)에서는 ★★ 한국어 자연 + KittyPaw harness JS sandbox **통과** (1s warm), ollama Q4_K_M (42 GB)에서는 **✗** instruction following 실패. 가능 원인:
+1. **Q4_K_M quantization이 instruction following 품질 떨어뜨림** — cloud는 full precision/bf16, ollama는 Q4. 큰 모델일수록 quantization 영향 ↑ 추정.
+2. ollama serve의 시스템 프롬프트 처리 차이 (cloud OpenAI 호환 wire와 다른 message 포맷팅)
+3. emac UMS swap 중 partial state로 inference (작은 응답이 swap state로 incomplete)
+
+3개 가능성 모두 측정 가치 있음. 다만 KittyPaw 비서로 llama3.3:70b 사용 = **cloud (Groq/OpenRouter) 권장**, ollama Q4 비추.
 
 ### 5.2 LM Studio 다운로드 daemon stall — `Qwen3-30B-A3B-Instruct-2507-MLX-4bit` ✅ resolved via `hf download`
 

@@ -118,6 +118,12 @@ id = "gemini-flash-lite"
 provider = "gemini"
 model = "gemini-2.5-flash-lite"
 max_tokens = 1024
+
+[[llm.models]]
+id = "openrouter-llama-3.3"
+provider = "openrouter"
+model = "meta-llama/llama-3.3-70b-instruct:free"
+max_tokens = 1024
 TOML
   # server.toml carries bind + master_api_key (CLAUDE.md "Server-wide
   # settings"). The chat client's DaemonConn reads these to derive
@@ -137,7 +143,7 @@ bind = "$TEST_BIND"
 master_api_key = "$master_key"
 TOML
   umask 022
-  echo "wrote $cfg (5 models — groq-qwen / groq-llama / mistral-medium / ministral-8b / gemini-flash-lite)"
+  echo "wrote $cfg (6 models — groq-qwen / groq-llama / mistral-medium / ministral-8b / gemini-flash-lite / openrouter-llama-3.3)"
 }
 
 require_keys() {
@@ -145,11 +151,13 @@ require_keys() {
   if [[ -z "${GROQ_API_KEY:-}" ]]; then missing+=("GROQ_API_KEY"); fi
   if [[ -z "${MISTRAL_API_KEY:-}" ]]; then missing+=("MISTRAL_API_KEY"); fi
   if [[ -z "${GEMINI_API_KEY:-}" ]]; then missing+=("GEMINI_API_KEY"); fi
+  if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then missing+=("OPENROUTER_API_KEY"); fi
   if (( ${#missing[@]} > 0 )); then
     echo "missing env: ${missing[*]}" >&2
-    echo "  Groq:    https://console.groq.com/keys" >&2
-    echo "  Mistral: https://console.mistral.ai/api-keys (Experiment plan, no card)" >&2
-    echo "  Gemini:  https://aistudio.google.com/apikey" >&2
+    echo "  Groq:       https://console.groq.com/keys" >&2
+    echo "  Mistral:    https://console.mistral.ai/api-keys (Experiment plan, no card)" >&2
+    echo "  Gemini:     https://aistudio.google.com/apikey" >&2
+    echo "  OpenRouter: https://openrouter.ai/keys (free :free models, no card)" >&2
     return 1
   fi
 }
@@ -225,7 +233,7 @@ status)
   else
     echo "daemon: not running"
   fi
-  for v in GROQ_API_KEY MISTRAL_API_KEY GEMINI_API_KEY; do
+  for v in GROQ_API_KEY MISTRAL_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY; do
     if [[ -n "${!v:-}" ]]; then
       echo "$v: set"
     else

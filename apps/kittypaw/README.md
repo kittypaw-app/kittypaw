@@ -64,10 +64,11 @@ Verified 2026-05-04 to 2026-05-05. Detailed matrix + raw measurements: [`docs/MO
 | ★★ 3 | Mistral `ministral-8b-latest` | (Mistral Experiment plan) | 256K context, faster |
 | ★★ 4 | Groq `llama-3.3-70b-versatile` | 30 RPM / 1K RPD / 12K TPM / 100K TPD | Parallel tools ✅, occasional Korean/Japanese mix |
 | ★★ 5 | Gemini `gemini-2.5-flash-lite` | docs unspecified — `aistudio.google.com/rate-limit` dashboard | 1M input / 65K output |
+| ★★ 6 | **OpenRouter `meta-llama/llama-3.3-70b-instruct:free`** | 20 RPM / 200 RPD, card ❌ | Verified KittyPaw harness 2026-05-05 (1s warm, Korean natural). Provider routing varies — § 4.6 |
 
 **Skipped**: Cerebras (8K context cap → KittyPaw chat unfit), Together AI ($5 card required), Cohere Trial (non-commercial license).
 
-**Untested (key not held)**: OpenRouter `:free` (20 RPM / 200 RPD, card ❌), DeepSeek (5M tokens / 30-day grant — tool_call leak ~11%).
+**Untested (key not held)**: DeepSeek (5M tokens / 30-day grant — tool_call leak ~11%).
 
 ### Local (verified on eMac M3 Pro 36 GB · ssh tunnel `:11500 → emac:11434`)
 

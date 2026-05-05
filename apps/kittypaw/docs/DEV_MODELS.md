@@ -15,7 +15,7 @@
 
 | 항목 | 비고 |
 |---|---|
-| Vendor 키 | `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY` 환경변수. 키 발급: https://console.groq.com/keys, https://console.mistral.ai/api-keys (Mistral Experiment plan 카드 ❌, 전화번호 인증), https://aistudio.google.com/apikey |
+| Vendor 키 | `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` 환경변수. 키 발급: https://console.groq.com/keys, https://console.mistral.ai/api-keys (Experiment plan 카드 ❌, 전화번호 인증), https://aistudio.google.com/apikey, https://openrouter.ai/keys (free `:free` 모델, 카드 ❌) |
 | `bin/kittypaw` | `make dev-models`가 자동으로 `make build` 거침 |
 | Port `:3001` | 사용자 실 daemon이 `:3000`이면 충돌 X. 다른 환경이면 `KITTYPAW_DEV_PORT=3010 make dev-models`로 override |
 
@@ -29,6 +29,7 @@ cd /Users/jinto/projects/kittypaw/kitty/apps/kittypaw
 export GROQ_API_KEY="gsk_..."
 export MISTRAL_API_KEY="..."
 export GEMINI_API_KEY="AIzaSy..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
 
 make dev-models       # setup → server start → chat REPL 진입
 ```
@@ -64,9 +65,9 @@ API 키 revoke 권장 (시연 후):
 
 ---
 
-## 등록된 5 모델
+## 등록된 6 모델
 
-`scripts/dev-models.sh setup`이 `KITTYPAW_CONFIG_DIR/accounts/default/config.toml`에 박는 기본 5 모델 (cloud OpenAI 호환 wire 4 + Gemini Generative Language API wire 1 — multi-wire 검증 의도):
+`scripts/dev-models.sh setup`이 `KITTYPAW_CONFIG_DIR/accounts/default/config.toml`에 박는 기본 6 모델 (cloud OpenAI 호환 wire 5 + Gemini Generative Language API wire 1 — multi-wire 검증 + provider routing 다양화 의도):
 
 | ID | provider | model | thinking adapter |
 |---|---|---|---|
@@ -75,6 +76,7 @@ API 키 revoke 권장 (시연 후):
 | `mistral-medium` | mistral | `mistral-medium-latest` | non-thinking, AI 자칭 일관 |
 | `ministral-8b` | mistral | `ministral-8b-latest` | non-thinking, 작은 model |
 | `gemini-flash-lite` | gemini | `gemini-2.5-flash-lite` | non-thinking, **별도 wire** (Generative Language API, OpenAI 호환 X) |
+| `openrouter-llama-3.3` | openrouter | `meta-llama/llama-3.3-70b-instruct:free` | non-thinking, **provider routing 변동** (§ 4.6) — production 비추, 다양화 후보 |
 
 `magistral-medium-latest` 등 thinking variant는 본 phase 디폴트 X — 직접 추가 시 KittyPaw가 list-of-blocks content 자동 unwrap (§ 6.7 extractContent).
 
