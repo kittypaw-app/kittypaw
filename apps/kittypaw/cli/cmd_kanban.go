@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -43,6 +46,13 @@ type kanbanClaimFlags struct {
 	workDir string
 }
 
+type kanbanExecFlags struct {
+	shared  *kanbanSharedFlags
+	actor   string
+	workDir string
+	summary string
+}
+
 type kanbanCompleteFlags struct {
 	shared   *kanbanSharedFlags
 	actor    string
@@ -77,6 +87,7 @@ func newKanbanCmd() *cobra.Command {
 		newKanbanCreateCmd(flags),
 		newKanbanListCmd(flags),
 		newKanbanShowCmd(flags),
+		newKanbanExecCmd(flags),
 		newKanbanClaimCmd(flags),
 		newKanbanCompleteCmd(flags),
 		newKanbanBlockCmd(flags),
@@ -149,6 +160,27 @@ func newKanbanClaimCmd(shared *kanbanSharedFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
 	cmd.Flags().StringVar(&flags.workDir, "work-dir", "", "run working directory")
+	return cmd
+}
+
+func newKanbanExecCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanExecFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "exec <task> -- <command> [args...]",
+		Short: "Execute a command for a Kanban task",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return fmt.Errorf("usage: kittypaw kanban exec <task> -- <command> [args...]")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanExec(args[0], args[1:], flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
+	cmd.Flags().StringVar(&flags.workDir, "work-dir", "", "run working directory")
+	cmd.Flags().StringVar(&flags.summary, "summary", "", "completion summary")
 	return cmd
 }
 
@@ -381,6 +413,77 @@ func runKanbanClaim(taskID string, flags *kanbanClaimFlags) error {
 	return nil
 }
 
+func runKanbanExec(taskID string, command []string, flags *kanbanExecFlags) error {
+	if flags == nil {
+		flags = &kanbanExecFlags{shared: &kanbanSharedFlags{}}
+	}
+	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
+		return fmt.Errorf("command is required")
+	}
+	workDir, provider, err := normalizeRunWorkDir(flags.workDir)
+	if err != nil {
+		return err
+	}
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	taskID = strings.TrimSpace(taskID)
+	run, err := st.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{
+		Actor:           strings.TrimSpace(flags.actor),
+		WorkDir:         workDir,
+		WorkDirProvider: provider,
+	})
+	if err != nil {
+		return err
+	}
+
+	started := time.Now()
+	cmd := osexec.Command(command[0], command[1:]...)
+	cmd.Dir = run.WorkDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	runErr := cmd.Run()
+	duration := time.Since(started)
+	exitCode := kanbanExecExitCode(runErr)
+	metadata := kanbanExecMetadata(command, run.ID, exitCode, duration)
+	if runErr != nil {
+		summary := strings.TrimSpace(flags.summary)
+		if summary == "" {
+			summary = kanbanExecDefaultSummary("command failed", command)
+		}
+		recordErr := st.FailKanbanTask(taskID, store.FailKanbanTaskRequest{
+			Actor:        strings.TrimSpace(flags.actor),
+			Summary:      summary,
+			Error:        runErr.Error(),
+			MetadataJSON: metadata,
+		})
+		if recordErr != nil {
+			return fmt.Errorf("command failed (%v); record kanban failure: %w", runErr, recordErr)
+		}
+		return fmt.Errorf("command failed with exit code %d: %w", exitCode, runErr)
+	}
+
+	summary := strings.TrimSpace(flags.summary)
+	if summary == "" {
+		summary = kanbanExecDefaultSummary("command completed", command)
+	}
+	if err := st.CompleteKanbanTask(taskID, store.CompleteKanbanTaskRequest{
+		Actor:        strings.TrimSpace(flags.actor),
+		Summary:      summary,
+		MetadataJSON: metadata,
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("Executed task: %s\n", taskID)
+	fmt.Printf("Run: %s\n", run.ID)
+	fmt.Printf("Work dir: %s\n", run.WorkDir)
+	return nil
+}
+
 func runKanbanComplete(taskID string, flags *kanbanCompleteFlags) error {
 	if flags == nil {
 		flags = &kanbanCompleteFlags{shared: &kanbanSharedFlags{}}
@@ -572,4 +675,32 @@ func validateKanbanMetadata(metadata string) error {
 		return fmt.Errorf("--metadata must be valid JSON")
 	}
 	return nil
+}
+
+func kanbanExecMetadata(command []string, runID string, exitCode int, duration time.Duration) string {
+	raw, err := json.Marshal(map[string]any{
+		"command":     command,
+		"duration_ms": duration.Milliseconds(),
+		"exit_code":   exitCode,
+		"run_id":      runID,
+	})
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func kanbanExecDefaultSummary(prefix string, command []string) string {
+	return prefix + ": " + strings.Join(command, " ")
+}
+
+func kanbanExecExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *osexec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
