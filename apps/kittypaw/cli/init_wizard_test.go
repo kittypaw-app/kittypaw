@@ -196,6 +196,49 @@ func TestWizardLLMDoesNotPrintAPIKeyPreview(t *testing.T) {
 	})
 }
 
+func TestWizardLLMReconfigureExplainsDefaultModelOnlyAndKeepsExtraModels(t *testing.T) {
+	oldCheck := wizardLLMConnectionCheck
+	wizardLLMConnectionCheck = func(context.Context, core.LLMConfig) (bool, error) {
+		return true, nil
+	}
+	t.Cleanup(func() { wizardLLMConnectionCheck = oldCheck })
+
+	existing := core.DefaultConfig()
+	existing.LLM.Provider = "openai"
+	existing.LLM.Model = core.OpenAIDefaultModel
+	existing.LLM.APIKey = "sk-existing"
+	existing.LLM.Default = "main"
+	existing.LLM.Models = []core.ModelConfig{
+		{ID: "main", Provider: "openai", Model: core.OpenAIDefaultModel, Credential: "openai"},
+		{ID: "opus", Provider: "anthropic", Model: "claude-opus-4-7", Credential: "anthropic"},
+		{ID: "haiku", Provider: "anthropic", Model: "claude-haiku-4-5-20251001", Credential: "anthropic"},
+	}
+
+	withTestStdin(t, "\n", func() {
+		scanner := bufio.NewScanner(strings.NewReader("y\n2\n\n"))
+		var w core.WizardResult
+
+		out := captureStdout(t, func() {
+			if err := wizardLLM(scanner, &existing, &w); err != nil {
+				t.Fatalf("wizardLLM: %v", err)
+			}
+		})
+
+		for _, want := range []string{
+			"Default model configured: openai (gpt-5.5)",
+			"Extra models kept: opus, haiku",
+			"Change default model?",
+			"This changes only the default `main` model.",
+			"API Key (Enter=keep existing):",
+			"(keeping existing OpenAI key)",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("output missing %q:\n%s", want, out)
+			}
+		}
+	})
+}
+
 func TestWizardLLMConnectionErrorDoesNotPrintAPIKeyFragments(t *testing.T) {
 	oldCheck := wizardLLMConnectionCheck
 	wizardLLMConnectionCheck = func(context.Context, core.LLMConfig) (bool, error) {

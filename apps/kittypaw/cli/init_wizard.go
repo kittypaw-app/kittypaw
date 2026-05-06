@@ -286,11 +286,16 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 		if existing.LLM.Model != "" {
 			name += " (" + existing.LLM.Model + ")"
 		}
-		fmt.Printf("  ✓ Already configured: %s\n", name)
-		if !promptYesNo(scanner, "  > Reconfigure?", false) {
-			fmt.Println("  (keeping existing LLM)")
+		fmt.Printf("  ✓ Default model configured: %s\n", name)
+		if ids := setupExtraModelIDs(existing); len(ids) > 0 {
+			fmt.Printf("  Extra models kept: %s\n", strings.Join(ids, ", "))
+		}
+		if !promptYesNo(scanner, "  > Change default model?", false) {
+			fmt.Println("  (keeping existing default model)")
 			return nil
 		}
+		fmt.Println("  This changes only the default `main` model.")
+		fmt.Println("  Extra models stay unchanged. Add more named models with --extra-model.")
 	}
 
 	defaultIdx := setupLLMDefaultIndex(existing)
@@ -302,13 +307,13 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 	case 1:
 		provider = "anthropic"
 		var err error
-		apiKey, err = promptPassword("  API Key: ")
+		apiKey, err = promptPassword(setupAPIKeyPrompt(existing, provider))
 		if err != nil {
 			return fmt.Errorf("read API key: %w", err)
 		}
 		if apiKey == "" && existing != nil && existing.LLM.Provider == "anthropic" {
 			apiKey = existing.LLM.APIKey
-			fmt.Println("  (keeping existing key)")
+			fmt.Println("  (keeping existing Anthropic key)")
 		} else if apiKey != "" {
 			fmt.Println("  ✓ API key received")
 		}
@@ -318,13 +323,13 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 	case 2:
 		provider = "openai"
 		var err error
-		apiKey, err = promptPassword("  API Key: ")
+		apiKey, err = promptPassword(setupAPIKeyPrompt(existing, provider))
 		if err != nil {
 			return fmt.Errorf("read API key: %w", err)
 		}
 		if apiKey == "" && existing != nil && existing.LLM.Provider == "openai" && existing.LLM.BaseURL == "" {
 			apiKey = existing.LLM.APIKey
-			fmt.Println("  (keeping existing key)")
+			fmt.Println("  (keeping existing OpenAI key)")
 		} else if apiKey != "" {
 			fmt.Println("  ✓ API key received")
 		}
@@ -334,13 +339,13 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 	case 3:
 		provider = "gemini"
 		var err error
-		apiKey, err = promptPassword("  API Key: ")
+		apiKey, err = promptPassword(setupAPIKeyPrompt(existing, provider))
 		if err != nil {
 			return fmt.Errorf("read API key: %w", err)
 		}
 		if apiKey == "" && existing != nil && existing.LLM.Provider == "gemini" {
 			apiKey = existing.LLM.APIKey
-			fmt.Println("  (keeping existing key)")
+			fmt.Println("  (keeping existing Gemini key)")
 		} else if apiKey != "" {
 			fmt.Println("  ✓ API key received")
 		}
@@ -350,13 +355,13 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 	case 4:
 		provider = "openrouter"
 		var err error
-		apiKey, err = promptPassword("  API Key: ")
+		apiKey, err = promptPassword(setupAPIKeyPrompt(existing, provider))
 		if err != nil {
 			return fmt.Errorf("read API key: %w", err)
 		}
 		if apiKey == "" && existing != nil && existing.LLM.BaseURL == core.OpenRouterBaseURL {
 			apiKey = existing.LLM.APIKey
-			fmt.Println("  (keeping existing key)")
+			fmt.Println("  (keeping existing OpenRouter key)")
 		} else if apiKey != "" {
 			fmt.Println("  ✓ API key received")
 		}
@@ -411,6 +416,46 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 	fmt.Printf("%s %s OK (%dms)\n", resolvedProvider, model, elapsed.Milliseconds())
 
 	return nil
+}
+
+func setupExtraModelIDs(existing *core.Config) []string {
+	if existing == nil {
+		return nil
+	}
+	var ids []string
+	for _, model := range existing.LLM.Models {
+		id := model.ModelID()
+		if id == "" || id == "main" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func setupAPIKeyPrompt(existing *core.Config, provider string) string {
+	if setupCanKeepExistingAPIKey(existing, provider) {
+		return "  API Key (Enter=keep existing): "
+	}
+	return "  API Key: "
+}
+
+func setupCanKeepExistingAPIKey(existing *core.Config, provider string) bool {
+	if existing == nil {
+		return false
+	}
+	switch provider {
+	case "anthropic":
+		return existing.LLM.Provider == "anthropic"
+	case "openai":
+		return existing.LLM.Provider == "openai" && existing.LLM.BaseURL == ""
+	case "gemini":
+		return existing.LLM.Provider == "gemini"
+	case "openrouter":
+		return existing.LLM.BaseURL == core.OpenRouterBaseURL
+	default:
+		return false
+	}
 }
 
 var wizardLLMConnectionCheck = func(ctx context.Context, cfg core.LLMConfig) (bool, error) {
