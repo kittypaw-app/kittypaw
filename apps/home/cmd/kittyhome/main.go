@@ -15,6 +15,7 @@ import (
 	"github.com/kittypaw-app/kittyhome/internal/identity"
 	"github.com/kittypaw-app/kittyhome/internal/openai"
 	"github.com/kittypaw-app/kittyhome/internal/server"
+	"github.com/kittypaw-app/kittyhome/internal/webapp"
 )
 
 var (
@@ -64,9 +65,19 @@ func newRouter(cfg config.Config) (http.Handler, error) {
 	openAIHandler := openai.NewHandler(identity.APIAuthenticator{
 		Verifier: verifier,
 	}, b)
+	hostedWebHandler, err := webapp.New(webapp.Config{
+		PublicBaseURL:  cfg.PublicBaseURL,
+		APIAuthBaseURL: cfg.APIAuthBaseURL,
+		Verifier:       verifier,
+		OpenAIHandler:  openAIHandler.Routes(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("web app: %w", err)
+	}
 	return server.NewRouter(server.Config{
-		Version: cfg.Version,
-		Commit:  cfg.Commit,
+		Version:    cfg.Version,
+		Commit:     cfg.Commit,
+		WebHandler: hostedWebHandler,
 		DaemonHandler: daemonws.NewHandler(identity.DeviceAuthenticator{
 			Verifier: verifier,
 		}, b),

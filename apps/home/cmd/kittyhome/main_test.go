@@ -1,6 +1,9 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kittypaw-app/kittyhome/internal/config"
@@ -56,5 +59,32 @@ func TestNewRouterAcceptsStaticSmokeConfig(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("newRouter returned error: %v", err)
+	}
+}
+
+func TestNewRouterMountsWebLoginRoute(t *testing.T) {
+	router, err := newRouter(config.Config{
+		BindAddr:       ":0",
+		APIToken:       "api-token",
+		DeviceToken:    "device-token",
+		UserID:         "user_1",
+		DeviceID:       "dev_1",
+		LocalAccountID: "alice",
+		PublicBaseURL:  "http://localhost:8080",
+		APIAuthBaseURL: "http://localhost:9714/auth",
+	})
+	if err != nil {
+		t.Fatalf("newRouter returned error: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/auth/login/google", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	if location := w.Header().Get("Location"); !strings.HasPrefix(location, "http://localhost:9714/auth/web/google?") {
+		t.Fatalf("Location = %q, want portal web login URL", location)
 	}
 }

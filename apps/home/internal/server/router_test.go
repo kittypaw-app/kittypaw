@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestHealthReturnsBuildIdentity(t *testing.T) {
@@ -54,5 +56,25 @@ func TestChatRouteRedirectsToSlash(t *testing.T) {
 	}
 	if got := w.Header().Get("Location"); got != "/chat/" {
 		t.Fatalf("Location = %q, want /chat/", got)
+	}
+}
+
+type fakeWebHandler struct{}
+
+func (fakeWebHandler) MountRoutes(r chi.Router) {
+	r.Get("/chat/api/session", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+}
+
+func TestRouterMountsChatBFFRoutesBeforeStaticRoutes(t *testing.T) {
+	r := NewRouter(Config{WebHandler: fakeWebHandler{}})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/chat/api/session", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTeapot {
+		t.Fatalf("status = %d, want 418", w.Code)
 	}
 }
