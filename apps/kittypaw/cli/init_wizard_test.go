@@ -55,6 +55,84 @@ func TestSetupLLMModelChoices(t *testing.T) {
 	}
 }
 
+func TestParseSetupExtraModelSpec(t *testing.T) {
+	got, err := parseSetupExtraModelSpec("id=groq-qwen,provider=openai,model=qwen/qwen3-32b,base_url=https://api.groq.com/openai/v1/chat/completions")
+	if err != nil {
+		t.Fatalf("parseSetupExtraModelSpec: %v", err)
+	}
+	if got.ID != "groq-qwen" || got.Provider != "openai" || got.Model != "qwen/qwen3-32b" {
+		t.Fatalf("model = %#v", got)
+	}
+	if got.BaseURL != "https://api.groq.com/openai/v1/chat/completions" {
+		t.Fatalf("BaseURL = %q", got.BaseURL)
+	}
+	if got.Credential != "groq-qwen" {
+		t.Fatalf("Credential = %q, want groq-qwen for custom base_url", got.Credential)
+	}
+}
+
+func TestParseSetupExtraModelSpecAllowsColonInModel(t *testing.T) {
+	got, err := parseSetupExtraModelSpec("id=openrouter-qwen,provider=openrouter,model=qwen/qwen3-235b-a22b:free")
+	if err != nil {
+		t.Fatalf("parseSetupExtraModelSpec: %v", err)
+	}
+	if got.Model != "qwen/qwen3-235b-a22b:free" {
+		t.Fatalf("Model = %q", got.Model)
+	}
+	if got.BaseURL != core.OpenRouterBaseURL || got.Credential != "openrouter" {
+		t.Fatalf("openrouter model = %#v", got)
+	}
+}
+
+func TestParseSetupExtraModelSpecKeepsCustomOpenRouterModel(t *testing.T) {
+	got, err := parseSetupExtraModelSpec("id=openrouter-llama,provider=openrouter,model=meta-llama/llama-3.3-70b-instruct")
+	if err != nil {
+		t.Fatalf("parseSetupExtraModelSpec: %v", err)
+	}
+	if got.Model != "meta-llama/llama-3.3-70b-instruct" {
+		t.Fatalf("Model = %q", got.Model)
+	}
+	if got.Provider != "openai" || got.BaseURL != core.OpenRouterBaseURL || got.Credential != "openrouter" {
+		t.Fatalf("openrouter model = %#v", got)
+	}
+}
+
+func TestRunNonInteractiveAddsExtraModels(t *testing.T) {
+	w, err := runNonInteractive(setupFlags{
+		provider:       "anthropic",
+		apiKey:         "sk-test",
+		extraModels:    []string{"id=openai-fast,provider=openai,model=gpt-5.5"},
+		extraModelKeys: []string{"openai-fast=sk-openai"},
+	})
+	if err != nil {
+		t.Fatalf("runNonInteractive: %v", err)
+	}
+	if len(w.LLMExtraModels) != 1 {
+		t.Fatalf("LLMExtraModels len = %d", len(w.LLMExtraModels))
+	}
+	if got := w.LLMExtraModels[0]; got.ID != "openai-fast" || got.Provider != "openai" || got.Credential != "openai" {
+		t.Fatalf("extra model = %#v", got)
+	}
+	if w.LLMExtraAPIKeys["openai-fast"] != "sk-openai" {
+		t.Fatalf("extra model key not captured: %#v", w.LLMExtraAPIKeys)
+	}
+}
+
+func TestRunNonInteractiveRejectsUnknownExtraModelAPIKeyID(t *testing.T) {
+	_, err := runNonInteractive(setupFlags{
+		provider:       "anthropic",
+		apiKey:         "sk-test",
+		extraModels:    []string{"id=openai-fast,provider=openai,model=gpt-5.5"},
+		extraModelKeys: []string{"openai-fsat=sk-openai"},
+	})
+	if err == nil {
+		t.Fatal("expected unknown extra model key error")
+	}
+	if !strings.Contains(err.Error(), "unknown extra model id") {
+		t.Fatalf("error = %q", err)
+	}
+}
+
 func TestReadPasswordMaskedLoopCtrlCAborts(t *testing.T) {
 	input := []byte{3}
 	pos := 0

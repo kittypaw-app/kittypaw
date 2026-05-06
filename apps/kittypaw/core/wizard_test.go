@@ -169,6 +169,97 @@ func TestMergeWizardSettings_LLMOpenRouter(t *testing.T) {
 	}
 }
 
+func TestMergeWizardSettings_PreservesExtraModelsOnReconfigure(t *testing.T) {
+	base := DefaultConfig()
+	base.LLM.Default = "main"
+	base.LLM.Models = []ModelConfig{
+		{
+			ID:         "main",
+			Provider:   "anthropic",
+			Model:      ClaudeDefaultModel,
+			Credential: "anthropic",
+			MaxTokens:  4096,
+		},
+		{
+			ID:         "groq-qwen",
+			Provider:   "openai",
+			Model:      "qwen/qwen3-32b",
+			Credential: "groq",
+			BaseURL:    "https://api.groq.com/openai/v1/chat/completions",
+			MaxTokens:  4096,
+		},
+	}
+
+	cfg := MergeWizardSettings(&base, WizardResult{
+		LLMProvider: "openai",
+		LLMAPIKey:   "sk-openai",
+		LLMModel:    OpenAIDefaultModel,
+	})
+
+	if cfg.LLM.Default != "main" {
+		t.Fatalf("LLM.Default = %q, want main", cfg.LLM.Default)
+	}
+	if len(cfg.LLM.Models) != 2 {
+		t.Fatalf("models len = %d, want 2: %#v", len(cfg.LLM.Models), cfg.LLM.Models)
+	}
+	if cfg.LLM.Models[0].ID != "main" || cfg.LLM.Models[0].Model != OpenAIDefaultModel {
+		t.Fatalf("main model = %#v", cfg.LLM.Models[0])
+	}
+	if cfg.LLM.Models[1].ID != "groq-qwen" || cfg.LLM.Models[1].BaseURL == "" {
+		t.Fatalf("extra model not preserved: %#v", cfg.LLM.Models[1])
+	}
+}
+
+func TestMergeWizardSettings_AppendsExtraModels(t *testing.T) {
+	base := DefaultConfig()
+	cfg := MergeWizardSettings(&base, WizardResult{
+		LLMProvider: "anthropic",
+		LLMAPIKey:   "sk-anthropic",
+		LLMModel:    ClaudeDefaultModel,
+		LLMExtraModels: []ModelConfig{{
+			ID:         "openai-fast",
+			Provider:   "openai",
+			Model:      OpenAIDefaultModel,
+			Credential: "openai",
+			MaxTokens:  4096,
+		}},
+	})
+
+	if len(cfg.LLM.Models) != 2 {
+		t.Fatalf("models len = %d, want 2: %#v", len(cfg.LLM.Models), cfg.LLM.Models)
+	}
+	if cfg.LLM.Models[1].ID != "openai-fast" {
+		t.Fatalf("extra model = %#v", cfg.LLM.Models[1])
+	}
+}
+
+func TestSaveWizardSecretsTo_ExtraModelAPIKeys(t *testing.T) {
+	secrets := &SecretsStore{path: filepath.Join(t.TempDir(), "secrets.json"), data: make(map[string]map[string]string)}
+	cfg := DefaultConfig()
+	err := SaveWizardSecretsTo(secrets, WizardResult{
+		LLMProvider: "anthropic",
+		LLMAPIKey:   "sk-anthropic",
+		LLMModel:    ClaudeDefaultModel,
+		LLMExtraModels: []ModelConfig{{
+			ID:         "groq-qwen",
+			Provider:   "openai",
+			Model:      "qwen/qwen3-32b",
+			Credential: "groq-qwen",
+			BaseURL:    "https://api.groq.com/openai/v1/chat/completions",
+		}},
+		LLMExtraAPIKeys: map[string]string{"groq-qwen": "gsk-test"},
+	}, &cfg)
+	if err != nil {
+		t.Fatalf("SaveWizardSecretsTo: %v", err)
+	}
+	if got, ok := secrets.Get("llm/anthropic", "api_key"); !ok || got != "sk-anthropic" {
+		t.Fatalf("main key = (%q, %v)", got, ok)
+	}
+	if got, ok := secrets.Get("llm/groq-qwen", "api_key"); !ok || got != "gsk-test" {
+		t.Fatalf("extra key = (%q, %v)", got, ok)
+	}
+}
+
 func TestMergeWizardSettings_Telegram(t *testing.T) {
 	base := DefaultConfig()
 	base.Channels = []ChannelConfig{

@@ -77,6 +77,11 @@ type WizardResult struct {
 	LLMAPIKey   string
 	LLMModel    string
 	LLMBaseURL  string
+	// Additional named models for the /model command. setup keeps these
+	// alongside the primary "main" model instead of dropping them on
+	// reconfigure.
+	LLMExtraModels  []ModelConfig
+	LLMExtraAPIKeys map[string]string // keyed by model id from LLMExtraModels
 
 	// Telegram
 	TelegramBotToken string
@@ -145,15 +150,16 @@ func MergeWizardSettings(existing *Config, w WizardResult) *Config {
 	// (including empty values) to avoid stale keys when switching providers.
 	if w.LLMProvider != "" {
 		credential := wizardLLMCredential(w)
-		cfg.LLM.Default = "main"
-		cfg.LLM.Models = []ModelConfig{{
+		main := ModelConfig{
 			ID:         "main",
 			Provider:   w.LLMProvider,
 			Model:      w.LLMModel,
 			Credential: credential,
 			MaxTokens:  4096,
 			BaseURL:    w.LLMBaseURL,
-		}}
+		}
+		cfg.LLM.Default = "main"
+		cfg.LLM.Models = mergeWizardModels(existing, main, w.LLMExtraModels)
 		cfg.LLM.Provider = w.LLMProvider
 		cfg.LLM.APIKey = w.LLMAPIKey
 		cfg.LLM.BaseURL = w.LLMBaseURL
@@ -228,6 +234,42 @@ func MergeWizardSettings(existing *Config, w WizardResult) *Config {
 	return &cfg
 }
 
+func mergeWizardModels(existing *Config, main ModelConfig, extras []ModelConfig) []ModelConfig {
+	models := []ModelConfig{main}
+	seen := map[string]bool{main.ModelID(): true}
+
+	if existing != nil {
+		for _, m := range existing.LLM.Models {
+			id := m.ModelID()
+			if id == "" || id == main.ModelID() || seen[id] {
+				continue
+			}
+			models = append(models, m)
+			seen[id] = true
+		}
+	}
+
+	for _, m := range extras {
+		id := m.ModelID()
+		if id == "" || id == main.ModelID() {
+			continue
+		}
+		replaced := false
+		for i := range models {
+			if models[i].ModelID() == id {
+				models[i] = m
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			models = append(models, m)
+		}
+		seen[id] = true
+	}
+	return models
+}
+
 func SaveWizardSecrets(accountID string, w WizardResult, cfg *Config) error {
 	secrets, err := LoadAccountSecrets(accountID)
 	if err != nil {
@@ -243,6 +285,16 @@ func SaveWizardSecretsTo(secrets *SecretsStore, w WizardResult, cfg *Config) err
 	if w.LLMProvider != "" && w.LLMAPIKey != "" {
 		credential := wizardLLMCredential(w)
 		if err := secrets.Set("llm/"+credential, "api_key", w.LLMAPIKey); err != nil {
+			return err
+		}
+	}
+	for _, model := range w.LLMExtraModels {
+		id := model.ModelID()
+		key := strings.TrimSpace(w.LLMExtraAPIKeys[id])
+		if id == "" || key == "" {
+			continue
+		}
+		if err := secrets.Set("llm/"+model.SecretID(), "api_key", key); err != nil {
 			return err
 		}
 	}

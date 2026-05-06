@@ -567,6 +567,43 @@ func TestRunSetupPassesResolvedAccountToWizard(t *testing.T) {
 	}
 }
 
+func TestRunSetupWritesExtraModelsAndSecrets(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	auth := core.NewLocalAuthStore(filepath.Join(root, "accounts"))
+	if err := auth.CreateUser("alice", "existing-password"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	cmd := newSetupCmd()
+	flags := setupTestFlags("alice")
+	flags.extraModels = []string{"id=openai-fast,provider=openai,model=gpt-5.5"}
+	flags.extraModelKeys = []string{"openai-fast=sk-openai"}
+
+	if err := runSetup(cmd, &flags); err != nil {
+		t.Fatalf("runSetup: %v", err)
+	}
+	cfg, err := core.LoadConfig(filepath.Join(root, "accounts", "alice", "config.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(cfg.LLM.Models) != 2 {
+		t.Fatalf("models len = %d, want 2: %#v", len(cfg.LLM.Models), cfg.LLM.Models)
+	}
+	if cfg.LLM.Models[0].ID != "main" || cfg.LLM.Models[1].ID != "openai-fast" {
+		t.Fatalf("models = %#v", cfg.LLM.Models)
+	}
+	secrets, err := core.LoadAccountSecrets("alice")
+	if err != nil {
+		t.Fatalf("LoadAccountSecrets: %v", err)
+	}
+	if got, ok := secrets.Get("llm/openai", "api_key"); !ok || got != "sk-openai" {
+		t.Fatalf("extra model key = (%q, %v)", got, ok)
+	}
+}
+
 func TestSetupMultipleAccountsRequiresExplicitBeforeWriting(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)

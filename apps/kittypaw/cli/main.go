@@ -248,6 +248,8 @@ func newSetupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&flags.apiKey, "api-key", "", "LLM API key")
 	cmd.Flags().StringVar(&flags.localURL, "local-url", "", "Local LLM URL (default: http://localhost:11434/v1)")
 	cmd.Flags().StringVar(&flags.localModel, "local-model", "", "Local LLM model name")
+	cmd.Flags().StringArrayVar(&flags.extraModels, "extra-model", nil, "Additional named model for /model, format: id=<id>,provider=<provider>,model=<model>[,base_url=<url>] (repeatable)")
+	cmd.Flags().StringArrayVar(&flags.extraModelKeys, "extra-model-api-key", nil, "API key for an --extra-model, format: <id>=<api-key> (repeatable; visible in ps like --api-key)")
 	cmd.Flags().StringVar(&flags.telegramToken, "telegram-token", "", "Telegram bot token")
 	cmd.Flags().StringVar(&flags.telegramChatID, "telegram-chat-id", "", "Telegram chat ID")
 	cmd.Flags().StringVar(&flags.firecrawlKey, "firecrawl-api-key", "", "Firecrawl API key for web search")

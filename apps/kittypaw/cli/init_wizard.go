@@ -32,6 +32,8 @@ type setupFlags struct {
 	apiKey         string
 	localURL       string
 	localModel     string
+	extraModels    []string
+	extraModelKeys []string
 	telegramToken  string
 	telegramChatID string
 	firecrawlKey   string
@@ -147,7 +149,128 @@ func runNonInteractive(flags setupFlags) (core.WizardResult, error) {
 
 	w.FirecrawlKey = flags.firecrawlKey
 	w.HTTPAccess = flags.httpAccess
+	extraKeys, err := parseExtraModelAPIKeys(flags.extraModelKeys)
+	if err != nil {
+		return w, err
+	}
+	if len(extraKeys) > 0 {
+		w.LLMExtraAPIKeys = extraKeys
+	}
+	for _, spec := range flags.extraModels {
+		model, err := parseSetupExtraModelSpec(spec)
+		if err != nil {
+			return w, err
+		}
+		w.LLMExtraModels = append(w.LLMExtraModels, model)
+	}
+	if err := validateExtraModelAPIKeys(w.LLMExtraModels, extraKeys); err != nil {
+		return w, err
+	}
 	return w, nil
+}
+
+func parseExtraModelAPIKeys(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(values))
+	for _, raw := range values {
+		id, key, ok := strings.Cut(strings.TrimSpace(raw), "=")
+		id = strings.TrimSpace(id)
+		key = strings.TrimSpace(key)
+		if !ok || id == "" || key == "" {
+			return nil, fmt.Errorf("--extra-model-api-key must be id=api_key")
+		}
+		out[id] = key
+	}
+	return out, nil
+}
+
+func validateExtraModelAPIKeys(models []core.ModelConfig, keys map[string]string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	ids := make(map[string]bool, len(models))
+	for _, model := range models {
+		if id := model.ModelID(); id != "" {
+			ids[id] = true
+		}
+	}
+	for id := range keys {
+		if !ids[id] {
+			return fmt.Errorf("--extra-model-api-key references unknown extra model id %q", id)
+		}
+	}
+	return nil
+}
+
+func parseSetupExtraModelSpec(spec string) (core.ModelConfig, error) {
+	fields, err := parseExtraModelFields(spec)
+	if err != nil {
+		return core.ModelConfig{}, err
+	}
+	id := fields["id"]
+	provider := fields["provider"]
+	modelName := fields["model"]
+	baseURL := fields["base_url"]
+	if id == "" || provider == "" || modelName == "" {
+		return core.ModelConfig{}, fmt.Errorf("--extra-model must include id, provider, and model")
+	}
+	if id == "main" {
+		return core.ModelConfig{}, fmt.Errorf("--extra-model id %q is reserved for the setup default model", id)
+	}
+	resolvedProvider, model, resolvedBaseURL := core.ResolveLLMConfig(provider, baseURL, modelName)
+	if strings.EqualFold(provider, "openrouter") {
+		resolvedProvider = "openai"
+		model = modelName
+		resolvedBaseURL = core.OpenRouterBaseURL
+	}
+	if resolvedProvider == "" || model == "" {
+		return core.ModelConfig{}, fmt.Errorf("--extra-model has unknown provider/model: %s", spec)
+	}
+	if baseURL != "" {
+		resolvedBaseURL = strings.TrimRight(baseURL, "/")
+		if !strings.HasSuffix(resolvedBaseURL, "/chat/completions") {
+			resolvedBaseURL += "/chat/completions"
+		}
+	}
+	credential := resolvedProvider
+	if resolvedBaseURL == core.OpenRouterBaseURL {
+		credential = "openrouter"
+	} else if resolvedBaseURL != "" {
+		credential = id
+	}
+	return core.ModelConfig{
+		ID:         id,
+		Provider:   resolvedProvider,
+		Model:      model,
+		Credential: credential,
+		BaseURL:    resolvedBaseURL,
+		MaxTokens:  4096,
+	}, nil
+}
+
+func parseExtraModelFields(spec string) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, part := range strings.Split(strings.TrimSpace(spec), ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, fmt.Errorf("--extra-model must use key=value fields")
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		switch k {
+		case "id", "provider", "model", "base_url":
+			out[k] = v
+		default:
+			return nil, fmt.Errorf("--extra-model unknown field %q", k)
+		}
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------
