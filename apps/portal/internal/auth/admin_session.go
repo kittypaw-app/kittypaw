@@ -17,6 +17,11 @@ const (
 	stateMetaModeAdmin        = "admin"
 	stateMetaKeyAdminReturnTo = "admin_return_to"
 	defaultAdminReturnTo      = "/admin/connect"
+
+	// maxAdminReturnToLen bounds the public /admin/login return target before
+	// storing it in OAuth state metadata. Legitimate admin paths are short; 1KiB
+	// is intentionally aligned with the web OAuth state cap.
+	maxAdminReturnToLen = 1024
 )
 
 // HandleAdminGoogleLogin starts a browser session flow for portal operators.
@@ -77,6 +82,9 @@ func (h *OAuthHandler) emitAdminCallback(w http.ResponseWriter, r *http.Request,
 func sanitizeAdminReturnTo(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
+		return defaultAdminReturnTo
+	}
+	if len(raw) > maxAdminReturnToLen {
 		return defaultAdminReturnTo
 	}
 	u, err := url.Parse(raw)
