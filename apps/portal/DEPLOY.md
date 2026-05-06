@@ -17,6 +17,7 @@ CONNECT_BASE_URL=https://connect.kittypaw.app
 API_BASE_URL=https://api.kittypaw.app
 DATABASE_URL=postgres://...
 JWT_PRIVATE_KEY_PEM_B64=
+PORTAL_ADMIN_EMAILS=admin@example.com
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # GOOGLE_AUTH_URL=        # unset in prod; local fake OAuth only
@@ -47,6 +48,11 @@ X Connect는 `CONNECT_X_CLIENT_ID`/`CONNECT_X_CLIENT_SECRET`을 사용합니다.
 X Developer Portal의 OAuth 2.0 callback URL은
 `https://connect.kittypaw.app/connect/x/callback`로 정확히 등록합니다.
 초기 scope는 read-only `tweet.read users.read offline.access`입니다.
+
+`/admin/connect`는 `portal.kittypaw.app`에서만 제공됩니다. 일반 portal
+login을 먼저 통과한 뒤 `PORTAL_ADMIN_EMAILS` allowlist에 포함된 이메일만
+접근할 수 있습니다. `connect.kittypaw.app`는 외부 계정 연결 surface이므로
+admin route를 제공하면 안 됩니다.
 
 nginx의 `server_name`에는 portal과 connect host를 모두 넣습니다:
 
@@ -80,6 +86,7 @@ curl https://connect.kittypaw.app/
 curl https://connect.kittypaw.app/connect
 curl https://connect.kittypaw.app/discovery           # 404
 curl https://portal.kittypaw.app/connect              # 404
+curl -i https://connect.kittypaw.app/admin/connect    # 404
 bash deploy/smoke.sh
 ```
 

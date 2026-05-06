@@ -35,6 +35,21 @@ X/Twitter는 native read-only OAuth 2.0 PKCE flow로 연결합니다.
    X API는 Developer App/plan 제약을 받습니다. v1 구현은 read-only이며,
    KittyPaw 엔진은 한 호출당 최대 10개 결과로 제한합니다.
 
+## Connect Admin
+
+X is cost-bearing for KittyPaw. Do not open X Connect to all users.
+
+Before a user can run `kittypaw connect x`, an admin must:
+
+1. sign in to `https://portal.kittypaw.app`;
+2. open `/admin/connect`;
+3. grant X entitlement to that user;
+4. record a quota note such as `monthly_post_reads=100`.
+
+Phase 0 gates X connection. It does not centrally meter local X API calls after
+the token is stored in the local KittyPaw account. Public X access requires a
+future server-brokered usage path.
+
 ## 배포 직후
 
 1. Host routing smoke
