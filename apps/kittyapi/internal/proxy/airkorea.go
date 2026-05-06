@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	airKoreaBaseURL  = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc"
-	airKoreaCacheTTL = 30 * time.Minute
-	maxResponseBody  = 1 << 20 // 1 MB
+	airKoreaBaseURL         = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc"
+	airKoreaCacheTTL        = 30 * time.Minute
+	maxResponseBody         = 1 << 20 // 1 MB
+	airKoreaRealtimeVersion = "1.3"
 )
 
 // AirKoreaHandler proxies requests to the AirKorea (에어코리아) public data API.
@@ -38,7 +39,8 @@ func (h *AirKoreaHandler) baseURL() string {
 func (h *AirKoreaHandler) RealtimeByStation() http.HandlerFunc {
 	return h.endpoint("/getMsrstnAcctoRltmMesureDnsty",
 		[]string{"stationName", "dataTerm"},
-		[]string{"stationName", "dataTerm", "pageNo", "numOfRows"},
+		[]string{"stationName", "dataTerm", "pageNo", "numOfRows", "ver"},
+		airKoreaRealtimeVersion,
 	)
 }
 
@@ -46,7 +48,8 @@ func (h *AirKoreaHandler) RealtimeByStation() http.HandlerFunc {
 func (h *AirKoreaHandler) RealtimeByCity() http.HandlerFunc {
 	return h.endpoint("/getCtprvnRltmMesureDnsty",
 		[]string{"sidoName"},
-		[]string{"sidoName", "pageNo", "numOfRows"},
+		[]string{"sidoName", "pageNo", "numOfRows", "ver"},
+		airKoreaRealtimeVersion,
 	)
 }
 
@@ -55,6 +58,7 @@ func (h *AirKoreaHandler) Forecast() http.HandlerFunc {
 	return h.endpoint("/getMinuDustFrcstDspth",
 		nil,
 		[]string{"searchDate", "informCode", "pageNo", "numOfRows"},
+		"",
 	)
 }
 
@@ -63,6 +67,7 @@ func (h *AirKoreaHandler) WeeklyForecast() http.HandlerFunc {
 	return h.endpoint("/getMinuDustWeekFrcstDspth",
 		nil,
 		[]string{"searchDate", "pageNo", "numOfRows"},
+		"",
 	)
 }
 
@@ -71,10 +76,11 @@ func (h *AirKoreaHandler) UnhealthyStations() http.HandlerFunc {
 	return h.endpoint("/getUnityAirEnvrnIdexSnstiveAboveMsrstnList",
 		nil,
 		[]string{"pageNo", "numOfRows"},
+		"",
 	)
 }
 
-func (h *AirKoreaHandler) endpoint(path string, required, allowed []string) http.HandlerFunc {
+func (h *AirKoreaHandler) endpoint(path string, required, allowed []string, defaultVer string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 
@@ -90,6 +96,9 @@ func (h *AirKoreaHandler) endpoint(path string, required, allowed []string) http
 			if v := q.Get(p); v != "" {
 				upstream.Set(p, v)
 			}
+		}
+		if defaultVer != "" && upstream.Get("ver") == "" {
+			upstream.Set("ver", defaultVer)
 		}
 		upstream.Set("serviceKey", h.APIKey)
 		upstream.Set("returnType", "json")

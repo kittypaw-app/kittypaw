@@ -49,6 +49,73 @@ func TestRealtimeByStation(t *testing.T) {
 	}
 }
 
+func TestRealtimeEndpointsDefaultToVersion13(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler func(*proxy.AirKoreaHandler) http.HandlerFunc
+		target  string
+	}{
+		{
+			name:    "station",
+			handler: (*proxy.AirKoreaHandler).RealtimeByStation,
+			target:  "/v1/air/airkorea/realtime/station?stationName=종로구&dataTerm=DAILY",
+		},
+		{
+			name:    "city",
+			handler: (*proxy.AirKoreaHandler).RealtimeByCity,
+			target:  "/v1/air/airkorea/realtime/city?sidoName=서울",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotVer string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotVer = r.URL.Query().Get("ver")
+				_, _ = w.Write([]byte(`{"response":{"header":{"resultCode":"00"}}}`))
+			}))
+			defer upstream.Close()
+
+			h, c := newTestHandler(upstream.URL)
+			defer c.Close()
+
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			w := httptest.NewRecorder()
+			tt.handler(h).ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+			if gotVer != "1.3" {
+				t.Fatalf("upstream ver = %q, want 1.3 for PM2.5 fields", gotVer)
+			}
+		})
+	}
+}
+
+func TestRealtimeEndpointsForwardExplicitVersion(t *testing.T) {
+	var gotVer string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotVer = r.URL.Query().Get("ver")
+		_, _ = w.Write([]byte(`{"response":{"header":{"resultCode":"00"}}}`))
+	}))
+	defer upstream.Close()
+
+	h, c := newTestHandler(upstream.URL)
+	defer c.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/air/airkorea/realtime/station?stationName=종로구&dataTerm=DAILY&ver=1.2", nil)
+	w := httptest.NewRecorder()
+	h.RealtimeByStation().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if gotVer != "1.2" {
+		t.Fatalf("upstream ver = %q, want explicit client version", gotVer)
+	}
+}
+
 func TestRealtimeByStationMissingParams(t *testing.T) {
 	h, c := newTestHandler("")
 	defer c.Close()
