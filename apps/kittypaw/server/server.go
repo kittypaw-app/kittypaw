@@ -488,6 +488,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			r.Get("/kanban/tasks/{task}", s.handleKanbanTaskShow)
 			r.Post("/kanban/tasks/{task}/claim", s.handleKanbanTaskClaim)
 			r.Post("/kanban/tasks/{task}/complete", s.handleKanbanTaskComplete)
+			r.Post("/kanban/tasks/{task}/fail", s.handleKanbanTaskFail)
 			r.Post("/kanban/tasks/{task}/block", s.handleKanbanTaskBlock)
 			r.Post("/kanban/tasks/{task}/unblock", s.handleKanbanTaskUnblock)
 			r.Get("/kanban/tasks/{task}/comments", s.handleKanbanTaskCommentsList)
