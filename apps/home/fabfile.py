@@ -9,10 +9,10 @@ from pathlib import Path
 
 from fabric import task
 
-HOST = os.environ.get("DEPLOY_HOST", "second")
-DOMAIN = os.environ.get("DEPLOY_DOMAIN", "home.kittypaw.app")
-REMOTE_DIR = os.environ.get("DEPLOY_REMOTE_DIR", "/home/jinto/kittyhome")
-SERVICE_USER = os.environ.get("DEPLOY_USER", "jinto")
+HOST = os.environ.get("DEPLOY_HOST") or "second"
+DOMAIN = os.environ.get("DEPLOY_DOMAIN") or "home.kittypaw.app"
+REMOTE_DIR = os.environ.get("DEPLOY_REMOTE_DIR") or "/home/jinto/kittyhome"
+SERVICE_USER = os.environ.get("DEPLOY_USER") or "jinto"
 SERVICE_GROUP = os.environ.get("DEPLOY_GROUP", SERVICE_USER)
 SERVICE = "kittyhome"
 BINARY = "kittyhome"

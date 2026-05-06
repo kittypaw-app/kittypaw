@@ -47,7 +47,7 @@
 
 - [ ] Update `apps/home/DEPLOY.md` with `uv run fab setup`, `uv run fab deploy`, `uv run fab smoke`, `uv run fab rollback`, `uv run fab status`, and `uv run fab logs`.
 - [ ] Update `deploy/home/README.md` to mention `apps/home/fabfile.py` and production Home service ownership.
-- [ ] Update `scripts/smoke-local.sh` so deploy shell syntax includes `apps/home/deploy/smoke.sh` and deploy Python syntax includes `apps/home/fabfile.py`.
+- [ ] Update `scripts/smoke-local.sh` so deploy shell syntax includes `apps/home/deploy/smoke.sh`, deploy Python syntax includes `apps/home/fabfile.py`, Go tests include `./apps/home/...`, and hosted relay in-process smoke includes `apps/home`.
 - [ ] Run `bash -n apps/home/deploy/smoke.sh`.
 - [ ] Run `python3 -m py_compile apps/home/fabfile.py`.
 - [ ] Run `cd apps/home && make smoke-local`.

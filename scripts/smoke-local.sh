@@ -37,10 +37,12 @@ section "go tests"
 run go test ./apps/kittyapi/... -count=1
 run go test ./apps/portal/... -count=1
 run go test ./apps/chat/... -count=1
+run go test ./apps/home/... -count=1
 run go test ./apps/kakao/... -count=1
 run go test ./apps/kittypaw/... -count=1
 
-section "chat in-process e2e"
+section "hosted relay in-process e2e"
 run make -C "$ROOT/apps/chat" smoke-local
+run make -C "$ROOT/apps/home" smoke-local
 
 section "done"
