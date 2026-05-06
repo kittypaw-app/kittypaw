@@ -49,6 +49,7 @@ type Config struct {
 	ChatRelayURL              string
 	APIBaseURL                string
 	SkillsRegistryURL         string
+	PortalAdminEmails         []string
 	// WebRedirectURIAllowlist — exact-match list of redirect_uri values
 	// accepted by the web OAuth flow (Plan 25). CSV from env. Empty list
 	// disables the web flow entirely (HandleWebGoogleLogin will reject
@@ -86,6 +87,7 @@ func Load() (*Config, error) {
 		ChatRelayURL:              os.Getenv("CHAT_RELAY_URL"),
 		APIBaseURL:                os.Getenv("API_BASE_URL"),
 		SkillsRegistryURL:         env("SKILLS_REGISTRY_URL", "https://github.com/kittypaw-app/skills"),
+		PortalAdminEmails:         splitLowerCSV(os.Getenv("PORTAL_ADMIN_EMAILS")),
 	}
 
 	required := map[string]string{
@@ -170,6 +172,7 @@ func LoadForTest() *Config {
 		SpaceBaseURL:              "https://space.kittypaw.app",
 		APIBaseURL:                env("BASE_URL", "http://localhost:8080"),
 		AllowedOrigins:            []string{"http://localhost:8080"},
+		PortalAdminEmails:         []string{"admin@example.com"},
 		JWTPrivateKey:             priv,
 		JWTKID:                    kid,
 	}
@@ -214,6 +217,17 @@ func splitCSV(raw string) []string {
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func splitLowerCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.ToLower(strings.TrimSpace(part)); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}

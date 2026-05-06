@@ -20,9 +20,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/kittypaw-app/kittyportal/internal/admin"
 	"github.com/kittypaw-app/kittyportal/internal/auth"
 	"github.com/kittypaw-app/kittyportal/internal/config"
 	"github.com/kittypaw-app/kittyportal/internal/connect"
+	"github.com/kittypaw-app/kittyportal/internal/connectadmin"
 	"github.com/kittypaw-app/kittyportal/internal/janitor"
 	"github.com/kittypaw-app/kittyportal/internal/model"
 	"github.com/kittypaw-app/kittyportal/internal/ratelimit"
@@ -83,8 +85,16 @@ func run() error {
 	userStore := model.NewUserStore(pool)
 	refreshStore := model.NewRefreshTokenStore(pool)
 	deviceStore := model.NewDeviceStore(pool)
+	connectAdminStore := connectadmin.NewStore(pool)
+	connectRegistry := connectadmin.DefaultProviderRegistry(connectadmin.ProviderRegistryConfig{
+		GmailConfigured: cfg.ConnectGoogleClientID != "" && cfg.ConnectGoogleClientSecret != "",
+		XConfigured:     cfg.ConnectXClientID != "" && cfg.ConnectXClientSecret != "",
+	})
+	if err := connectAdminStore.EnsureDefaultPolicies(ctx, connectRegistry); err != nil {
+		return fmt.Errorf("seed connect policies: %w", err)
+	}
 
-	router, cleanup := NewRouter(cfg, userStore, refreshStore, deviceStore)
+	router, cleanup := NewRouter(cfg, userStore, refreshStore, deviceStore, connectAdminStore)
 	defer cleanup()
 
 	go janitor.New(deviceStore, refreshStore, janitor.DefaultPolicy, nil).Run(ctx)
@@ -158,7 +168,7 @@ func serveHTTP(srv *http.Server, unixSocket string) error {
 
 // NewRouter builds the portal router and returns it with a cleanup hook
 // for the in-memory state stores and rate limiter.
-func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model.RefreshTokenStore, deviceStore model.DeviceStore) (*chi.Mux, func()) {
+func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model.RefreshTokenStore, deviceStore model.DeviceStore, connectAdminStore connectadmin.Store) (*chi.Mux, func()) {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -180,17 +190,18 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 	webCodes := auth.NewWebCodeStore()
 	connectCodes := connect.NewCodeStore(connect.CodeStoreOptions{})
 	oauthHandler := &auth.OAuthHandler{
-		UserStore:         userStore,
-		RefreshTokenStore: refreshStore,
-		DeviceStore:       deviceStore,
-		WebCodeStore:      webCodes,
-		StateStore:        states,
-		JWTPrivateKey:     cfg.JWTPrivateKey,
-		JWTKID:            cfg.JWTKID,
-		HTTPClient:        &http.Client{Timeout: 10 * time.Second},
-		GoogleAuthURL:     cfg.GoogleAuthURL,
-		GoogleTokenURL:    cfg.GoogleTokenURL,
-		GoogleUserInfoURL: cfg.GoogleUserInfoURL,
+		UserStore:                userStore,
+		RefreshTokenStore:        refreshStore,
+		DeviceStore:              deviceStore,
+		WebCodeStore:             webCodes,
+		StateStore:               states,
+		JWTPrivateKey:            cfg.JWTPrivateKey,
+		JWTKID:                   cfg.JWTKID,
+		AdminSessionCookieSecure: isHTTPSURL(cfg.BaseURL),
+		HTTPClient:               &http.Client{Timeout: 10 * time.Second},
+		GoogleAuthURL:            cfg.GoogleAuthURL,
+		GoogleTokenURL:           cfg.GoogleTokenURL,
+		GoogleUserInfoURL:        cfg.GoogleUserInfoURL,
 	}
 
 	cliCodes := auth.NewCLICodeStore()
@@ -225,7 +236,12 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 	}
 
 	identityOnly := hostBoundaryMiddleware(cfg.BaseURL, cfg.APIBaseURL, cfg.BaseURL)
+	portalOnly := hostOnlyMiddleware(cfg.BaseURL)
 	connectOnly := hostOnlyMiddleware(cfg.ConnectBaseURL)
+	connectRegistry := connectadmin.DefaultProviderRegistry(connectadmin.ProviderRegistryConfig{
+		GmailConfigured: cfg.ConnectGoogleClientID != "" && cfg.ConnectGoogleClientSecret != "",
+		XConfigured:     cfg.ConnectXClientID != "" && cfg.ConnectXClientSecret != "",
+	})
 
 	r.Get("/health", handleHealth)
 
@@ -252,6 +268,8 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			states,
 			connectCodes,
 		)
+		connectHandler.PreauthStore = connect.NewPreauthStore(connect.PreauthStoreOptions{})
+		connectHandler.Entitlements = connectAdminStore
 		r.Group(func(r chi.Router) {
 			r.Use(connectOnly)
 			r.Get("/connect", handleConnectHome(cfg))
@@ -259,10 +277,37 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.Get("/connect/gmail/login", connectHandler.HandleGmailLogin())
 			r.Get("/connect/gmail/callback", connectHandler.HandleGmailCallback())
 			r.Get("/connect/x/login", connectHandler.HandleXLogin())
+			r.With(authMW).Post("/connect/x/sessions", connectHandler.HandleXSession())
 			r.Get("/connect/x/callback", connectHandler.HandleXCallback())
 			r.Post("/connect/cli/exchange", connectHandler.HandleCLIExchange())
 			r.Post("/connect/gmail/refresh", connectHandler.HandleGmailRefresh())
 			r.Post("/connect/x/refresh", connectHandler.HandleXRefresh())
+		})
+	}
+
+	if connectAdminStore != nil {
+		connectAdminHandler := connectadmin.NewHandler(connectadmin.HandlerOptions{
+			Registry:         connectRegistry,
+			Store:            connectAdminStore,
+			UserStore:        userStore,
+			CSRFCookieSecure: isHTTPSURL(cfg.BaseURL),
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(portalOnly)
+			r.Get("/admin/login", oauthHandler.HandleAdminGoogleLogin(googleCfg))
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(portalOnly)
+			r.Use(admin.AuthMiddleware(jwksProvider, userStore))
+			r.Use(admin.Middleware(cfg.PortalAdminEmails))
+			r.Get("/admin/connect", connectAdminHandler.HandleHome())
+			r.Get("/admin/connect/", connectAdminHandler.HandleHome())
+			r.Get("/admin/connect/users", connectAdminHandler.HandleUsers())
+			r.Get("/admin/connect/users/", connectAdminHandler.HandleUsers())
+			r.Post("/admin/connect/users", connectAdminHandler.HandleUserProviderUpdateFromForm())
+			r.Post("/admin/connect/users/{user_id}/providers/{provider_id}", func(w http.ResponseWriter, req *http.Request) {
+				connectAdminHandler.HandleUserProviderUpdate(chi.URLParam(req, "user_id"), chi.URLParam(req, "provider_id"))(w, req)
+			})
 		})
 	}
 
@@ -393,6 +438,11 @@ func canonicalHost(hostport string) string {
 		hostport = host
 	}
 	return strings.ToLower(strings.Trim(hostport, "[]"))
+}
+
+func isHTTPSURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	return err == nil && strings.EqualFold(u.Scheme, "https")
 }
 
 func isLocalRequestHost(host string) bool {

@@ -2,7 +2,9 @@ package connect
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
+	"github.com/kittypaw-app/kittyportal/internal/model"
 )
 
 func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptest.Server) {
@@ -76,6 +79,18 @@ func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptes
 	return NewHandler(provider, xProvider, states, codes), states, codes, fakeOAuth
 }
 
+type fakeEntitlementChecker struct {
+	allowed bool
+	err     error
+}
+
+func (c fakeEntitlementChecker) UserAllowed(context.Context, string, string) (bool, error) {
+	if c.err != nil {
+		return false, c.err
+	}
+	return c.allowed, nil
+}
+
 func TestHandlerGmailLoginRedirectsToGoogle(t *testing.T) {
 	h, _, _, fakeGoogle := testHandler(t)
 
@@ -119,7 +134,7 @@ func TestHandlerGmailLoginRejectsInvalidModeAndPort(t *testing.T) {
 
 func TestHandlerGmailCallbackReturnsOnlyOneTimeCode(t *testing.T) {
 	h, states, _, _ := testHandler(t)
-	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "http", "port": "12345"})
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "http", "port": "12345", "provider": GmailProviderID})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -150,7 +165,7 @@ func TestHandlerGmailCallbackReturnsOnlyOneTimeCode(t *testing.T) {
 
 func TestHandlerCodeModeAndExchangeConsumeOnce(t *testing.T) {
 	h, states, _, _ := testHandler(t)
-	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code"})
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": GmailProviderID})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -203,19 +218,105 @@ func TestHandlerRefresh(t *testing.T) {
 	}
 }
 
-func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
-	h, states, _, fakeOAuth := testHandler(t)
+func TestHandlerXSessionRequiresEntitlement(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	h.Entitlements = fakeEntitlementChecker{allowed: false}
+
+	req := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"code"}`))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.HandleXSession()(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlerXSessionReturnsLoginURL(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	h.Entitlements = fakeEntitlementChecker{allowed: true}
+
+	req := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"http","port":"12345"}`))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.HandleXSession()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Fatalf("Location = %q, want no redirect", loc)
+	}
+	var body struct {
+		LoginURL string `json:"login_url"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.HasPrefix(body.LoginURL, "https://connect.kittypaw.app/connect/x/login?session=") {
+		t.Fatalf("login_url = %q", body.LoginURL)
+	}
+	assertSensitiveResponseHeaders(t, w.Header())
+}
+
+func TestHandlerXSessionFailsClosedOnEntitlementError(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	h.Entitlements = fakeEntitlementChecker{allowed: true, err: errors.New("boom")}
+
+	req := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"code"}`))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.HandleXSession()(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlerXLoginRequiresPreauthSession(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
 
 	login := httptest.NewRecorder()
 	h.HandleXLogin()(login, httptest.NewRequest(http.MethodGet, "/connect/x/login?mode=code", nil))
+	if login.Code != http.StatusUnauthorized && login.Code != http.StatusForbidden {
+		t.Fatalf("login status = %d, want 401 or 403; body=%s", login.Code, login.Body.String())
+	}
+	if loc := login.Header().Get("Location"); loc != "" {
+		t.Fatalf("Location = %q, want no redirect", loc)
+	}
+}
+
+func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
+	h, states, _, fakeOAuth := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	session, err := h.PreauthStore.Create(PreauthSession{
+		UserID:   "user-1",
+		Provider: XProviderID,
+		Mode:     "code",
+	})
+	if err != nil {
+		t.Fatalf("Create preauth: %v", err)
+	}
+
+	login := httptest.NewRecorder()
+	h.HandleXLogin()(login, httptest.NewRequest(http.MethodGet, "/connect/x/login?session="+url.QueryEscape(session), nil))
 	if login.Code != http.StatusFound {
 		t.Fatalf("login status = %d; body=%s", login.Code, login.Body.String())
 	}
 	if loc := login.Header().Get("Location"); !strings.HasPrefix(loc, fakeOAuth.URL+"/auth?") {
 		t.Fatalf("login Location = %q", loc)
 	}
+	replay := httptest.NewRecorder()
+	h.HandleXLogin()(replay, httptest.NewRequest(http.MethodGet, "/connect/x/login?session="+url.QueryEscape(session), nil))
+	if replay.Code != http.StatusUnauthorized {
+		t.Fatalf("replay status = %d, want 401; body=%s", replay.Code, replay.Body.String())
+	}
 
-	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code"})
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": XProviderID})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -250,6 +351,62 @@ func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
 	}
 	if tokens.Provider != "x" || tokens.AccessToken != "x-access-2" || tokens.RefreshToken != "x-refresh-2" {
 		t.Fatalf("refreshed = %#v", tokens)
+	}
+}
+
+func TestHandlerXCallbackRejectsGmailStateWithoutTokenExchange(t *testing.T) {
+	var xTokenCalls int
+	fakeOAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			xTokenCalls++
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"x-access","refresh_token":"x-refresh","token_type":"bearer","expires_in":7200,"scope":"`+XReadOnlyScope+`"}`)
+		case "/users/me":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"id":"123","name":"Jay Park","username":"jaypark"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fakeOAuth.Close)
+
+	states := auth.NewStateStore()
+	t.Cleanup(states.Close)
+	h := NewHandler(nil, NewXProvider(XConfig{
+		ClientID:     "x-client-id",
+		ClientSecret: "x-secret",
+		BaseURL:      "https://connect.kittypaw.app",
+		AuthURL:      fakeOAuth.URL + "/auth",
+		TokenURL:     fakeOAuth.URL + "/token",
+		UserInfoURL:  fakeOAuth.URL + "/users/me",
+	}, fakeOAuth.Client()), states, NewCodeStore(CodeStoreOptions{}))
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": GmailProviderID})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+
+	callback := httptest.NewRecorder()
+	h.HandleXCallback()(callback, httptest.NewRequest(http.MethodGet, "/connect/x/callback?code=x-code&state="+url.QueryEscape(state), nil))
+
+	if callback.Code != http.StatusBadRequest {
+		t.Fatalf("callback status = %d, want 400; body=%s", callback.Code, callback.Body.String())
+	}
+	if xTokenCalls != 0 {
+		t.Fatalf("x token calls = %d, want 0", xTokenCalls)
+	}
+}
+
+func assertSensitiveResponseHeaders(t *testing.T, header http.Header) {
+	t.Helper()
+	if got := header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := header.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
 	}
 }
 
