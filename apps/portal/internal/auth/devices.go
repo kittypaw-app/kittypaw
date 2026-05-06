@@ -60,7 +60,7 @@ type deviceClaimsPayload struct {
 // Wire format (Plan 23 PR-D + spec D5):
 //   - alg=RS256, kid in header
 //   - sub=device:<deviceID>, user_id=<userID> as separate claim
-//   - aud=[AudienceChat], scope=[ScopeDaemonConnect], v=ClaimsVersion
+//   - aud=[AudienceChat, AudienceHome], scope=[ScopeDaemonConnect], v=ClaimsVersion
 //   - iss=Issuer, iat/exp set
 //
 // The user_id is a separate claim (not embedded in sub) so kittychat's
@@ -81,7 +81,7 @@ func SignDeviceJWT(userID, deviceID string, key *rsa.PrivateKey, kid string, ttl
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    Issuer,
 			Subject:   "device:" + deviceID,
-			Audience:  jwt.ClaimStrings{AudienceChat},
+			Audience:  jwt.ClaimStrings{AudienceChat, AudienceHome},
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},

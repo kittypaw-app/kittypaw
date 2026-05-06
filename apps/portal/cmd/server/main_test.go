@@ -166,6 +166,31 @@ func TestDiscoveryReturnsChatRelayURL(t *testing.T) {
 	}
 }
 
+func TestDiscoveryIncludesHomeBaseURL(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.HomeBaseURL = "https://home.kittypaw.app"
+	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/discovery", nil)
+	req.Host = "portal.kittypaw.app"
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got := body["home_base_url"]; got != "https://home.kittypaw.app" {
+		t.Fatalf("home_base_url = %q, want https://home.kittypaw.app", got)
+	}
+}
+
 func TestPortalHomeEndpoint(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
