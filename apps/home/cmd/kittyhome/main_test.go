@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kittypaw-app/kittyhome/internal/config"
+)
 
 func TestBuildValuePrefersRealBuildValue(t *testing.T) {
 	if got := buildValue("configured", "v1.2.3"); got != "v1.2.3" {
@@ -29,5 +33,28 @@ func TestUnixSocketPath(t *testing.T) {
 		if path != tt.path || ok != tt.ok {
 			t.Fatalf("unixSocketPath(%q) = (%q, %v), want (%q, %v)", tt.in, path, ok, tt.path, tt.ok)
 		}
+	}
+}
+
+func TestNewRouterRequiresVerifierConfig(t *testing.T) {
+	_, err := newRouter(config.Config{BindAddr: ":0"})
+	if err == nil {
+		t.Fatal("newRouter returned nil error without verifier config")
+	}
+}
+
+func TestNewRouterAcceptsStaticSmokeConfig(t *testing.T) {
+	_, err := newRouter(config.Config{
+		BindAddr:       ":0",
+		APIToken:       "api-token",
+		DeviceToken:    "device-token",
+		UserID:         "user_1",
+		DeviceID:       "dev_1",
+		LocalAccountID: "alice",
+		PublicBaseURL:  "http://localhost:8080",
+		APIAuthBaseURL: "http://localhost:9714/auth",
+	})
+	if err != nil {
+		t.Fatalf("newRouter returned error: %v", err)
 	}
 }

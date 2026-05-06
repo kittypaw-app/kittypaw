@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -8,7 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kittypaw-app/kittyhome/internal/broker"
 	"github.com/kittypaw-app/kittyhome/internal/config"
+	"github.com/kittypaw-app/kittyhome/internal/daemonws"
+	"github.com/kittypaw-app/kittyhome/internal/identity"
+	"github.com/kittypaw-app/kittyhome/internal/openai"
 	"github.com/kittypaw-app/kittyhome/internal/server"
 )
 
@@ -25,10 +30,10 @@ func main() {
 	cfg.Version = buildValue(cfg.Version, version)
 	cfg.Commit = buildValue(cfg.Commit, commit)
 
-	router := server.NewRouter(server.Config{
-		Version: cfg.Version,
-		Commit:  cfg.Commit,
-	})
+	router, err := newRouter(cfg)
+	if err != nil {
+		log.Fatalf("router: %v", err)
+	}
 
 	log.Printf("listening on %s", cfg.BindAddr)
 	srv := &http.Server{Addr: cfg.BindAddr, Handler: router}
@@ -48,6 +53,77 @@ func buildValue(configured, built string) string {
 		return built
 	}
 	return configured
+}
+
+func newRouter(cfg config.Config) (http.Handler, error) {
+	verifier, err := newCredentialVerifier(cfg)
+	if err != nil {
+		return nil, err
+	}
+	b := broker.New(broker.Config{})
+	openAIHandler := openai.NewHandler(identity.APIAuthenticator{
+		Verifier: verifier,
+	}, b)
+	return server.NewRouter(server.Config{
+		Version: cfg.Version,
+		Commit:  cfg.Commit,
+		DaemonHandler: daemonws.NewHandler(identity.DeviceAuthenticator{
+			Verifier: verifier,
+		}, b),
+		OpenAIHandler: openAIHandler,
+	}), nil
+}
+
+func newCredentialVerifier(cfg config.Config) (identity.CredentialVerifier, error) {
+	verifier := identity.NewMemoryCredentialVerifier()
+	if cfg.APIToken == "" && cfg.JWTSecret == "" && cfg.JWKSURL == "" {
+		return nil, fmt.Errorf("api token, jwt secret, or jwks url is required")
+	}
+	hasStaticSeed := false
+	if cfg.APIToken != "" {
+		if err := verifier.AddAPIClient(cfg.APIToken, identity.APIClientClaims{
+			Subject:   cfg.UserID,
+			Audiences: []string{identity.AudienceKittyHome},
+			Version:   identity.CredentialVersion1,
+			Scopes:    []identity.Scope{identity.ScopeChatRelay, identity.ScopeModelsRead},
+			UserID:    cfg.UserID,
+			DeviceID:  cfg.DeviceID,
+			AccountID: cfg.LocalAccountID,
+		}); err != nil {
+			return nil, fmt.Errorf("seed api client: %w", err)
+		}
+		hasStaticSeed = true
+	}
+	if cfg.DeviceToken != "" {
+		if err := verifier.AddDevice(cfg.DeviceToken, identity.DeviceClaims{
+			Subject:         "device:" + cfg.DeviceID,
+			Audiences:       []string{identity.AudienceKittyHome},
+			Version:         identity.CredentialVersion1,
+			Scopes:          []identity.Scope{identity.ScopeDaemonConnect},
+			UserID:          cfg.UserID,
+			DeviceID:        cfg.DeviceID,
+			LocalAccountIDs: []string{cfg.LocalAccountID},
+		}); err != nil {
+			return nil, fmt.Errorf("seed device: %w", err)
+		}
+		hasStaticSeed = true
+	}
+	if cfg.JWTSecret != "" || cfg.JWKSURL != "" {
+		jwtVerifier, err := identity.NewJWTCredentialVerifier(identity.JWTVerifierConfig{
+			Secret:  cfg.JWTSecret,
+			JWKSURL: cfg.JWKSURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("jwt verifier: %w", err)
+		}
+		if hasStaticSeed {
+			return identity.ChainCredentialVerifier{
+				Verifiers: []identity.CredentialVerifier{jwtVerifier, verifier},
+			}, nil
+		}
+		return jwtVerifier, nil
+	}
+	return verifier, nil
 }
 
 func serveHTTP(srv *http.Server, bindAddr string) error {
