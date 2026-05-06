@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -259,6 +261,172 @@ func (s *Server) handleKanbanTaskShow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleKanbanTaskClaim(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	var body struct {
+		Actor   string `json:"actor"`
+		WorkDir string `json:"work_dir"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeBody(w, r, &body) {
+			return
+		}
+	}
+	run, err := s.store.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{
+		Actor:   strings.TrimSpace(body.Actor),
+		WorkDir: strings.TrimSpace(body.WorkDir),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": run})
+}
+
+func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	var body struct {
+		Actor        string          `json:"actor"`
+		Summary      string          `json:"summary"`
+		Metadata     json.RawMessage `json:"metadata"`
+		MetadataJSON string          `json:"metadata_json"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	summary := strings.TrimSpace(body.Summary)
+	if summary == "" {
+		writeError(w, http.StatusBadRequest, "summary is required")
+		return
+	}
+	metadata, ok := kanbanMetadataJSON(w, body.Metadata, body.MetadataJSON)
+	if !ok {
+		return
+	}
+	if err := s.store.CompleteKanbanTask(taskID, store.CompleteKanbanTaskRequest{
+		Actor:        strings.TrimSpace(body.Actor),
+		Summary:      summary,
+		MetadataJSON: metadata,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	task, err := s.store.GetKanbanTask(taskID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTaskBlock(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	var body struct {
+		Actor  string `json:"actor"`
+		Reason string `json:"reason"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	if err := s.store.BlockKanbanTask(taskID, store.BlockKanbanTaskRequest{
+		Actor:  strings.TrimSpace(body.Actor),
+		Reason: strings.TrimSpace(body.Reason),
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	task, err := s.store.GetKanbanTask(taskID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTaskUnblock(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	var body struct {
+		Actor   string `json:"actor"`
+		Comment string `json:"comment"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeBody(w, r, &body) {
+			return
+		}
+	}
+	if err := s.store.UnblockKanbanTask(taskID, store.UnblockKanbanTaskRequest{
+		Actor:   strings.TrimSpace(body.Actor),
+		Comment: strings.TrimSpace(body.Comment),
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	task, err := s.store.GetKanbanTask(taskID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTaskCommentsList(w http.ResponseWriter, r *http.Request) {
+	comments, err := s.store.ListKanbanComments(strings.TrimSpace(chi.URLParam(r, "task")))
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"comments": kanbanSliceOrEmpty(comments)})
+}
+
+func (s *Server) handleKanbanTaskCommentsCreate(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	var body struct {
+		Author string `json:"author"`
+		Body   string `json:"body"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	comment, err := s.store.AddKanbanTaskComment(taskID, strings.TrimSpace(body.Author), body.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"comment": comment})
+}
+
+func (s *Server) handleKanbanTaskRunsList(w http.ResponseWriter, r *http.Request) {
+	runs, err := s.store.ListKanbanRuns(strings.TrimSpace(chi.URLParam(r, "task")))
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": kanbanSliceOrEmpty(runs)})
+}
+
+func (s *Server) handleKanbanTaskLinksCreate(w http.ResponseWriter, r *http.Request) {
+	parentID := strings.TrimSpace(chi.URLParam(r, "task"))
+	var body struct {
+		ChildID string `json:"child_id"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.ChildID) == "" {
+		writeError(w, http.StatusBadRequest, "child_id is required")
+		return
+	}
+	if err := s.store.LinkKanbanTasks(parentID, strings.TrimSpace(body.ChildID)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"linked": true})
+}
+
 func kanbanResolveProject(st *store.Store, projectArg string) (*store.KanbanProject, error) {
 	projectArg = strings.TrimSpace(projectArg)
 	if projectArg == "" {
@@ -328,6 +496,26 @@ func kanbanSliceOrEmpty[T any](items []T) any {
 		return []any{}
 	}
 	return items
+}
+
+func kanbanMetadataJSON(w http.ResponseWriter, raw json.RawMessage, fallback string) (string, bool) {
+	if len(raw) != 0 && string(raw) != "null" {
+		var compacted bytes.Buffer
+		if err := json.Compact(&compacted, raw); err != nil {
+			writeError(w, http.StatusBadRequest, "metadata must be valid JSON")
+			return "", false
+		}
+		return compacted.String(), true
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		return "", true
+	}
+	if !json.Valid([]byte(fallback)) {
+		writeError(w, http.StatusBadRequest, "metadata_json must be valid JSON")
+		return "", false
+	}
+	return fallback, true
 }
 
 func kanbanWriteStoreError(w http.ResponseWriter, err error) {

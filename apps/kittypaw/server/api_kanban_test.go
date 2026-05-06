@@ -172,6 +172,97 @@ func TestKanbanAPITaskCreateListShow(t *testing.T) {
 	}
 }
 
+func TestKanbanAPITaskActionsCommentsRunsAndLinks(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	parentID := kanbanAPICreateTask(t, srv, "kitty", "Parent task")
+	childID := kanbanAPICreateTask(t, srv, "kitty", "Child task")
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+parentID+"/links", map[string]any{
+		"child_id": childID,
+	}, http.StatusOK, nil)
+
+	var claimed struct {
+		Run struct {
+			ID      string `json:"id"`
+			TaskID  string `json:"task_id"`
+			Outcome string `json:"outcome"`
+			WorkDir string `json:"work_dir"`
+		} `json:"run"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+parentID+"/claim", map[string]any{
+		"actor": "alice",
+	}, http.StatusOK, &claimed)
+	if claimed.Run.ID == "" || claimed.Run.TaskID != parentID || claimed.Run.Outcome != "running" || claimed.Run.WorkDir != "/repo/kitty" {
+		t.Fatalf("claimed run = %+v", claimed.Run)
+	}
+
+	var completed struct {
+		Task struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+parentID+"/complete", map[string]any{
+		"actor":   "alice",
+		"summary": "implemented",
+		"metadata": map[string]any{
+			"tests": []string{"go test ./server"},
+		},
+	}, http.StatusOK, &completed)
+	if completed.Task.ID != parentID || completed.Task.Status != "done" {
+		t.Fatalf("completed task = %+v", completed.Task)
+	}
+
+	var runs struct {
+		Runs []struct {
+			ID           string `json:"id"`
+			Outcome      string `json:"outcome"`
+			Summary      string `json:"summary"`
+			MetadataJSON string `json:"metadata_json"`
+		} `json:"runs"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks/"+parentID+"/runs", nil, http.StatusOK, &runs)
+	if len(runs.Runs) != 1 || runs.Runs[0].Outcome != "completed" || runs.Runs[0].Summary != "implemented" || !strings.Contains(runs.Runs[0].MetadataJSON, "go test ./server") {
+		t.Fatalf("runs = %+v", runs.Runs)
+	}
+
+	var commentCreated struct {
+		Comment struct {
+			ID   string `json:"id"`
+			Body string `json:"body"`
+		} `json:"comment"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+parentID+"/comments", map[string]any{
+		"author": "alice",
+		"body":   "ready for review",
+	}, http.StatusCreated, &commentCreated)
+	if commentCreated.Comment.ID == "" || commentCreated.Comment.Body != "ready for review" {
+		t.Fatalf("comment = %+v", commentCreated.Comment)
+	}
+
+	var comments struct {
+		Comments []struct {
+			ID string `json:"id"`
+		} `json:"comments"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks/"+parentID+"/comments", nil, http.StatusOK, &comments)
+	if len(comments.Comments) != 1 || comments.Comments[0].ID != commentCreated.Comment.ID {
+		t.Fatalf("comments = %+v", comments.Comments)
+	}
+
+	var child struct {
+		Task struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks/"+childID, nil, http.StatusOK, &child)
+	if child.Task.ID != childID || child.Task.Status != "ready" {
+		t.Fatalf("child after parent complete = %+v", child.Task)
+	}
+}
+
 func newKanbanAPITestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := core.DefaultConfig()
@@ -193,6 +284,24 @@ func kanbanAPICreateMilestone(t *testing.T, srv *Server, project, title string) 
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/projects/"+project+"/milestones", map[string]any{
 		"title": title,
 	}, http.StatusCreated, nil)
+}
+
+func kanbanAPICreateTask(t *testing.T, srv *Server, project, title string) string {
+	t.Helper()
+	var created struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks", map[string]any{
+		"project": project,
+		"title":   title,
+		"status":  "todo",
+	}, http.StatusCreated, &created)
+	if created.Task.ID == "" {
+		t.Fatalf("created task id is empty for %q", title)
+	}
+	return created.Task.ID
 }
 
 func kanbanAPIRequest(t *testing.T, srv *Server, method, path string, body any, wantStatus int, dst any) *httptest.ResponseRecorder {
