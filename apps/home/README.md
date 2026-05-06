@@ -39,3 +39,14 @@ WebSocket connections and relays only supported capability operations.
 | `KITTYHOME_API_AUTH_BASE_URL` | `https://portal.kittypaw.app/auth` | Portal auth base URL |
 | `KITTYHOME_VERSION` | `dev` | Health version |
 | `KITTYHOME_COMMIT` | unset | Health commit |
+
+## Smoke Tests
+
+`make smoke-local` starts an in-process Home router, fake Portal auth exchange,
+and fake daemon. It verifies direct relay routes plus the browser BFF path:
+login callback, session cookie, `/chat/api/routes`, and `/chat/api` chat
+completion.
+
+`bash deploy/smoke.sh` is safe against production without credentials. It checks
+health, `/chat/`, chat JS wiring to `/chat/api`, anonymous session rejection, and
+the Google login redirect shape.
