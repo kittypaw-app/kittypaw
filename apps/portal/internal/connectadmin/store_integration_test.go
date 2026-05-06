@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kittypaw-app/kittyportal/internal/connect"
 	"github.com/kittypaw-app/kittyportal/internal/connectadmin"
 	"github.com/kittypaw-app/kittyportal/internal/model"
 )
@@ -134,6 +136,59 @@ func TestNilRequestedScopesStoresEmptyArray(t *testing.T) {
 	}
 	if len(got.RequestedScopes) != 0 {
 		t.Fatalf("requested scopes = %#v, want empty", got.RequestedScopes)
+	}
+}
+
+func TestEnsureDefaultPoliciesSeedsAndPreservesOperatorPolicy(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+
+	store := connectadmin.NewStore(pool)
+	registry := connectadmin.DefaultProviderRegistry(connectadmin.ProviderRegistryConfig{
+		GmailConfigured: true,
+		XConfigured:     true,
+	})
+
+	if err := store.EnsureDefaultPolicies(ctx, registry); err != nil {
+		t.Fatalf("EnsureDefaultPolicies initial: %v", err)
+	}
+
+	gmail, err := store.GetProviderPolicy(ctx, connect.GmailProviderID)
+	if err != nil {
+		t.Fatalf("GetProviderPolicy gmail: %v", err)
+	}
+	assertProviderPolicy(t, gmail, registryProviderPolicy(t, registry, connect.GmailProviderID))
+
+	x, err := store.GetProviderPolicy(ctx, connect.XProviderID)
+	if err != nil {
+		t.Fatalf("GetProviderPolicy x: %v", err)
+	}
+	assertProviderPolicy(t, x, registryProviderPolicy(t, registry, connect.XProviderID))
+
+	operatorPolicy := x
+	operatorPolicy.Enabled = false
+	operatorPolicy.DefaultEntitlement = connectadmin.DefaultEntitlementAllow
+	operatorPolicy.Notes = "operator override"
+	if err := store.UpsertProviderPolicy(ctx, operatorPolicy); err != nil {
+		t.Fatalf("UpsertProviderPolicy operator override: %v", err)
+	}
+
+	if err := store.EnsureDefaultPolicies(ctx, registry); err != nil {
+		t.Fatalf("EnsureDefaultPolicies repeated: %v", err)
+	}
+
+	gotX, err := store.GetProviderPolicy(ctx, connect.XProviderID)
+	if err != nil {
+		t.Fatalf("GetProviderPolicy x after reseed: %v", err)
+	}
+	if gotX.Enabled != false {
+		t.Fatalf("x Enabled = %v, want false", gotX.Enabled)
+	}
+	if gotX.DefaultEntitlement != connectadmin.DefaultEntitlementAllow {
+		t.Fatalf("x DefaultEntitlement = %q, want %q", gotX.DefaultEntitlement, connectadmin.DefaultEntitlementAllow)
+	}
+	if gotX.Notes != "operator override" {
+		t.Fatalf("x Notes = %q, want operator override", gotX.Notes)
 	}
 }
 
@@ -497,4 +552,35 @@ func stripScheme(raw string) string {
 		}
 	}
 	return raw
+}
+
+func registryProviderPolicy(t *testing.T, registry connectadmin.ProviderRegistry, providerID string) connectadmin.ProviderPolicy {
+	t.Helper()
+	provider, ok := registry.Provider(providerID)
+	if !ok {
+		t.Fatalf("registry missing provider %q", providerID)
+	}
+	return provider.DefaultPolicy
+}
+
+func assertProviderPolicy(t *testing.T, got, want connectadmin.ProviderPolicy) {
+	t.Helper()
+	if got.ProviderID != want.ProviderID {
+		t.Fatalf("ProviderID = %q, want %q", got.ProviderID, want.ProviderID)
+	}
+	if got.Enabled != want.Enabled {
+		t.Fatalf("%s Enabled = %v, want %v", got.ProviderID, got.Enabled, want.Enabled)
+	}
+	if got.DefaultEntitlement != want.DefaultEntitlement {
+		t.Fatalf("%s DefaultEntitlement = %q, want %q", got.ProviderID, got.DefaultEntitlement, want.DefaultEntitlement)
+	}
+	if !reflect.DeepEqual(got.RequestedScopes, want.RequestedScopes) {
+		t.Fatalf("%s RequestedScopes = %#v, want %#v", got.ProviderID, got.RequestedScopes, want.RequestedScopes)
+	}
+	if got.VerificationStatus != want.VerificationStatus {
+		t.Fatalf("%s VerificationStatus = %q, want %q", got.ProviderID, got.VerificationStatus, want.VerificationStatus)
+	}
+	if got.CostMode != want.CostMode {
+		t.Fatalf("%s CostMode = %q, want %q", got.ProviderID, got.CostMode, want.CostMode)
+	}
 }

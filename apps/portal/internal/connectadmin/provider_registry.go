@@ -29,12 +29,17 @@ type ProviderRegistry struct {
 
 func (r ProviderRegistry) Provider(id string) (ProviderInfo, bool) {
 	provider, ok := r.byID[id]
-	return provider, ok
+	if !ok {
+		return ProviderInfo{}, false
+	}
+	return cloneProviderInfo(provider), true
 }
 
 func (r ProviderRegistry) List() []ProviderInfo {
 	out := make([]ProviderInfo, len(r.providers))
-	copy(out, r.providers)
+	for i, provider := range r.providers {
+		out[i] = cloneProviderInfo(provider)
+	}
 	return out
 }
 
@@ -46,7 +51,7 @@ func DefaultProviderRegistry(cfg ProviderRegistryConfig) ProviderRegistry {
 			ID:           connect.GmailProviderID,
 			DisplayName:  "Gmail",
 			Configured:   cfg.GmailConfigured,
-			Scopes:       gmailScopes,
+			Scopes:       cloneStringSlice(gmailScopes),
 			WriteCapable: false,
 			CostBearing:  false,
 			DocsURL:      "https://developers.google.com/workspace/gmail/api/auth/scopes",
@@ -54,7 +59,7 @@ func DefaultProviderRegistry(cfg ProviderRegistryConfig) ProviderRegistry {
 				ProviderID:         connect.GmailProviderID,
 				Enabled:            true,
 				DefaultEntitlement: DefaultEntitlementAllow,
-				RequestedScopes:    gmailScopes,
+				RequestedScopes:    cloneStringSlice(gmailScopes),
 				VerificationStatus: VerificationTesting,
 				CostMode:           CostModeNone,
 			},
@@ -63,7 +68,7 @@ func DefaultProviderRegistry(cfg ProviderRegistryConfig) ProviderRegistry {
 			ID:           connect.XProviderID,
 			DisplayName:  "X",
 			Configured:   cfg.XConfigured,
-			Scopes:       xScopes,
+			Scopes:       cloneStringSlice(xScopes),
 			WriteCapable: false,
 			CostBearing:  true,
 			DocsURL:      "https://docs.x.com/x-api/fundamentals/post-cap",
@@ -71,7 +76,7 @@ func DefaultProviderRegistry(cfg ProviderRegistryConfig) ProviderRegistry {
 				ProviderID:         connect.XProviderID,
 				Enabled:            true,
 				DefaultEntitlement: DefaultEntitlementDeny,
-				RequestedScopes:    xScopes,
+				RequestedScopes:    cloneStringSlice(xScopes),
 				VerificationStatus: VerificationNotApplicable,
 				CostMode:           CostModeKittyPaid,
 			},
@@ -80,10 +85,30 @@ func DefaultProviderRegistry(cfg ProviderRegistryConfig) ProviderRegistry {
 
 	byID := make(map[string]ProviderInfo, len(providers))
 	for _, provider := range providers {
-		byID[provider.ID] = provider
+		byID[provider.ID] = cloneProviderInfo(provider)
 	}
 	return ProviderRegistry{
 		providers: providers,
 		byID:      byID,
 	}
+}
+
+func cloneProviderInfo(provider ProviderInfo) ProviderInfo {
+	provider.Scopes = cloneStringSlice(provider.Scopes)
+	provider.DefaultPolicy = cloneProviderPolicy(provider.DefaultPolicy)
+	return provider
+}
+
+func cloneProviderPolicy(policy ProviderPolicy) ProviderPolicy {
+	policy.RequestedScopes = cloneStringSlice(policy.RequestedScopes)
+	return policy
+}
+
+func cloneStringSlice(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }

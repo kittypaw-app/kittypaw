@@ -81,6 +81,49 @@ func TestProviderRegistryUnknownProvider(t *testing.T) {
 	}
 }
 
+func TestProviderRegistryProviderReturnsDeepCopy(t *testing.T) {
+	registry := DefaultProviderRegistry(ProviderRegistryConfig{})
+	originalScopes := strings.Fields(connect.GmailReadOnlyScope)
+
+	got, ok := registry.Provider(connect.GmailProviderID)
+	if !ok {
+		t.Fatal("gmail provider not found")
+	}
+	got.Scopes[0] = "mutated.scope"
+	got.DefaultPolicy.RequestedScopes[0] = "mutated.policy.scope"
+
+	fresh, ok := registry.Provider(connect.GmailProviderID)
+	if !ok {
+		t.Fatal("gmail provider not found after mutation")
+	}
+	if !reflect.DeepEqual(fresh.Scopes, originalScopes) {
+		t.Fatalf("fresh Scopes = %#v, want %#v", fresh.Scopes, originalScopes)
+	}
+	if !reflect.DeepEqual(fresh.DefaultPolicy.RequestedScopes, originalScopes) {
+		t.Fatalf("fresh DefaultPolicy.RequestedScopes = %#v, want %#v", fresh.DefaultPolicy.RequestedScopes, originalScopes)
+	}
+}
+
+func TestProviderRegistryListReturnsDeepCopies(t *testing.T) {
+	registry := DefaultProviderRegistry(ProviderRegistryConfig{})
+	originalScopes := strings.Fields(connect.XReadOnlyScope)
+
+	got := registry.List()
+	if len(got) != 2 {
+		t.Fatalf("len(List()) = %d, want 2", len(got))
+	}
+	got[1].Scopes[0] = "mutated.scope"
+	got[1].DefaultPolicy.RequestedScopes[0] = "mutated.policy.scope"
+
+	fresh := registry.List()
+	if !reflect.DeepEqual(fresh[1].Scopes, originalScopes) {
+		t.Fatalf("fresh List()[1].Scopes = %#v, want %#v", fresh[1].Scopes, originalScopes)
+	}
+	if !reflect.DeepEqual(fresh[1].DefaultPolicy.RequestedScopes, originalScopes) {
+		t.Fatalf("fresh List()[1].DefaultPolicy.RequestedScopes = %#v, want %#v", fresh[1].DefaultPolicy.RequestedScopes, originalScopes)
+	}
+}
+
 func assertProviderInfo(t *testing.T, got, want ProviderInfo) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {
