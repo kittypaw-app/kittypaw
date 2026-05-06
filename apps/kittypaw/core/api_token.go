@@ -115,6 +115,7 @@ const (
 	kakaoRelayWSURLKey      = "kakao_relay_ws_url"
 	authBaseURLKey          = "auth_base_url"
 	connectBaseURLKey       = "connect_base_url"
+	homeBaseURLKey          = "home_base_url"
 )
 
 // SaveChatRelayURL stores the chat relay server base URL from GET /discovery.
@@ -235,6 +236,36 @@ func (m *APITokenManager) ResolveConnectBaseURL(apiURL string) string {
 	}
 	if parsed.Scheme == "https" && strings.HasPrefix(parsed.Host, "portal.") {
 		parsed.Host = "connect." + strings.TrimPrefix(parsed.Host, "portal.")
+		return strings.TrimRight(parsed.String(), "/")
+	}
+	return trimmed
+}
+
+// SaveHomeBaseURL stores the Home surface base URL from GET /discovery.
+// Empty value deletes the key so stale topology does not persist.
+func (m *APITokenManager) SaveHomeBaseURL(apiURL, homeBaseURL string) error {
+	return m.saveOrDelete(NamespaceForURL(apiURL), homeBaseURLKey, strings.TrimRight(homeBaseURL, "/"))
+}
+
+// LoadHomeBaseURL returns the stored Home surface base URL.
+func (m *APITokenManager) LoadHomeBaseURL(apiURL string) (string, bool) {
+	return m.secrets.Get(NamespaceForURL(apiURL), homeBaseURLKey)
+}
+
+// ResolveHomeBaseURL returns the discovered Home URL, a conservative
+// portal.* -> home.* production fallback, or the API URL for collapsed
+// local/dev deployments.
+func (m *APITokenManager) ResolveHomeBaseURL(apiURL string) string {
+	if got, ok := m.LoadHomeBaseURL(apiURL); ok && got != "" {
+		return strings.TrimRight(got, "/")
+	}
+	trimmed := strings.TrimRight(apiURL, "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return trimmed
+	}
+	if parsed.Scheme == "https" && strings.HasPrefix(parsed.Host, "portal.") {
+		parsed.Host = "home." + strings.TrimPrefix(parsed.Host, "portal.")
 		return strings.TrimRight(parsed.String(), "/")
 	}
 	return trimmed

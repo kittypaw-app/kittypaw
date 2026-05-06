@@ -83,6 +83,9 @@ func applyDiscovery(apiURL string, mgr *core.APITokenManager) string {
 	if err := mgr.SaveChatRelayURL(apiURL, d.ChatRelayURL); err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: save chat_relay_url: %v\n", err)
 	}
+	if err := mgr.SaveHomeBaseURL(apiURL, d.HomeBaseURL); err != nil {
+		fmt.Fprintf(os.Stderr, "discovery: save home_base_url: %v\n", err)
+	}
 	if err := mgr.SaveKakaoRelayBaseURL(apiURL, d.KakaoRelayURL); err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: save kakao_relay_url: %v\n", err)
 	}

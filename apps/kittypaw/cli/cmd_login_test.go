@@ -33,6 +33,7 @@ func TestApplyDiscoveryStoresChatRelayURL(t *testing.T) {
 			"api_base_url":"https://api.kittypaw.app",
 			"auth_base_url":"https://portal.kittypaw.app/auth",
 			"connect_base_url":"https://connect.kittypaw.app",
+			"home_base_url":"https://home.kittypaw.app",
 			"chat_relay_url":"https://chat.kittypaw.app",
 			"kakao_relay_url":"https://kakao.kittypaw.app",
 			"skills_registry_url":"https://github.com/kittypaw-app/skills"
@@ -62,6 +63,10 @@ func TestApplyDiscoveryStoresChatRelayURL(t *testing.T) {
 	gotConnectBase, ok := mgr.LoadConnectBaseURL(ts.URL)
 	if !ok || gotConnectBase != "https://connect.kittypaw.app" {
 		t.Fatalf("LoadConnectBaseURL = (%q, %v), want connect base URL", gotConnectBase, ok)
+	}
+	gotHomeBase, ok := mgr.LoadHomeBaseURL(ts.URL)
+	if !ok || gotHomeBase != "https://home.kittypaw.app" {
+		t.Fatalf("LoadHomeBaseURL = (%q, %v), want home base URL", gotHomeBase, ok)
 	}
 }
 

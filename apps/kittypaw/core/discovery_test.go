@@ -18,6 +18,7 @@ func TestFetchDiscovery_HappyPath(t *testing.T) {
   "api_base_url": "https://api.kittypaw.app",
   "auth_base_url": "https://portal.kittypaw.app/auth",
   "connect_base_url": "https://connect.kittypaw.app",
+  "home_base_url": "https://home.kittypaw.app",
   "chat_relay_url": "https://chat.kittypaw.app",
   "kakao_relay_url": "https://kakao.kittypaw.app",
   "skills_registry_url": "https://github.com/kittypaw-app/skills"
@@ -38,6 +39,9 @@ func TestFetchDiscovery_HappyPath(t *testing.T) {
 	if got.ConnectBaseURL != "https://connect.kittypaw.app" {
 		t.Errorf("ConnectBaseURL = %q", got.ConnectBaseURL)
 	}
+	if got.HomeBaseURL != "https://home.kittypaw.app" {
+		t.Errorf("HomeBaseURL = %q", got.HomeBaseURL)
+	}
 	if got.ChatRelayURL != "https://chat.kittypaw.app" {
 		t.Errorf("ChatRelayURL = %q", got.ChatRelayURL)
 	}
@@ -55,6 +59,7 @@ func TestFetchDiscovery_TrailingSlashTrimmed(t *testing.T) {
   "api_base_url": "https://api.kittypaw.app/",
   "auth_base_url": "https://portal.kittypaw.app/auth///",
   "connect_base_url": "https://connect.kittypaw.app///",
+  "home_base_url": "https://home.kittypaw.app///",
   "chat_relay_url": "https://chat.kittypaw.app///",
   "kakao_relay_url": "https://kakao.kittypaw.app///",
   "skills_registry_url": "https://github.com/kittypaw-app/skills/"
@@ -74,6 +79,9 @@ func TestFetchDiscovery_TrailingSlashTrimmed(t *testing.T) {
 	}
 	if got.ConnectBaseURL != "https://connect.kittypaw.app" {
 		t.Errorf("ConnectBaseURL trailing slashes not trimmed: %q", got.ConnectBaseURL)
+	}
+	if got.HomeBaseURL != "https://home.kittypaw.app" {
+		t.Errorf("HomeBaseURL trailing slashes not trimmed: %q", got.HomeBaseURL)
 	}
 	if got.ChatRelayURL != "https://chat.kittypaw.app" {
 		t.Errorf("ChatRelayURL trailing slashes not trimmed: %q", got.ChatRelayURL)
