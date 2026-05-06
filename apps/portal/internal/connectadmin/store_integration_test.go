@@ -123,6 +123,16 @@ func TestUserAllowedFallsBackToProviderDefault(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert default deny policy: %v", err)
 	}
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "disabled-default-allow",
+		Enabled:            false,
+		DefaultEntitlement: connectadmin.DefaultEntitlementAllow,
+		RequestedScopes:    []string{},
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("upsert disabled default allow policy: %v", err)
+	}
 
 	allowed, err := store.UserAllowed(ctx, targetUser.ID, "default-allow")
 	if err != nil {
@@ -138,6 +148,22 @@ func TestUserAllowedFallsBackToProviderDefault(t *testing.T) {
 	}
 	if allowed {
 		t.Fatal("UserAllowed default deny = true, want false")
+	}
+
+	allowed, err = store.UserAllowed(ctx, targetUser.ID, "disabled-default-allow")
+	if err != nil {
+		t.Fatalf("UserAllowed disabled default allow: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed disabled default allow = true, want false")
+	}
+
+	allowed, err = store.UserAllowed(ctx, targetUser.ID, "missing-provider")
+	if err != nil {
+		t.Fatalf("UserAllowed missing provider: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed missing provider = true, want false")
 	}
 }
 
