@@ -1,8 +1,8 @@
-# Plan B Iteration 1 — measurement source-of-truth (5 모델).
+# Plan B Iteration 1 — measurement source-of-truth (7 모델).
 # Schema: each [[model]] entry has id / provider / model / base_url? / api_key_env?
 # - base_url: optional. Omit to use llm/registry.go default (groqDefaultBaseURL etc.)
 # - api_key_env: optional. Omit (lmstudio) when provider needs no auth (local SSH tunnel).
-# selection rationale: see .claude/plans/kp-eval-rebuild.md "5 모델 선정 근거".
+# selection rationale: see .claude/plans/kp-eval-rebuild.md "7 모델 선정 근거".
 # rejected siblings: see apps/kittypaw/docs/MODEL_GUIDE.md § 1.1.
 
 [[model]]
@@ -13,9 +13,23 @@ base_url = "https://api.groq.com/openai/v1/chat/completions"
 api_key_env = "GROQ_API_KEY"
 
 [[model]]
+id = "groq-llama"
+provider = "groq"
+model = "llama-3.3-70b-versatile"
+base_url = "https://api.groq.com/openai/v1/chat/completions"
+api_key_env = "GROQ_API_KEY"
+
+[[model]]
 id = "mistral-medium"
 provider = "mistral"
 model = "mistral-medium-latest"
+base_url = "https://api.mistral.ai/v1/chat/completions"
+api_key_env = "MISTRAL_API_KEY"
+
+[[model]]
+id = "ministral-8b"
+provider = "mistral"
+model = "ministral-8b-latest"
 base_url = "https://api.mistral.ai/v1/chat/completions"
 api_key_env = "MISTRAL_API_KEY"
 

@@ -22,13 +22,13 @@ setup_file() {
   echo "$JSON" | jq -e '.' >/dev/null
 }
 
-@test "T1: 5 entries count" {
+@test "T1: 7 entries count" {
   count="$(echo "$JSON" | jq '.model | length')"
-  [ "$count" -eq 5 ]
+  [ "$count" -eq 7 ]
 }
 
 @test "T1: expected ids present" {
-  for id in groq-qwen mistral-medium gemini-flash-lite openrouter-llama-3.3 lmstudio-qwen3-30b-mlx; do
+  for id in groq-qwen groq-llama mistral-medium ministral-8b gemini-flash-lite openrouter-llama-3.3 lmstudio-qwen3-30b-mlx; do
     echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | length == 1' >/dev/null
   done
 }
@@ -39,7 +39,7 @@ setup_file() {
 
 @test "T1: api_key_env set for cloud providers, omitted/empty for lmstudio" {
   for env in GROQ_API_KEY MISTRAL_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY; do
-    echo "$JSON" | jq -e --arg env "$env" '.model | map(select(.api_key_env == $env)) | length == 1' >/dev/null
+    echo "$JSON" | jq -e --arg env "$env" '.model | map(select(.api_key_env == $env)) | length >= 1' >/dev/null
   done
   echo "$JSON" | jq -e '.model | map(select(.id == "lmstudio-qwen3-30b-mlx")) | .[0].api_key_env // "" | length == 0' >/dev/null
 }
