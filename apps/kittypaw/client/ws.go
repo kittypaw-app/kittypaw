@@ -44,10 +44,13 @@ func DialChat(ctx context.Context, wsURL, apiKey string) (*ChatSession, error) {
 		headers.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: headers,
 	})
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("websocket unauthorized (401): local server rejected the CLI token; run `kittypaw server stop && kittypaw chat` to restart it with the current account secrets")
+		}
 		return nil, fmt.Errorf("websocket dial: %w", err)
 	}
 	conn.SetReadLimit(64 * 1024)

@@ -642,6 +642,49 @@ func TestBootstrapBackfillsMissingAccountAPIKey(t *testing.T) {
 	}
 }
 
+func TestBootstrapPreservesExistingSecretAccountAPIKey(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "test-key"
+	cfg.LLM.Model = "claude-test"
+	cfg.Server.APIKey = ""
+	accountDir := filepath.Join(root, "accounts", "alice")
+	cfgPath := filepath.Join(accountDir, "config.toml")
+	if err := os.MkdirAll(accountDir, 0o700); err != nil {
+		t.Fatalf("mkdir account dir: %v", err)
+	}
+	if err := core.WriteConfigAtomic(&cfg, cfgPath); err != nil {
+		t.Fatalf("write account config: %v", err)
+	}
+	secrets, err := core.LoadSecretsFrom(filepath.Join(accountDir, "secrets.json"))
+	if err != nil {
+		t.Fatalf("load account secrets: %v", err)
+	}
+	if err := secrets.Set("local-server", "api_key", "existing-key"); err != nil {
+		t.Fatalf("seed local-server api key: %v", err)
+	}
+
+	deps, _, err := bootstrap()
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	for _, dep := range deps {
+		_ = dep.Close()
+	}
+
+	secrets, err = core.LoadSecretsFrom(filepath.Join(accountDir, "secrets.json"))
+	if err != nil {
+		t.Fatalf("reload account secrets: %v", err)
+	}
+	if key, ok := secrets.Get("local-server", "api_key"); !ok || key != "existing-key" {
+		t.Fatalf("local-server api key = (%q, %v), want existing-key/true", key, ok)
+	}
+}
+
 func TestWaitForProcessExitPollsUntilProcessStops(t *testing.T) {
 	oldProcessRunning := processRunning
 	oldPollInterval := stopWaitPollInterval

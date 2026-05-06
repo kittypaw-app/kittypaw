@@ -55,6 +55,11 @@ var SkillRegistry = []SkillMeta{
 	{Name: "Discord", Methods: []SkillMethodMeta{
 		{Name: "send", Signature: "Discord.send(text)"},
 	}},
+	{Name: "Gmail", Methods: []SkillMethodMeta{
+		{Name: "list", Signature: "Gmail.list(options?) — read-only Gmail recent messages. options: {query, limit}; default query: \"in:inbox category:primary\". Requires `kittypaw connect gmail`."},
+		{Name: "search", Signature: "Gmail.search(queryOrOptions[, options]) — read-only Gmail search. Query examples: \"newer_than:1d\", \"from:alice@example.com\", \"subject:invoice\". options: {limit}."},
+		{Name: "read", Signature: "Gmail.read(id) — read one Gmail message by ID and return headers + readable body text."},
+	}},
 	{Name: "Shell", Methods: []SkillMethodMeta{
 		{Name: "exec", Signature: "Shell.exec(command)"},
 	}},

@@ -151,6 +151,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeSlack(ctx, call, s)
 	case "Discord":
 		return executeDiscord(ctx, call, s)
+	case "Gmail":
+		return executeGmail(ctx, call, s)
 	case "Skill":
 		return executeSkillMgmt(ctx, call, s)
 	case "Profile":

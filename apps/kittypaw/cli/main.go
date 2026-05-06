@@ -2261,11 +2261,18 @@ func bootstrap() ([]*server.AccountDeps, core.TopLevelServerConfig, error) {
 	}
 
 	for _, t := range accounts {
+		secrets, secretErr := core.LoadSecretsFrom(filepath.Join(t.BaseDir, "secrets.json"))
+		if secretErr != nil {
+			slog.Warn("failed to load account secrets before server api key check",
+				"account", t.ID, "error", secretErr)
+		} else {
+			core.HydrateRuntimeSecrets(t.Config, secrets)
+		}
+
 		if changed, err := core.EnsureServerAPIKey(t.Config); err != nil {
 			closeOnErr()
 			return nil, core.TopLevelServerConfig{}, err
 		} else if changed {
-			secrets, secretErr := core.LoadSecretsFrom(filepath.Join(t.BaseDir, "secrets.json"))
 			if secretErr != nil {
 				closeOnErr()
 				return nil, core.TopLevelServerConfig{}, fmt.Errorf("load account secrets for %s: %w", t.ID, secretErr)

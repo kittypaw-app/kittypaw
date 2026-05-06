@@ -121,6 +121,27 @@ func TestStreamChat_WithAPIKey(t *testing.T) {
 	}
 }
 
+func TestDialChatUnauthorizedHasRestartGuidance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := DialChat(ctx, wsURL, "stale-key")
+	if err == nil {
+		t.Fatal("DialChat succeeded, want unauthorized error")
+	}
+	for _, want := range []string{"401", "kittypaw server stop", "kittypaw chat"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, missing %q", err.Error(), want)
+		}
+	}
+}
+
 func sendMsg(ctx context.Context, conn *websocket.Conn, msg core.WsServerMsg) {
 	data, _ := json.Marshal(msg)
 	conn.Write(ctx, websocket.MessageText, data)
