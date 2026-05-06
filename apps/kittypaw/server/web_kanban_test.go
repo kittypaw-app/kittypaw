@@ -70,6 +70,7 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 		"kanban-comments",
 		"id=\"kanban-edit-form\"",
 		"id=\"kanban-archive-task\"",
+		"task.status === 'running'",
 		"method: method",
 		"'/api/v1/kanban/tasks/' + encodeURIComponent(this._selectedTaskID)",
 		"'/archive'",

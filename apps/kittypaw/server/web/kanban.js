@@ -252,6 +252,7 @@ const Kanban = {
   },
 
   _editFormHTML(task) {
+    if (task.status === 'running') return '';
     let html = '<form class="kanban-form kanban-edit-form" id="kanban-edit-form">';
     html += '<div class="kanban-form-row kanban-form-row--wide">';
     html += '<label>Title<input class="input" name="title" required value="' + esc(task.title || '') + '"></label>';
