@@ -113,9 +113,18 @@ func connectGmailCode(apiURL string, apiMgr *core.APITokenManager, serviceMgr *c
 }
 
 func connectServiceCode(provider, apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
-	_ = applyDiscovery(apiURL, apiMgr)
+	var loginURL string
+	if provider == "x" {
+		var err error
+		loginURL, err = createConnectSession(provider, apiURL, apiMgr, "code", 0)
+		if err != nil {
+			return err
+		}
+	} else {
+		_ = applyDiscovery(apiURL, apiMgr)
+		loginURL = connectServiceLoginURL(provider, apiURL, apiMgr, "code", 0)
+	}
 	connectBaseURL := apiMgr.ResolveConnectBaseURL(apiURL)
-	loginURL := connectServiceLoginURL(provider, apiURL, apiMgr, "code", 0)
 	fmt.Printf("Open this URL in your browser:\n\n  %s\n\n", loginURL)
 	fmt.Printf("Enter the code from the browser: ")
 	var code string
@@ -134,9 +143,6 @@ func connectGmailHTTP(apiURL string, apiMgr *core.APITokenManager, serviceMgr *c
 }
 
 func connectServiceHTTP(provider, label, apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
-	_ = applyDiscovery(apiURL, apiMgr)
-	connectBaseURL := apiMgr.ResolveConnectBaseURL(apiURL)
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("start callback server: %w", err)
@@ -165,7 +171,17 @@ func connectServiceHTTP(provider, label, apiURL string, apiMgr *core.APITokenMan
 		_ = srv.Shutdown(ctx)
 	}()
 
-	loginURL := connectServiceLoginURL(provider, apiURL, apiMgr, "http", port)
+	var loginURL string
+	if provider == "x" {
+		loginURL, err = createConnectSession(provider, apiURL, apiMgr, "http", port)
+		if err != nil {
+			return err
+		}
+	} else {
+		_ = applyDiscovery(apiURL, apiMgr)
+		loginURL = connectServiceLoginURL(provider, apiURL, apiMgr, "http", port)
+	}
+	connectBaseURL := apiMgr.ResolveConnectBaseURL(apiURL)
 	fmt.Printf("Opening browser for %s connection...\n", label)
 	fmt.Printf("If the browser doesn't open, visit:\n  %s\n\n", loginURL)
 	if err := connectOpenBrowser(loginURL); err != nil {
@@ -193,10 +209,6 @@ func connectGmailLoginURL(apiURL string, mgr *core.APITokenManager, mode string,
 	return connectServiceLoginURL("gmail", apiURL, mgr, mode, port)
 }
 
-func connectXLoginURL(apiURL string, mgr *core.APITokenManager, mode string, port int) string {
-	return connectServiceLoginURL("x", apiURL, mgr, mode, port)
-}
-
 func connectServiceLoginURL(provider, apiURL string, mgr *core.APITokenManager, mode string, port int) string {
 	base := mgr.ResolveConnectBaseURL(apiURL)
 	params := "mode=" + mode
@@ -204,6 +216,49 @@ func connectServiceLoginURL(provider, apiURL string, mgr *core.APITokenManager, 
 		params += fmt.Sprintf("&port=%d", port)
 	}
 	return strings.TrimRight(base, "/") + "/connect/" + strings.TrimSpace(provider) + "/login?" + params
+}
+
+func createConnectSession(provider, apiURL string, apiMgr *core.APITokenManager, mode string, port int) (string, error) {
+	_ = applyDiscovery(apiURL, apiMgr)
+	connectBaseURL := apiMgr.ResolveConnectBaseURL(apiURL)
+	accessToken, err := apiMgr.LoadAccessToken(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("load login token: %w", err)
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return "", fmt.Errorf("not logged in - run: kittypaw login --api-url %s", apiURL)
+	}
+
+	payload := map[string]string{"mode": mode}
+	if mode == "http" {
+		payload["port"] = fmt.Sprintf("%d", port)
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(connectBaseURL, "/")+"/connect/"+strings.TrimSpace(provider)+"/sessions", strings.NewReader(string(body)))
+	if err != nil {
+		return "", fmt.Errorf("build session request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := connectHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("session request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("session failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var result struct {
+		LoginURL string `json:"login_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode session response: %w", err)
+	}
+	if strings.TrimSpace(result.LoginURL) == "" {
+		return "", fmt.Errorf("session response missing login_url")
+	}
+	return result.LoginURL, nil
 }
 
 func connectCallbackCode(r *http.Request) (string, error) {
