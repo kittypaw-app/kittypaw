@@ -3,7 +3,7 @@ PKG       := ./cli
 BUILDTIME := $(shell TZ=Asia/Seoul date +%Y-%m-%d\ %H:%M\ KST)
 LDFLAGS   := -X 'main.version=dev ($(BUILDTIME))'
 
-.PHONY: build test test-unit test-integration test-e2e test-ci lint fmt run clean eval-secretary eval-user-flows eval-local smoke dev-models dev-models-setup dev-models-server dev-models-chat dev-models-stop dev-models-clean dev-models-status dev-models-tunnel-ollama dev-models-tunnel-ollama-stop dev-models-tunnel-ollama-status dev-models-tunnel-lms dev-models-tunnel-lms-stop dev-models-tunnel-lms-status
+.PHONY: build test test-unit test-integration test-e2e test-ci lint fmt run clean eval-secretary eval-user-flows eval-local eval-models smoke dev-models dev-models-setup dev-models-server dev-models-chat dev-models-stop dev-models-clean dev-models-status dev-models-tunnel-ollama dev-models-tunnel-ollama-stop dev-models-tunnel-ollama-status dev-models-tunnel-lms dev-models-tunnel-lms-stop dev-models-tunnel-lms-status
 
 build:
 	@mkdir -p bin
@@ -46,6 +46,10 @@ eval-user-flows:
 eval-local: eval-secretary eval-user-flows
 
 smoke: eval-local
+
+eval-models:
+	eval/run-models.sh
+	eval/recommend.sh
 
 clean:
 	rm -f $(BINARY)

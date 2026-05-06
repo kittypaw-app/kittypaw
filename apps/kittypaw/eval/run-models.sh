@@ -204,7 +204,14 @@ while IFS=$'\t' read -r id provider model; do
   fi
 
   echo "[$id] running secretary_smoke..." >&2
-  if KITTYPAW_CONFIG_DIR="$EVAL_TMP" "$SECRETARY_RUN" --model "$id" >/dev/null 2>&1; then
+  per_model_dir="$RUN_DIR/per-model/$id"
+  mkdir -p "$per_model_dir"
+  # Per-model OUT_DIR + LOCK_DIR isolates secretary_smoke results — recommend.sh
+  # reads $RUN_DIR/per-model/<id>/ for raw fixture scores (iteration 2).
+  if KITTYPAW_CONFIG_DIR="$EVAL_TMP" \
+     OUT_DIR="$per_model_dir" \
+     LOCK_DIR="$EVAL_TMP/sm-$id.lock" \
+     "$SECRETARY_RUN" --model "$id" >/dev/null 2>&1; then
     record_model "$id" "pass" ""
   else
     record_model "$id" "fail" "secretary_smoke failed"

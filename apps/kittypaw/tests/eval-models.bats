@@ -57,6 +57,7 @@ setup() {
     T2:*) _setup_t2 ;;
     T3:*) _setup_t3 ;;
     T4:*) _setup_t4 ;;
+    T5:*) _setup_t5 ;;
     *) return 0 ;;
   esac
 }
@@ -272,6 +273,32 @@ MS
   echo "$output" | grep -q "cannot create"
 }
 
+_setup_t5() {
+  T5_RUNS="$BATS_TEST_TMPDIR/runs"
+  T5_DOCS="$BATS_TEST_TMPDIR/models.md"
+  mkdir -p "$T5_RUNS"
+  RECOMMEND="$APP_DIR/eval/recommend.sh"
+  export RUNS_ROOT="$T5_RUNS"
+  export DOCS_MD="$T5_DOCS"
+}
+
+# Helper for T5: write a manifest with the given (id, status) pairs.
+write_manifest() {
+  local run_id="$1"; shift
+  local dir="$T5_RUNS/$run_id"
+  mkdir -p "$dir"
+  local entries="[]"
+  while [[ $# -gt 0 ]]; do
+    local id="$1" status="$2"
+    shift 2
+    entries=$(echo "$entries" | jq --arg id "$id" --arg status "$status" \
+      '. + [{"id": $id, "status": $status, "detail": ""}]')
+  done
+  jq -n --arg id "$run_id" --argjson m "$entries" \
+    '{runID: $id, models: $m}' > "$dir/manifest.json"
+  echo "$dir"
+}
+
 @test "T4: daemon readiness timeout → 7 모델 모두 status=fail + 다음 모델 진행 (whole-run abort 금지)" {
   run bash "$RUN_MODELS"
   [ "$status" -eq 0 ]  # whole-run completes despite per-model failures
@@ -285,4 +312,47 @@ MS
   [ "$fail_count" -eq 7 ]
   # secretary_smoke never ran (readiness failed before invocation).
   ! grep -q "secretary_smoke" "$T4_LOG"
+}
+
+# ---------- T5: recommend.sh + docs/models.md render ----------
+
+@test "T5: pass entry 있을 때 → 첫 pass id 추천 + status matrix" {
+  run_dir=$(write_manifest "1700000000-1234" \
+    "groq-qwen" "fail" \
+    "groq-llama" "pass" \
+    "mistral-medium" "pass")
+  run bash "$RECOMMEND"
+  [ "$status" -eq 0 ]
+  [ -f "$T5_DOCS" ]
+  head -1 "$T5_DOCS" | grep -q "GENERATED"
+  grep -q '`groq-llama`' "$T5_DOCS"  # first pass entry
+  grep -q "추천" "$T5_DOCS"
+  grep -q "pass: 2" "$T5_DOCS"
+  grep -q "fail: 1" "$T5_DOCS"
+}
+
+@test "T5: 모든 fail → '추천 없음' + exit 0 (manifest 보존)" {
+  run_dir=$(write_manifest "1700000001-1234" \
+    "groq-qwen" "fail" \
+    "mistral-medium" "fail")
+  run bash "$RECOMMEND"
+  [ "$status" -eq 0 ]  # manifest 보존, exit 0
+  grep -q "추천 없음" "$T5_DOCS"
+  [ -f "$run_dir/manifest.json" ]  # manifest unchanged
+}
+
+@test "T5: latest run discovery (여러 run 중 sortable id 마지막)" {
+  write_manifest "1700000000-1234" "early" "pass" >/dev/null
+  write_manifest "1700000050-9999" "late" "pass" >/dev/null
+  run bash "$RECOMMEND"
+  [ "$status" -eq 0 ]
+  grep -q '`late`' "$T5_DOCS"  # latest selected
+  ! grep -q '`early`' "$T5_DOCS"
+}
+
+@test "T5: no run found → exit 2" {
+  rm -rf "$T5_RUNS"/*
+  run bash "$RECOMMEND"
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q "no run found"
 }
