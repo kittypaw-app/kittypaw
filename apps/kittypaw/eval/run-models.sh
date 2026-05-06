@@ -30,6 +30,11 @@ EVAL_BIND="${EVAL_BIND:-127.0.0.1:$EVAL_PORT}"
 DAEMON_PID=""
 JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5-20251001}"
 READINESS_TIMEOUT="${READINESS_TIMEOUT:-30}"
+# Per-model wall-clock cap — secretary_smoke retry 폭주 (free tier 429 등) 시
+# 무한 hang 차단. 초과 시 status=fail "timeout".
+PER_MODEL_TIMEOUT="${PER_MODEL_TIMEOUT:-120}"
+# Inter-model spacing — provider rate limit 회복 시간 (free tier 20-30 RPM).
+INTER_MODEL_SLEEP="${INTER_MODEL_SLEEP:-10}"
 
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 EVAL_TMP="${EVAL_TMP:-${TMPDIR:-/tmp}/kittypaw-eval-$RUN_ID}"
@@ -203,21 +208,36 @@ while IFS=$'\t' read -r id provider model; do
     continue
   fi
 
-  echo "[$id] running secretary_smoke..." >&2
+  echo "[$id] running secretary_smoke (timeout ${PER_MODEL_TIMEOUT}s)..." >&2
   per_model_dir="$RUN_DIR/per-model/$id"
   mkdir -p "$per_model_dir"
   # Per-model OUT_DIR + LOCK_DIR isolates secretary_smoke results — recommend.sh
   # reads $RUN_DIR/per-model/<id>/ for raw fixture scores (iteration 2).
-  if KITTYPAW_CONFIG_DIR="$EVAL_TMP" \
-     OUT_DIR="$per_model_dir" \
-     LOCK_DIR="$EVAL_TMP/sm-$id.lock" \
-     "$SECRETARY_RUN" --model "$id" >/dev/null 2>&1; then
+  # Wall-clock cap via background watchdog (macOS BSD 환경에 timeout(1) 부재).
+  KITTYPAW_CONFIG_DIR="$EVAL_TMP" \
+    OUT_DIR="$per_model_dir" \
+    LOCK_DIR="$EVAL_TMP/sm-$id.lock" \
+    "$SECRETARY_RUN" --model "$id" >/dev/null 2>&1 &
+  sm_pid=$!
+  ( sleep "$PER_MODEL_TIMEOUT" && kill -TERM "$sm_pid" 2>/dev/null ) &
+  watchdog_pid=$!
+  if wait "$sm_pid" 2>/dev/null; then
     record_model "$id" "pass" ""
   else
-    record_model "$id" "fail" "secretary_smoke failed"
+    sm_exit=$?
+    if (( sm_exit == 143 )); then
+      record_model "$id" "fail" "timeout (${PER_MODEL_TIMEOUT}s) — likely rate limit"
+    else
+      record_model "$id" "fail" "secretary_smoke failed (exit $sm_exit)"
+    fi
   fi
+  kill -TERM "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
 
   stop_daemon
+
+  # Provider rate limit 회복 — model 간 spacing.
+  sleep "$INTER_MODEL_SLEEP"
 done < <(echo "$MODELS_JSON" | jq -r '.model[] | [.id, .provider, .model] | @tsv')
 
 echo "manifest: $MANIFEST"
