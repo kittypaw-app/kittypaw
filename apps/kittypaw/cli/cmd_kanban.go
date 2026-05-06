@@ -69,6 +69,11 @@ type kanbanClaimFlags struct {
 	workDir string
 }
 
+type kanbanHeartbeatFlags struct {
+	shared *kanbanSharedFlags
+	actor  string
+}
+
 type kanbanExecFlags struct {
 	shared  *kanbanSharedFlags
 	actor   string
@@ -80,6 +85,19 @@ type kanbanCompleteFlags struct {
 	shared   *kanbanSharedFlags
 	actor    string
 	summary  string
+	metadata string
+}
+
+type kanbanCancelFlags struct {
+	shared   *kanbanSharedFlags
+	actor    string
+	metadata string
+}
+
+type kanbanReclaimFlags struct {
+	shared   *kanbanSharedFlags
+	actor    string
+	workDir  string
 	metadata string
 }
 
@@ -114,7 +132,10 @@ func newKanbanCmd() *cobra.Command {
 		newKanbanArchiveCmd(flags),
 		newKanbanExecCmd(flags),
 		newKanbanClaimCmd(flags),
+		newKanbanHeartbeatCmd(flags),
 		newKanbanCompleteCmd(flags),
+		newKanbanCancelCmd(flags),
+		newKanbanReclaimCmd(flags),
 		newKanbanBlockCmd(flags),
 		newKanbanUnblockCmd(flags),
 		newKanbanCommentCmd(flags),
@@ -229,6 +250,20 @@ func newKanbanClaimCmd(shared *kanbanSharedFlags) *cobra.Command {
 	return cmd
 }
 
+func newKanbanHeartbeatCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanHeartbeatFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "heartbeat <task>",
+		Short: "Record activity for a running Kanban task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanHeartbeat(args[0], flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
+	return cmd
+}
+
 func newKanbanExecCmd(shared *kanbanSharedFlags) *cobra.Command {
 	flags := &kanbanExecFlags{shared: shared}
 	cmd := &cobra.Command{
@@ -263,6 +298,37 @@ func newKanbanCompleteCmd(shared *kanbanSharedFlags) *cobra.Command {
 	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
 	cmd.Flags().StringVar(&flags.summary, "summary", "", "completion summary")
 	cmd.Flags().StringVar(&flags.metadata, "metadata", "", "completion metadata JSON")
+	return cmd
+}
+
+func newKanbanCancelCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanCancelFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "cancel <task> <reason>",
+		Short: "Cancel a running Kanban task",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanCancel(args[0], args[1], flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
+	cmd.Flags().StringVar(&flags.metadata, "metadata", "", "cancellation metadata JSON")
+	return cmd
+}
+
+func newKanbanReclaimCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanReclaimFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "reclaim <task> <reason>",
+		Short: "Replace a stale running Kanban task run",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanReclaim(args[0], args[1], flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
+	cmd.Flags().StringVar(&flags.workDir, "work-dir", "", "replacement run working directory")
+	cmd.Flags().StringVar(&flags.metadata, "metadata", "", "reclaim metadata JSON")
 	return cmd
 }
 
@@ -583,6 +649,28 @@ func runKanbanClaim(taskID string, flags *kanbanClaimFlags) error {
 	return nil
 }
 
+func runKanbanHeartbeat(taskID string, flags *kanbanHeartbeatFlags) error {
+	if flags == nil {
+		flags = &kanbanHeartbeatFlags{shared: &kanbanSharedFlags{}}
+	}
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	run, err := st.HeartbeatKanbanTask(strings.TrimSpace(taskID), store.HeartbeatKanbanTaskRequest{
+		Actor: strings.TrimSpace(flags.actor),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Heartbeat task: %s\n", run.TaskID)
+	fmt.Printf("Run: %s\n", run.ID)
+	fmt.Printf("Heartbeat: %s\n", run.HeartbeatAt)
+	return nil
+}
+
 func runKanbanExec(taskID string, command []string, flags *kanbanExecFlags) error {
 	if flags == nil {
 		flags = &kanbanExecFlags{shared: &kanbanSharedFlags{}}
@@ -679,6 +767,73 @@ func runKanbanComplete(taskID string, flags *kanbanCompleteFlags) error {
 		return err
 	}
 	fmt.Printf("Completed task: %s\n", strings.TrimSpace(taskID))
+	return nil
+}
+
+func runKanbanCancel(taskID, reason string, flags *kanbanCancelFlags) error {
+	if flags == nil {
+		flags = &kanbanCancelFlags{shared: &kanbanSharedFlags{}}
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("reason is required")
+	}
+	if err := validateKanbanMetadata(flags.metadata); err != nil {
+		return err
+	}
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	task, err := st.CancelKanbanTask(strings.TrimSpace(taskID), store.CancelKanbanTaskRequest{
+		Actor:        strings.TrimSpace(flags.actor),
+		Reason:       reason,
+		MetadataJSON: flags.metadata,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Canceled task: %s\n", task.ID)
+	fmt.Printf("Status: %s\n", task.Status)
+	return nil
+}
+
+func runKanbanReclaim(taskID, reason string, flags *kanbanReclaimFlags) error {
+	if flags == nil {
+		flags = &kanbanReclaimFlags{shared: &kanbanSharedFlags{}}
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("reason is required")
+	}
+	if err := validateKanbanMetadata(flags.metadata); err != nil {
+		return err
+	}
+	workDir, provider, err := normalizeRunWorkDir(flags.workDir)
+	if err != nil {
+		return err
+	}
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	run, err := st.ReclaimKanbanTask(strings.TrimSpace(taskID), store.ReclaimKanbanTaskRequest{
+		Actor:           strings.TrimSpace(flags.actor),
+		Reason:          reason,
+		WorkDir:         workDir,
+		WorkDirProvider: provider,
+		MetadataJSON:    flags.metadata,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Reclaimed task: %s\n", run.TaskID)
+	fmt.Printf("Run: %s\n", run.ID)
+	fmt.Printf("Work dir: %s\n", run.WorkDir)
 	return nil
 }
 

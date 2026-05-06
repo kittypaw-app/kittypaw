@@ -21,7 +21,10 @@ func TestKanbanCommandExposesTaskWorkflow(t *testing.T) {
 		{"kanban", "archive"},
 		{"kanban", "exec"},
 		{"kanban", "claim"},
+		{"kanban", "heartbeat"},
 		{"kanban", "complete"},
+		{"kanban", "cancel"},
+		{"kanban", "reclaim"},
 		{"kanban", "block"},
 		{"kanban", "unblock"},
 		{"kanban", "comment"},
@@ -46,6 +49,27 @@ func TestKanbanCommandFlags(t *testing.T) {
 	for _, flag := range []string{"actor", "work-dir", "account"} {
 		if claim.Flag(flag) == nil {
 			t.Fatalf("kanban claim missing --%s", flag)
+		}
+	}
+
+	heartbeat := mustFindCommand(t, root, []string{"kanban", "heartbeat"})
+	for _, flag := range []string{"actor", "account"} {
+		if heartbeat.Flag(flag) == nil {
+			t.Fatalf("kanban heartbeat missing --%s", flag)
+		}
+	}
+
+	cancel := mustFindCommand(t, root, []string{"kanban", "cancel"})
+	for _, flag := range []string{"actor", "metadata", "account"} {
+		if cancel.Flag(flag) == nil {
+			t.Fatalf("kanban cancel missing --%s", flag)
+		}
+	}
+
+	reclaim := mustFindCommand(t, root, []string{"kanban", "reclaim"})
+	for _, flag := range []string{"actor", "work-dir", "metadata", "account"} {
+		if reclaim.Flag(flag) == nil {
+			t.Fatalf("kanban reclaim missing --%s", flag)
 		}
 	}
 
@@ -75,6 +99,132 @@ func TestKanbanCommandFlags(t *testing.T) {
 		if complete.Flag(flag) == nil {
 			t.Fatalf("kanban complete missing --%s", flag)
 		}
+	}
+}
+
+func TestKanbanHeartbeatUpdatesRun(t *testing.T) {
+	taskID := setupKanbanCLITestTask(t, "Heartbeat")
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	if err := runKanbanHeartbeat(taskID, &kanbanHeartbeatFlags{
+		shared: &kanbanSharedFlags{accountID: "alice"},
+		actor:  "alice",
+	}); err != nil {
+		t.Fatalf("runKanbanHeartbeat: %v", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	runs, err := st.ListKanbanRuns(taskID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != store.KanbanRunRunning || runs[0].HeartbeatAt == "" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanCancelCancelsRun(t *testing.T) {
+	taskID := setupKanbanCLITestTask(t, "Cancel")
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	if err := runKanbanCancel(taskID, "manual stop", &kanbanCancelFlags{
+		shared:   &kanbanSharedFlags{accountID: "alice"},
+		actor:    "alice",
+		metadata: `{"source":"cli-test"}`,
+	}); err != nil {
+		t.Fatalf("runKanbanCancel: %v", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(taskID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusTodo {
+		t.Fatalf("task status = %q", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(taskID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != store.KanbanRunCanceled || runs[0].Summary != "manual stop" || !strings.Contains(runs[0].MetadataJSON, "cli-test") {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanReclaimStartsReplacementRun(t *testing.T) {
+	taskID := setupKanbanCLITestTask(t, "Reclaim")
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	runDir := t.TempDir()
+	if err := runKanbanReclaim(taskID, "stale runner", &kanbanReclaimFlags{
+		shared:   &kanbanSharedFlags{accountID: "alice"},
+		actor:    "bob",
+		workDir:  runDir,
+		metadata: `{"source":"cli-test"}`,
+	}); err != nil {
+		t.Fatalf("runKanbanReclaim: %v", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(taskID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusRunning {
+		t.Fatalf("task status = %q", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(taskID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	var reclaimed, running int
+	for _, run := range runs {
+		if run.Outcome == store.KanbanRunReclaimed {
+			reclaimed++
+		}
+		if run.Outcome == store.KanbanRunRunning {
+			running++
+			if run.Actor != "bob" || run.WorkDir != runDir || run.WorkDirProvider != store.KanbanWorkDirManual {
+				t.Fatalf("running run = %+v", run)
+			}
+		}
+	}
+	if len(runs) != 2 || reclaimed != 1 || running != 1 {
+		t.Fatalf("runs = %+v", runs)
 	}
 }
 
@@ -378,4 +528,37 @@ func TestKanbanCommandDoesNotAddTopLevelBoardOrMilestone(t *testing.T) {
 			t.Fatalf("root command must not expose top-level %q; use kittypaw project %s", name, name)
 		}
 	}
+}
+
+func setupKanbanCLITestTask(t *testing.T, title string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     title,
+		Status:    store.KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	return task.ID
 }
