@@ -289,6 +289,10 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/complete", map[string]any{
 		"actor": "alice",
 	}, http.StatusBadRequest, nil)
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/fail", map[string]any{
+		"actor": "alice",
+	}, http.StatusBadRequest, nil)
 }
 
 func TestKanbanAPIClaimExplicitWorkDirUsesManualProvider(t *testing.T) {
@@ -367,6 +371,7 @@ func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
 		{"show", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID, nil},
 		{"claim", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/claim", map[string]any{"actor": "alice"}},
 		{"complete", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/complete", map[string]any{"summary": "done"}},
+		{"fail", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/fail", map[string]any{"error": "boom"}},
 		{"block", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/block", map[string]any{"reason": "missing"}},
 		{"unblock", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/unblock", map[string]any{}},
 		{"comments list", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID + "/comments", nil},
