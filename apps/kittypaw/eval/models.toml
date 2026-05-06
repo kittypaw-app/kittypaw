@@ -11,6 +11,8 @@ provider = "groq"
 model = "qwen/qwen3-32b"
 base_url = "https://api.groq.com/openai/v1/chat/completions"
 api_key_env = "GROQ_API_KEY"
+eval_enabled = false
+exclude_reason = "free API tier hit 429/rate-limit during KittyPaw eval; not reliable as default assistant recommendation"
 
 [[model]]
 id = "groq-llama"
@@ -18,6 +20,8 @@ provider = "groq"
 model = "llama-3.3-70b-versatile"
 base_url = "https://api.groq.com/openai/v1/chat/completions"
 api_key_env = "GROQ_API_KEY"
+eval_enabled = false
+exclude_reason = "free API tier hit timeout/rate-limit during KittyPaw eval; not reliable as default assistant recommendation"
 
 [[model]]
 id = "mistral-medium"
@@ -25,6 +29,8 @@ provider = "mistral"
 model = "mistral-medium-latest"
 base_url = "https://api.mistral.ai/v1/chat/completions"
 api_key_env = "MISTRAL_API_KEY"
+eval_enabled = false
+exclude_reason = "free API tier timed out during KittyPaw eval; paid/credit tier required for recommendation"
 
 [[model]]
 id = "ministral-8b"
@@ -32,12 +38,16 @@ provider = "mistral"
 model = "ministral-8b-latest"
 base_url = "https://api.mistral.ai/v1/chat/completions"
 api_key_env = "MISTRAL_API_KEY"
+eval_enabled = false
+exclude_reason = "free API tier timed out during KittyPaw eval; paid/credit tier required for recommendation"
 
 [[model]]
 id = "gemini-flash-lite"
 provider = "gemini"
 model = "gemini-2.5-flash-lite"
 api_key_env = "GEMINI_API_KEY"
+eval_enabled = false
+exclude_reason = "free API returned 429 on human-paced retest (2min cooldown + first real turn); not reliable enough for default assistant recommendation"
 
 [[model]]
 id = "openrouter-llama-3.3"
@@ -45,6 +55,8 @@ provider = "openrouter"
 model = "meta-llama/llama-3.3-70b-instruct:free"
 base_url = "https://openrouter.ai/api/v1/chat/completions"
 api_key_env = "OPENROUTER_API_KEY"
+eval_enabled = false
+exclude_reason = "free API tier timed out/rate-limited during KittyPaw eval; not reliable as default assistant recommendation"
 
 [[model]]
 id = "lmstudio-qwen3-30b-mlx"
@@ -57,12 +69,12 @@ base_url = "http://localhost:11600/v1/chat/completions"
 id = "ollama-qwen2.5-32b"
 provider = "ollama"
 model = "qwen2.5:32b-instruct"
-base_url = "http://localhost:11434/v1/chat/completions"
+base_url = "http://localhost:11500/v1/chat/completions"
 # api_key_env omitted — local SSH tunnel (:11500 → emac:11434), no auth.
 
 [[model]]
 id = "ollama-gemma4"
 provider = "ollama"
 model = "gemma4:latest"
-base_url = "http://localhost:11434/v1/chat/completions"
+base_url = "http://localhost:11500/v1/chat/completions"
 # api_key_env omitted — local SSH tunnel (:11500 → emac:11434), no auth.

@@ -110,6 +110,38 @@ func TestWebSocketUsesAuthenticatedAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketRouteOutlivesHTTPMiddlewareTimeout(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.Server.APIKey = "alice-key"
+	srv := newAuthTestServer(t, t.TempDir(), "alice", &cfg)
+	srv.accounts.Session("alice").Provider = slowWSProvider{
+		delay:   50 * time.Millisecond,
+		content: `return "slow done";`,
+	}
+
+	httpServer := httptest.NewServer(srv.setupRoutesWithTimeout(10 * time.Millisecond))
+	t.Cleanup(httpServer.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/ws?token=alice-key"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.CloseNow()
+
+	readWSServerMsg(t, ctx, conn)
+	writeWSClientMsg(t, ctx, conn, core.WsClientMsg{Type: core.WsMsgChat, Text: "hello"})
+	msg := readWSServerMsg(t, ctx, conn)
+	if msg.Type != core.WsMsgDone {
+		t.Fatalf("msg type = %q message=%q, want done", msg.Type, msg.Message)
+	}
+	if msg.FullText != "slow done" {
+		t.Fatalf("full_text = %q, want slow done", msg.FullText)
+	}
+}
+
 func TestWebSocketSingleAccountAcceptsMasterAPIKey(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)
@@ -249,6 +281,27 @@ func (p wsProvider) GenerateWithTools(ctx context.Context, msgs []core.LlmMessag
 
 func (p wsProvider) ContextWindow() int { return 128_000 }
 func (p wsProvider) MaxTokens() int     { return 4096 }
+
+type slowWSProvider struct {
+	delay   time.Duration
+	content string
+}
+
+func (p slowWSProvider) Generate(ctx context.Context, _ []core.LlmMessage) (*llm.Response, error) {
+	select {
+	case <-time.After(p.delay):
+		return &llm.Response{Content: p.content}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (p slowWSProvider) GenerateWithTools(ctx context.Context, msgs []core.LlmMessage, _ []llm.Tool) (*llm.Response, error) {
+	return p.Generate(ctx, msgs)
+}
+
+func (p slowWSProvider) ContextWindow() int { return 128_000 }
+func (p slowWSProvider) MaxTokens() int     { return 4096 }
 
 func readWSServerMsg(t *testing.T, ctx context.Context, conn *websocket.Conn) core.WsServerMsg {
 	t.Helper()

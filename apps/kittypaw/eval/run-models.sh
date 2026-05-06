@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Plan B Iteration 1 — per-run isolated daemon, 7 models sequential.
+# Plan B eval — per-run isolated daemon, enabled models sequential.
 #
 # Pipeline per model:
 #   write isolated cfg (KITTYPAW_CONFIG_DIR=$EVAL_TMP) → server start →
@@ -7,10 +7,10 @@
 #   record manifest → server stop → cfg cleanup.
 #
 # Daemon start fail / readiness timeout → record status=fail + 다음 모델 진행
-# (whole-run abort 금지 — 1개 모델 실패가 7×N 무효화하면 안 됨).
+# (whole-run abort 금지 — 1개 모델 실패가 전체 측정을 무효화하면 안 됨).
 #
-# Auth fail-fast: api_key_env 필드 있는 entry의 env var set 확인.
-# omit entry (lmstudio) 자동 skip.
+# Auth fail-fast: enabled entry 중 api_key_env 필드 있는 env var set 확인.
+# omit entry (lmstudio/ollama) 자동 skip.
 #
 # Judge consistency sanity (epsilon=0) — same prompt 2회 호출 → s1==s2 검증.
 # EVAL_SKIP_JUDGE_CHECK=1 로 skip 가능 (bats fixture).
@@ -42,6 +42,11 @@ INTER_MODEL_SLEEP="${INTER_MODEL_SLEEP:-60}"
 # every model auto-FAIL. Use LIMIT only for fast wiring smoke, not actual
 # quality measurement. Iteration 2 첫 cycle은 풀 fixture로 진행 (~25-40분).
 KITTYPAW_EVAL_FIXTURE_LIMIT="${KITTYPAW_EVAL_FIXTURE_LIMIT:-0}"
+KITTYPAW_EVAL_TURN_SLEEP="${KITTYPAW_EVAL_TURN_SLEEP:-0}"
+# Default eval excludes entries with eval_enabled=false. Use
+# EVAL_INCLUDE_DISABLED=1 only for explicit experiments with free API tiers that
+# already failed default-recommendation reliability.
+EVAL_INCLUDE_DISABLED="${EVAL_INCLUDE_DISABLED:-0}"
 
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 EVAL_TMP="${EVAL_TMP:-${TMPDIR:-/tmp}/kittypaw-eval-$RUN_ID}"
@@ -56,6 +61,15 @@ if ! MODELS_JSON="$(uv run python "$PARSE" "$MODELS_TOML" 2>/dev/null)"; then
   echo "failed to parse $MODELS_TOML" >&2
   exit 2
 fi
+if [[ "$EVAL_INCLUDE_DISABLED" == "1" ]]; then
+  ACTIVE_MODELS_JSON="$MODELS_JSON"
+else
+  ACTIVE_MODELS_JSON="$(echo "$MODELS_JSON" | jq '{model: [.model[] | select(.eval_enabled != false)]}')"
+fi
+if [[ "$(echo "$ACTIVE_MODELS_JSON" | jq '.model | length')" -eq 0 ]]; then
+  echo "no enabled models in $MODELS_TOML (set EVAL_INCLUDE_DISABLED=1 to include eval_enabled=false entries)" >&2
+  exit 2
+fi
 
 # Auth fail-fast — env var present for entries with non-empty api_key_env.
 missing=()
@@ -64,7 +78,7 @@ while IFS= read -r env; do
   if [[ -z "${!env:-}" ]]; then
     missing+=("$env")
   fi
-done < <(echo "$MODELS_JSON" | jq -r '.model[].api_key_env // empty')
+done < <(echo "$ACTIVE_MODELS_JSON" | jq -r '.model[].api_key_env // empty')
 if (( ${#missing[@]} > 0 )); then
   echo "missing env: ${missing[*]}" >&2
   exit 2
@@ -145,7 +159,7 @@ fi
 # ---------- per-model pipeline ----------
 
 write_model_cfg() {
-  local id="$1" provider="$2" model="$3"
+  local id="$1" provider="$2" model="$3" base_url="${4:-}"
   mkdir -p "$EVAL_TMP/accounts/default"
   cat > "$EVAL_TMP/accounts/default/config.toml" <<CFG
 # <!-- GENERATED FROM eval/run-models.sh -->
@@ -159,6 +173,9 @@ provider = "$provider"
 model = "$model"
 max_tokens = 1024
 CFG
+  if [[ -n "$base_url" ]]; then
+    printf 'base_url = "%s"\n' "$base_url" >> "$EVAL_TMP/accounts/default/config.toml"
+  fi
   local master_key
   master_key="$(head -c 16 /dev/urandom | xxd -p -c 32)"
   umask 077
@@ -175,8 +192,7 @@ start_daemon() {
   DAEMON_PID=$!
   local elapsed=0
   while (( elapsed < READINESS_TIMEOUT )); do
-    if curl -fsS "http://$EVAL_BIND/healthz" >/dev/null 2>&1 \
-       && KITTYPAW_CONFIG_DIR="$EVAL_TMP" "$KITTY_BIN" chat "ping" >/dev/null 2>&1; then
+    if curl -fsS "http://$EVAL_BIND/healthz" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -195,11 +211,59 @@ stop_daemon() {
   rm -rf "$EVAL_TMP/accounts/default" 2>/dev/null || true
 }
 
+copy_daemon_log() {
+  local dest_dir="$1"
+  if [[ -f "$EVAL_TMP/daemon.log" ]]; then
+    cp "$EVAL_TMP/daemon.log" "$dest_dir/daemon.log" 2>/dev/null || true
+  fi
+}
+
+logs_show_rate_limit() {
+  local secretary_log="$1" daemon_log="$2"
+  # Keep 429 matching token-like: UUID fragments such as "...-429b-..."
+  # are not rate-limit evidence.
+  grep -Eiq '(^|[^[:alnum:]_-])429([^[:alnum:]_-]|$)|rate[ _-]?limit|too many requests' \
+    "$secretary_log" "$daemon_log" 2>/dev/null
+}
+
+timeout_detail() {
+  local provider="$1" id="$2" timeout="$3"
+  case "$provider" in
+    ollama|lmstudio)
+      echo "timeout (${timeout}s) — local model too slow or stalled; log: per-model/$id/secretary_smoke.log"
+      ;;
+    *)
+      echo "timeout (${timeout}s) — likely rate limit; log: per-model/$id/secretary_smoke.log"
+      ;;
+  esac
+}
+
 record_model() {
-  local id="$1" status="$2" detail="${3:-}"
-  jq --arg id "$id" --arg status "$status" --arg detail "$detail" \
-    '.models += [{"id": $id, "status": $status, "detail": $detail}]' \
-    "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+  local id="$1" provider="$2" model="$3" status="$4" detail="${5:-}" summary_json="${6:-}"
+  if [[ -n "$summary_json" && -f "$summary_json" ]]; then
+    jq \
+      --arg id "$id" \
+      --arg provider "$provider" \
+      --arg model "$model" \
+      --arg status "$status" \
+      --arg detail "$detail" \
+      --slurpfile summary "$summary_json" \
+      '.models += [{
+        "id": $id,
+        "provider": $provider,
+        "model": $model,
+        "status": $status,
+        "detail": $detail,
+        "korean_score": ($summary[0].korean_score // null),
+        "latency_p95_ms": ($summary[0].latency_p95_ms // null),
+        "overall_pass": ($summary[0].overall_pass // null),
+        "overall_categories": ($summary[0].overall_categories // null)
+      }]' "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+  else
+    jq --arg id "$id" --arg provider "$provider" --arg model "$model" --arg status "$status" --arg detail "$detail" \
+      '.models += [{"id": $id, "provider": $provider, "model": $model, "status": $status, "detail": $detail}]' \
+      "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+  fi
 }
 
 # Iteration 2: per-provider local readiness probes — ollama tunnel + lmstudio
@@ -219,12 +283,12 @@ probe_ollama_tunnel() {
 # whitespace columns; anchor regex with ^ + [[:space:]].
 probe_lmstudio_loaded() {
   local model="$1"
-  ssh "$LMSTUDIO_HOST" lms ps 2>/dev/null | grep -qE "^${model}[[:space:]]"
+  ssh -n "$LMSTUDIO_HOST" lms ps 2>/dev/null | grep -qE "^${model}[[:space:]]"
 }
 
 # Sequential per-model. Process substitution avoids subshell variable scoping
 # issues that a `jq | while` pipe would introduce.
-while IFS=$'\t' read -r id provider model; do
+while IFS=$'\t' read -r id provider model base_url; do
   echo "[$id] starting daemon..." >&2
 
   # Provider-specific readiness probe (ollama / lmstudio). Skips daemon start
@@ -234,58 +298,85 @@ while IFS=$'\t' read -r id provider model; do
   if [[ "$provider" == "ollama" ]]; then
     if ! probe_ollama_tunnel; then
       echo "[$id] ollama tunnel not ready ($OLLAMA_PROBE_URL)" >&2
-      record_model "$id" "fail" "ollama tunnel not ready (run: dev-models-tunnel-ollama-start)"
+      record_model "$id" "$provider" "$model" "fail" "ollama tunnel not ready (run: dev-models-tunnel-ollama-start)"
       continue
     fi
   fi
   if [[ "$provider" == "lmstudio" ]]; then
     if ! probe_lmstudio_loaded "$model"; then
       echo "[$id] lmstudio model '$model' not loaded on $LMSTUDIO_HOST" >&2
-      record_model "$id" "fail" "lmstudio model not loaded — run: ssh $LMSTUDIO_HOST lms load $model -y --gpu max"
+      record_model "$id" "$provider" "$model" "fail" "lmstudio model not loaded — run: ssh $LMSTUDIO_HOST lms load $model -y --gpu max"
       continue
     fi
   fi
 
-  write_model_cfg "$id" "$provider" "$model"
+  per_model_dir="$RUN_DIR/per-model/$id"
+  summary_json="$per_model_dir/summary.json"
+  secretary_log="$per_model_dir/secretary_smoke.log"
+  mkdir -p "$per_model_dir"
+
+  write_model_cfg "$id" "$provider" "$model" "$base_url"
 
   if ! start_daemon; then
     echo "[$id] daemon start / readiness failed" >&2
-    record_model "$id" "fail" "daemon readiness timeout"
+    copy_daemon_log "$per_model_dir"
+    record_model "$id" "$provider" "$model" "fail" "daemon readiness timeout"
     stop_daemon
     continue
   fi
 
   echo "[$id] running secretary_smoke (timeout ${PER_MODEL_TIMEOUT}s)..." >&2
-  per_model_dir="$RUN_DIR/per-model/$id"
-  mkdir -p "$per_model_dir"
+  {
+    echo "model=$id"
+    echo "provider=$provider"
+    echo "started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "---"
+  } > "$secretary_log"
   # Per-model OUT_DIR + LOCK_DIR isolates secretary_smoke results — recommend.sh
   # reads $RUN_DIR/per-model/<id>/ for raw fixture scores (iteration 2).
   # Wall-clock cap via background watchdog (macOS BSD 환경에 timeout(1) 부재).
   KITTYPAW_CONFIG_DIR="$EVAL_TMP" \
     KITTYPAW_EVAL_FIXTURE_LIMIT="$KITTYPAW_EVAL_FIXTURE_LIMIT" \
+    KITTYPAW_EVAL_TURN_SLEEP="$KITTYPAW_EVAL_TURN_SLEEP" \
     OUT_DIR="$per_model_dir" \
     LOCK_DIR="$EVAL_TMP/sm-$id.lock" \
-    "$SECRETARY_RUN" --model "$id" >/dev/null 2>&1 &
+  "$SECRETARY_RUN" --model "$id" >> "$secretary_log" 2>&1 &
   sm_pid=$!
-  ( sleep "$PER_MODEL_TIMEOUT" && kill -TERM "$sm_pid" 2>/dev/null ) &
-  watchdog_pid=$!
+  # Polling timeout avoids orphaned `sleep $PER_MODEL_TIMEOUT` watchdog
+  # processes on macOS bash 3.2. 5 ticks/sec keeps fast mocks quick.
+  timed_out=0
+  ticks=0
+  max_ticks=$((PER_MODEL_TIMEOUT * 5))
+  while kill -0 "$sm_pid" 2>/dev/null; do
+    if (( ticks >= max_ticks )); then
+      timed_out=1
+      kill -TERM "$sm_pid" 2>/dev/null || true
+      break
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
   if wait "$sm_pid" 2>/dev/null; then
-    record_model "$id" "pass" ""
+    copy_daemon_log "$per_model_dir"
+    record_model "$id" "$provider" "$model" "pass" "" "$summary_json"
   else
     sm_exit=$?
-    if (( sm_exit == 143 )); then
-      record_model "$id" "fail" "timeout (${PER_MODEL_TIMEOUT}s) — likely rate limit"
+    copy_daemon_log "$per_model_dir"
+    if logs_show_rate_limit "$secretary_log" "$per_model_dir/daemon.log"; then
+      record_model "$id" "$provider" "$model" "fail" "rate limited (429; log: per-model/$id/secretary_smoke.log; daemon: per-model/$id/daemon.log)" "$summary_json"
+    elif (( timed_out == 1 || sm_exit == 143 )); then
+      record_model "$id" "$provider" "$model" "fail" "$(timeout_detail "$provider" "$id" "$PER_MODEL_TIMEOUT")" "$summary_json"
+    elif (( sm_exit == 1 )) && [[ -f "$summary_json" ]]; then
+      record_model "$id" "$provider" "$model" "fail" "criteria not met" "$summary_json"
     else
-      record_model "$id" "fail" "secretary_smoke failed (exit $sm_exit)"
+      record_model "$id" "$provider" "$model" "fail" "secretary_smoke failed (exit $sm_exit; log: per-model/$id/secretary_smoke.log)" "$summary_json"
     fi
   fi
-  kill -TERM "$watchdog_pid" 2>/dev/null || true
-  wait "$watchdog_pid" 2>/dev/null || true
 
   stop_daemon
 
   # Provider rate limit 회복 — model 간 spacing.
   sleep "$INTER_MODEL_SLEEP"
-done < <(echo "$MODELS_JSON" | jq -r '.model[] | [.id, .provider, .model] | @tsv')
+done < <(echo "$ACTIVE_MODELS_JSON" | jq -r '.model[] | [.id, .provider, .model, (.base_url // "")] | @tsv')
 
 echo "manifest: $MANIFEST"

@@ -329,149 +329,159 @@ func (s *Server) allowedOriginsForAccount(acct *requestAccount) []string {
 // Setup and bootstrap endpoints are unauthenticated so the onboarding
 // wizard can run before an API key exists.
 func (s *Server) setupRoutes() chi.Router {
+	return s.setupRoutesWithTimeout(60 * time.Second)
+}
+
+func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(s.corsMiddleware)
 
-	// Health check (unauthenticated — server liveness probe).
-	r.Get("/health", s.handleHealth)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(requestTimeout))
 
-	r.Route("/api/auth", func(r chi.Router) {
-		r.Post("/login", s.handleAuthLogin)
-		r.Post("/logout", s.handleAuthLogout)
-		r.Get("/me", s.handleAuthMe)
-	})
+		// Health check (unauthenticated — server liveness probe).
+		r.Get("/health", s.handleHealth)
 
-	// Bootstrap is open only before local Web UI users exist; once setup has
-	// created per-account auth files it requires a browser session before
-	// returning api_key.
-	r.With(s.requireWebSessionIfAuthUsers).Get("/api/bootstrap", s.handleBootstrap)
-
-	// Chat bootstrap is the narrow browser chat surface. It does not return
-	// the /api/v1 control token and points clients at /chat/ws.
-	r.Get("/api/chat/bootstrap", s.handleChatBootstrap)
-
-	// Telegram pairing is used by CLI setup/account flows as well as settings.
-	// The handler resolves the account from a web session, per-account API key,
-	// or server master key because /api/v1 auth is default-account oriented.
-	r.Post("/api/telegram/pairing/chat-id", s.handleTelegramPairingChatID)
-
-	// Authenticated post-setup settings. First-run setup stays in the CLI;
-	// these endpoints only mutate already configured accounts.
-	r.Route("/api/settings", func(r chi.Router) {
-		r.Post("/llm", s.handleSettingsLLM)
-		r.Post("/telegram", s.handleSettingsTelegram)
-		r.Post("/telegram/chat-id", s.handleSettingsTelegramChatID)
-		r.Get("/workspaces", s.handleSettingsWorkspacesList)
-		r.Post("/workspaces", s.handleSettingsWorkspacesCreate)
-		r.Delete("/workspaces/{id}", s.handleSettingsWorkspacesDelete)
-	})
-
-	// Setup / onboarding routes are open for first-run setup only. Existing
-	// installs require the local Web UI session because localhost checks are
-	// not enough when the server is reached through a tunnel.
-	r.Route("/api/setup", func(r chi.Router) {
-		r.Use(s.requireWebSessionIfAuthUsers)
-
-		// Always accessible.
-		r.Get("/status", s.handleSetupStatus)
-		r.Get("/kakao/pair-status", s.handleSetupKakaoPairStatus)
-
-		// Localhost only.
-		r.Post("/reset", s.handleSetupReset)
-
-		// Guarded — localhost during first-run, otherwise authenticated by
-		// the local Web UI session for the account being configured.
-		r.Group(func(r chi.Router) {
-			r.Use(s.requireSetupMutationAccess)
-			r.Use(s.requireOnboardingIncomplete)
-			r.Post("/llm", s.handleSetupLlm)
-			r.Post("/telegram", s.handleSetupTelegram)
-			r.Post("/telegram/chat-id", s.handleSetupTelegramChatID)
-			r.Post("/kakao/register", s.handleSetupKakaoRegister)
-			r.Post("/api-server", s.handleSetupAPIServer)
-			r.Post("/workspace", s.handleSetupWorkspace)
-			r.Post("/http-access", s.handleSetupHttpAccess)
-			r.Post("/complete", s.handleSetupComplete)
-		})
-	})
-
-	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(s.requireAPIKey)
-
-		// Status / history
-		r.Get("/status", s.handleStatus)
-		r.Get("/executions", s.handleExecutions)
-		r.Post("/telegram/pairing/chat-id", s.handleTelegramPairingChatID)
-
-		// Skills
-		r.Get("/skills", s.handleSkills)
-		r.Post("/skills/run", s.handleSkillsRun)
-		r.Post("/skills/teach", s.handleSkillsTeach)
-		r.Post("/skills/teach/approve", s.handleTeachApprove)
-		r.Delete("/skills/{name}", s.handleSkillsDelete)
-		r.Post("/skills/{name}/enable", s.handleSkillEnable)
-		r.Post("/skills/{name}/disable", s.handleSkillDisable)
-		r.Post("/skills/{name}/explain", s.handleSkillExplain)
-
-		// Checkpoints
-		r.Post("/checkpoints/{id}/rollback", s.handleCheckpointRollback)
-
-		// Chat
-		r.Post("/chat", s.handleChat)
-		r.Get("/chat/history", s.handleChatHistory)
-		r.Post("/chat/forget", s.handleChatForget)
-		r.Post("/chat/compact", s.handleChatCompact)
-		r.Get("/chat/checkpoints", s.handleCheckpointsList)
-		r.Post("/chat/checkpoints", s.handleCheckpointsCreate)
-
-		// Config
-		r.Get("/config/check", s.handleConfigCheck)
-		r.Post("/reload", s.handleReload)
-
-		// Admin — runtime account lifecycle. Localhost-only on top of the
-		// /api/v1 requireAPIKey gate: the server binds to 127.0.0.1 by
-		// default, but if a future deployment exposes it, admin mutations
-		// still require local access.
-		r.Route("/admin", func(r chi.Router) {
-			r.Use(s.requireLocalhost)
-			r.Post("/accounts", s.handleAdminAccountAdd)
-			r.Post("/accounts/{id}/delete", s.handleAdminAccountRemove)
+		r.Route("/api/auth", func(r chi.Router) {
+			r.Post("/login", s.handleAuthLogin)
+			r.Post("/logout", s.handleAuthLogout)
+			r.Get("/me", s.handleAuthMe)
 		})
 
-		// Install
-		r.Post("/install", s.handleInstall)
+		// Bootstrap is open only before local Web UI users exist; once setup has
+		// created per-account auth files it requires a browser session before
+		// returning api_key.
+		r.With(s.requireWebSessionIfAuthUsers).Get("/api/bootstrap", s.handleBootstrap)
 
-		// Search
-		r.Get("/search", s.handleSearch)
+		// Chat bootstrap is the narrow browser chat surface. It does not return
+		// the /api/v1 control token and points clients at /chat/ws.
+		r.Get("/api/chat/bootstrap", s.handleChatBootstrap)
 
-		// Packages (gallery)
-		r.Get("/packages", s.handlePackagesList)
-		r.Post("/packages/install-from-registry", s.handlePackageInstallFromRegistry)
-		r.Get("/packages/{id}", s.handlePackageDetail)
-		r.Delete("/packages/{id}", s.handlePackageUninstall)
-		r.Post("/packages/{id}/config", s.handlePackageConfigSet)
+		// Telegram pairing is used by CLI setup/account flows as well as settings.
+		// The handler resolves the account from a web session, per-account API key,
+		// or server master key because /api/v1 auth is default-account oriented.
+		r.Post("/api/telegram/pairing/chat-id", s.handleTelegramPairingChatID)
 
-		// Channels
-		r.Get("/channels", s.handleChannels)
+		// Authenticated post-setup settings. First-run setup stays in the CLI;
+		// these endpoints only mutate already configured accounts.
+		r.Route("/api/settings", func(r chi.Router) {
+			r.Post("/llm", s.handleSettingsLLM)
+			r.Post("/telegram", s.handleSettingsTelegram)
+			r.Post("/telegram/chat-id", s.handleSettingsTelegramChatID)
+			r.Get("/workspaces", s.handleSettingsWorkspacesList)
+			r.Post("/workspaces", s.handleSettingsWorkspacesCreate)
+			r.Delete("/workspaces/{id}", s.handleSettingsWorkspacesDelete)
+		})
 
-		// Memory
-		r.Get("/memory/search", s.handleMemorySearch)
+		// Setup / onboarding routes are open for first-run setup only. Existing
+		// installs require the local Web UI session because localhost checks are
+		// not enough when the server is reached through a tunnel.
+		r.Route("/api/setup", func(r chi.Router) {
+			r.Use(s.requireWebSessionIfAuthUsers)
 
-		// Profiles
-		r.Get("/profiles", s.handleProfileList)
-		r.Post("/profiles", s.handleProfileCreate)
-		r.Post("/profiles/{id}/activate", s.handleProfileActivate)
+			// Always accessible.
+			r.Get("/status", s.handleSetupStatus)
+			r.Get("/kakao/pair-status", s.handleSetupKakaoPairStatus)
 
-		// Workspaces
-		r.Get("/workspaces", s.handleWorkspacesList)
-		r.Post("/workspaces", s.handleWorkspacesCreate)
-		r.Delete("/workspaces/{id}", s.handleWorkspacesDelete)
+			// Localhost only.
+			r.Post("/reset", s.handleSetupReset)
+
+			// Guarded — localhost during first-run, otherwise authenticated by
+			// the local Web UI session for the account being configured.
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireSetupMutationAccess)
+				r.Use(s.requireOnboardingIncomplete)
+				r.Post("/llm", s.handleSetupLlm)
+				r.Post("/telegram", s.handleSetupTelegram)
+				r.Post("/telegram/chat-id", s.handleSetupTelegramChatID)
+				r.Post("/kakao/register", s.handleSetupKakaoRegister)
+				r.Post("/api-server", s.handleSetupAPIServer)
+				r.Post("/workspace", s.handleSetupWorkspace)
+				r.Post("/http-access", s.handleSetupHttpAccess)
+				r.Post("/complete", s.handleSetupComplete)
+			})
+		})
+
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Use(s.requireAPIKey)
+
+			// Status / history
+			r.Get("/status", s.handleStatus)
+			r.Get("/executions", s.handleExecutions)
+			r.Post("/telegram/pairing/chat-id", s.handleTelegramPairingChatID)
+
+			// Skills
+			r.Get("/skills", s.handleSkills)
+			r.Post("/skills/run", s.handleSkillsRun)
+			r.Post("/skills/teach", s.handleSkillsTeach)
+			r.Post("/skills/teach/approve", s.handleTeachApprove)
+			r.Delete("/skills/{name}", s.handleSkillsDelete)
+			r.Post("/skills/{name}/enable", s.handleSkillEnable)
+			r.Post("/skills/{name}/disable", s.handleSkillDisable)
+			r.Post("/skills/{name}/explain", s.handleSkillExplain)
+
+			// Checkpoints
+			r.Post("/checkpoints/{id}/rollback", s.handleCheckpointRollback)
+
+			// Chat
+			r.Post("/chat", s.handleChat)
+			r.Get("/chat/history", s.handleChatHistory)
+			r.Post("/chat/forget", s.handleChatForget)
+			r.Post("/chat/compact", s.handleChatCompact)
+			r.Get("/chat/checkpoints", s.handleCheckpointsList)
+			r.Post("/chat/checkpoints", s.handleCheckpointsCreate)
+
+			// Config
+			r.Get("/config/check", s.handleConfigCheck)
+			r.Post("/reload", s.handleReload)
+
+			// Admin — runtime account lifecycle. Localhost-only on top of the
+			// /api/v1 requireAPIKey gate: the server binds to 127.0.0.1 by
+			// default, but if a future deployment exposes it, admin mutations
+			// still require local access.
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(s.requireLocalhost)
+				r.Post("/accounts", s.handleAdminAccountAdd)
+				r.Post("/accounts/{id}/delete", s.handleAdminAccountRemove)
+			})
+
+			// Install
+			r.Post("/install", s.handleInstall)
+
+			// Search
+			r.Get("/search", s.handleSearch)
+
+			// Packages (gallery)
+			r.Get("/packages", s.handlePackagesList)
+			r.Post("/packages/install-from-registry", s.handlePackageInstallFromRegistry)
+			r.Get("/packages/{id}", s.handlePackageDetail)
+			r.Delete("/packages/{id}", s.handlePackageUninstall)
+			r.Post("/packages/{id}/config", s.handlePackageConfigSet)
+
+			// Channels
+			r.Get("/channels", s.handleChannels)
+
+			// Memory
+			r.Get("/memory/search", s.handleMemorySearch)
+
+			// Profiles
+			r.Get("/profiles", s.handleProfileList)
+			r.Post("/profiles", s.handleProfileCreate)
+			r.Post("/profiles/{id}/activate", s.handleProfileActivate)
+
+			// Workspaces
+			r.Get("/workspaces", s.handleWorkspacesList)
+			r.Post("/workspaces", s.handleWorkspacesCreate)
+			r.Delete("/workspaces/{id}", s.handleWorkspacesDelete)
+		})
 	})
 
 	// WebSocket sits outside /api/v1 — auth is done via query param or header.
+	// Keep it outside the HTTP request timeout middleware: local LLM turns can
+	// legitimately run longer than 60s, while wsMaxLifetime + heartbeat still
+	// bound dead sessions.
 	r.HandleFunc("/ws", s.handleWebSocket)
 	r.HandleFunc("/chat/ws", s.handleChatWebSocket)
 

@@ -47,10 +47,24 @@ setup_file() {
   done
 }
 
-@test "T1: ollama entries use provider=ollama + base_url 11434" {
+@test "T1: ollama entries use provider=ollama + base_url 11500 tunnel" {
   for id in ollama-qwen2.5-32b ollama-gemma4; do
     echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].provider == "ollama"' >/dev/null
-    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].base_url | test("localhost:11434")' >/dev/null
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].base_url | test("localhost:11500")' >/dev/null
+  done
+}
+
+@test "T1: free API entries are disabled for default eval; local entries remain active" {
+  disabled="$(echo "$JSON" | jq -r '[.model[] | select(.eval_enabled == false)] | length')"
+  [ "$disabled" -eq 6 ]
+  active="$(echo "$JSON" | jq -r '[.model[] | select(.eval_enabled != false)] | length')"
+  [ "$active" -eq 3 ]
+  for id in groq-qwen groq-llama mistral-medium ministral-8b gemini-flash-lite openrouter-llama-3.3; do
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].eval_enabled == false' >/dev/null
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].exclude_reason | test("free API")' >/dev/null
+  done
+  for id in lmstudio-qwen3-30b-mlx ollama-qwen2.5-32b ollama-gemma4; do
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].eval_enabled != false' >/dev/null
   done
 }
 
@@ -67,6 +81,7 @@ setup() {
     T3:*) _setup_t3 ;;
     T4:*) _setup_t4 ;;
     T5:*) _setup_t5 ;;
+    T6:*) _setup_t6 ;;
     *) return 0 ;;
   esac
 }
@@ -168,6 +183,15 @@ _setup_t4() {
   T4_RUNS="$BATS_TEST_TMPDIR/runs"
   T4_LOG="$BATS_TEST_TMPDIR/kp.log"
   mkdir -p "$T4_TMP" "$T4_BIN" "$T4_RUNS"
+  T4_MODELS_GROQ="$BATS_TEST_TMPDIR/groq-only.toml"
+  cat > "$T4_MODELS_GROQ" <<'TOML'
+[[model]]
+id = "groq-qwen"
+provider = "groq"
+model = "qwen/qwen3-32b"
+base_url = "https://api.groq.com/openai/v1/chat/completions"
+api_key_env = "GROQ_API_KEY"
+TOML
   # Mock kittypaw — `server start` exec sleep so background & exits quickly.
   # `chat ping` returns 0 but healthz never listens, so readiness fails.
   cat > "$T4_BIN/kittypaw" <<KP
@@ -190,9 +214,16 @@ MS
   chmod +x "$T4_BIN/secretary_smoke_mock.sh"
   # Iteration 2: ssh stub for lmstudio readiness probe. Default returns
   # "lms ps" output WITHOUT the lmstudio model id → graceful fail.
-  cat > "$T4_BIN/ssh" <<'SSH'
+cat > "$T4_BIN/ssh" <<'SSH'
 #!/usr/bin/env bash
 # T4 stub: simulate lmstudio model NOT loaded on emac
+# Real ssh may read stdin unless -n is used. This stub intentionally drains
+# stdin so tests catch loop-input consumption bugs.
+if [[ "${1:-}" == "-n" ]]; then
+  shift
+else
+  while IFS= read -r _line; do :; done
+fi
 echo "LOADED MODELS"
 echo "(none — model not loaded)"
 exit 0
@@ -237,7 +268,7 @@ SSH
   blocks="$(echo "$out" | grep -c '^\[\[llm.models\]\]')"
   [ "$blocks" -eq 9 ]
   echo "$out" | grep -q '^\[llm\]'
-  echo "$out" | grep -q '^default = "groq-qwen"'
+  echo "$out" | grep -q '^default = "lmstudio-qwen3-30b-mlx"'
 }
 
 @test "T2: setup with no cfg → generates sentinel + 9 entries" {
@@ -276,11 +307,12 @@ SSH
 
 # ---------- T4: run-models.sh wrapper (per-run daemon, sequential) ----------
 
-@test "T4: auth missing (MISTRAL_API_KEY) → exit 2" {
-  unset MISTRAL_API_KEY
+@test "T4: auth missing for enabled API entry → exit 2" {
+  export MODELS_TOML="$T4_MODELS_GROQ"
+  unset GROQ_API_KEY
   run bash "$RUN_MODELS"
   [ "$status" -eq 2 ]
-  echo "$output" | grep -q "MISTRAL_API_KEY"
+  echo "$output" | grep -q "GROQ_API_KEY"
 }
 
 @test "T4: ANTHROPIC_API_KEY missing (judge) → exit 2" {
@@ -324,7 +356,64 @@ write_manifest() {
   echo "$dir"
 }
 
-@test "T4: daemon readiness timeout → 9 모델 모두 status=fail + 다음 모델 진행 (whole-run abort 금지)" {
+write_metric_manifest() {
+  local run_id="$1"; shift
+  local dir="$T5_RUNS/$run_id"
+  mkdir -p "$dir"
+  local entries="[]"
+  while [[ $# -gt 0 ]]; do
+    local id="$1" status="$2" provider="$3" score="$4" latency="$5"
+    shift 5
+    entries=$(echo "$entries" | jq \
+      --arg id "$id" \
+      --arg status "$status" \
+      --arg provider "$provider" \
+      --argjson score "$score" \
+      --argjson latency "$latency" \
+      '. + [{
+        "id": $id,
+        "status": $status,
+        "provider": $provider,
+        "detail": "",
+        "korean_score": $score,
+        "latency_p95_ms": $latency
+      }]')
+  done
+  jq -n --arg id "$run_id" --argjson m "$entries" \
+    '{runID: $id, models: $m}' > "$dir/manifest.json"
+  echo "$dir"
+}
+
+_setup_t6() {
+  T6_OUT="$BATS_TEST_TMPDIR/secretary-results"
+  T6_LOCK="$BATS_TEST_TMPDIR/secretary-lock"
+  T6_BIN="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$T6_OUT" "$T6_BIN"
+  cat > "$T6_BIN/kittypaw" <<'KP'
+#!/usr/bin/env bash
+if [[ "$1" == "chat" ]]; then
+  echo "질문이 모호하니 가능한 해석을 나누고 필요한 확인 질문을 하겠습니다."
+  exit 0
+fi
+exit 0
+KP
+  chmod +x "$T6_BIN/kittypaw"
+cat > "$T6_BIN/curl" <<'CURL'
+#!/usr/bin/env bash
+printf '%s\n' '{"content":[{"text":"PASS\nmock judge"}]}'
+CURL
+  chmod +x "$T6_BIN/curl"
+  export PATH="$T6_BIN:$PATH"
+  export KITTY_BIN="$T6_BIN/kittypaw"
+  export OUT_DIR="$T6_OUT"
+  export SUMMARY="$T6_OUT/summary.md"
+  export LOCK_DIR="$T6_LOCK"
+  export ANTHROPIC_API_KEY="fake"
+  export KITTYPAW_EVAL_FIXTURE_LIMIT=1
+  RUN_SH="$APP_DIR/eval/secretary_smoke/run.sh"
+}
+
+@test "T4: default eval skips free API entries and runs only 3 local candidates" {
   run bash "$RUN_MODELS"
   [ "$status" -eq 0 ]  # whole-run completes despite per-model failures
   # Single run dir was created.
@@ -332,9 +421,10 @@ write_manifest() {
   manifest="$T4_RUNS/$run_dir/manifest.json"
   [ -f "$manifest" ]
   count=$(jq '.models | length' "$manifest")
-  [ "$count" -eq 9 ]
+  [ "$count" -eq 3 ]
   fail_count=$(jq '[.models[] | select(.status == "fail")] | length' "$manifest")
-  [ "$fail_count" -eq 9 ]
+  [ "$fail_count" -eq 3 ]
+  jq -e '[.models[].provider] | all(. == "lmstudio" or . == "ollama")' "$manifest" >/dev/null
   # secretary_smoke never ran (readiness failed before invocation).
   ! grep -q "secretary_smoke" "$T4_LOG"
 }
@@ -382,9 +472,153 @@ write_manifest() {
   echo "$ollama_detail" | grep -q "ollama tunnel not ready"
   echo "$ollama_detail" | grep -q "dev-models-tunnel-ollama-start"
   # Other 7 entries (6 cloud + 1 lmstudio) should also have status=fail
-  # (daemon readiness fails) — verify whole-run did not abort.
+  # With free API disabled, only lmstudio remains in addition to ollama.
   total_fail=$(jq '[.models[] | select(.status == "fail")] | length' "$manifest")
-  [ "$total_fail" -eq 9 ]
+  [ "$total_fail" -eq 3 ]
+}
+
+@test "T4: secretary_smoke summary.json metrics copied into manifest" {
+  export MODELS_TOML="$T4_MODELS_GROQ"
+  cat > "$T4_BIN/curl" <<'CURL'
+#!/usr/bin/env bash
+exit 0
+CURL
+  chmod +x "$T4_BIN/curl"
+  cat > "$T4_BIN/secretary_smoke_mock.sh" <<'MS'
+#!/usr/bin/env bash
+mkdir -p "$OUT_DIR"
+cat > "$OUT_DIR/summary.json" <<'JSON'
+{"status":"pass","korean_score":0.87,"latency_p95_ms":1234,"overall_pass":4,"overall_categories":5}
+JSON
+exit 0
+MS
+  chmod +x "$T4_BIN/secretary_smoke_mock.sh"
+  export SECRETARY_RUN="$T4_BIN/secretary_smoke_mock.sh"
+
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]
+  run_dir="$(ls "$T4_RUNS")"
+  manifest="$T4_RUNS/$run_dir/manifest.json"
+  jq -e '.models[] | select(.id == "groq-qwen") | .status == "pass"' "$manifest" >/dev/null
+  jq -e '.models[] | select(.id == "groq-qwen") | .korean_score == 0.87' "$manifest" >/dev/null
+  jq -e '.models[] | select(.id == "groq-qwen") | .latency_p95_ms == 1234' "$manifest" >/dev/null
+  jq -e '.models[] | select(.id == "groq-qwen") | .provider == "groq"' "$manifest" >/dev/null
+}
+
+@test "T4: secretary_smoke infra failure writes per-model log for diagnosis" {
+  export MODELS_TOML="$T4_MODELS_GROQ"
+  cat > "$T4_BIN/curl" <<'CURL'
+#!/usr/bin/env bash
+exit 0
+CURL
+  chmod +x "$T4_BIN/curl"
+  cat > "$T4_BIN/kittypaw" <<KP
+#!/usr/bin/env bash
+echo "kittypaw \$*" >> "$T4_LOG"
+case "\$1:\${2:-}" in
+  "server:start")
+    echo "daemon raw provider error marker"
+    exec sleep 1
+    ;;
+  "server:stop") exit 0 ;;
+  "chat:ping")   exit 0 ;;
+  *) exit 0 ;;
+esac
+KP
+  chmod +x "$T4_BIN/kittypaw"
+  cat > "$T4_BIN/secretary_smoke_mock.sh" <<'MS'
+#!/usr/bin/env bash
+mkdir -p "$OUT_DIR"
+echo "chat command failed for vague/vague-001:" >&2
+echo "openai: server returned 429" >&2
+exit 2
+MS
+  chmod +x "$T4_BIN/secretary_smoke_mock.sh"
+  export SECRETARY_RUN="$T4_BIN/secretary_smoke_mock.sh"
+
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]
+  run_dir="$(ls "$T4_RUNS")"
+  log="$T4_RUNS/$run_dir/per-model/groq-qwen/secretary_smoke.log"
+  [ -f "$log" ]
+  grep -q "chat command failed for vague/vague-001" "$log"
+  grep -q "openai: server returned 429" "$log"
+  daemon_log="$T4_RUNS/$run_dir/per-model/groq-qwen/daemon.log"
+  [ -f "$daemon_log" ]
+  grep -q "daemon raw provider error marker" "$daemon_log"
+  detail=$(jq -r '.models[] | select(.id == "groq-qwen") | .detail' "$T4_RUNS/$run_dir/manifest.json")
+  echo "$detail" | grep -q "rate limited"
+  echo "$detail" | grep -q "429"
+  echo "$detail" | grep -q "daemon.log"
+}
+
+@test "T4: model base_url from models.toml is written into isolated config" {
+  export MODELS_TOML="$T4_MODELS_GROQ"
+  cat > "$T4_BIN/kittypaw" <<KP
+#!/usr/bin/env bash
+echo "kittypaw \$*" >> "$T4_LOG"
+if [[ "\$1:\${2:-}" == "server:start" ]]; then
+  grep -q 'base_url = "https://api.groq.com/openai/v1/chat/completions"' "$T4_TMP/accounts/default/config.toml"
+  exit \$?
+fi
+exit 0
+KP
+  chmod +x "$T4_BIN/kittypaw"
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]
+  grep -q "server start" "$T4_LOG"
+}
+
+@test "T4: daemon readiness uses healthz only and does not spend provider call on chat ping" {
+  export MODELS_TOML="$T4_MODELS_GROQ"
+  cat > "$T4_BIN/curl" <<'CURL'
+#!/usr/bin/env bash
+exit 0
+CURL
+  chmod +x "$T4_BIN/curl"
+  cat > "$T4_BIN/secretary_smoke_mock.sh" <<'MS'
+#!/usr/bin/env bash
+mkdir -p "$OUT_DIR"
+cat > "$OUT_DIR/summary.json" <<'JSON'
+{"status":"pass","korean_score":0.80,"latency_p95_ms":500,"overall_pass":4,"overall_categories":5}
+JSON
+exit 0
+MS
+  chmod +x "$T4_BIN/secretary_smoke_mock.sh"
+  export SECRETARY_RUN="$T4_BIN/secretary_smoke_mock.sh"
+
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]
+  ! grep -q "kittypaw chat ping" "$T4_LOG"
+}
+
+@test "T4: rate-limit classifier ignores UUID 429 fragments but detects real HTTP 429" {
+  func=$(awk '/^logs_show_rate_limit\(\) \{/,/^\}/' "$RUN_MODELS")
+  eval "$func"
+
+  secretary_log="$BATS_TEST_TMPDIR/secretary.log"
+  daemon_log="$BATS_TEST_TMPDIR/daemon.log"
+  echo "ws session started session_id=71215cf5-5c9b-429b-b630-4b71986ba215" > "$daemon_log"
+  echo "normal chat output" > "$secretary_log"
+
+  run logs_show_rate_limit "$secretary_log" "$daemon_log"
+  [ "$status" -ne 0 ]
+
+  echo "Error: HTTP 429 Too Many Requests" > "$secretary_log"
+  run logs_show_rate_limit "$secretary_log" "$daemon_log"
+  [ "$status" -eq 0 ]
+}
+
+@test "T4: timeout detail is provider-aware (local timeout is not called rate limit)" {
+  func=$(awk '/^timeout_detail\(\) \{/,/^\}/' "$RUN_MODELS")
+  eval "$func"
+
+  local_detail="$(timeout_detail ollama ollama-gemma4 900)"
+  echo "$local_detail" | grep -q "local model too slow or stalled"
+  ! echo "$local_detail" | grep -q "rate limit"
+
+  cloud_detail="$(timeout_detail gemini gemini-flash-lite 900)"
+  echo "$cloud_detail" | grep -q "likely rate limit"
 }
 
 @test "T2: secretary_smoke fixture_lines respects KITTYPAW_EVAL_FIXTURE_LIMIT" {
@@ -410,6 +644,32 @@ write_manifest() {
   [ "$count" -eq 3 ]
 }
 
+@test "T2: secretary_smoke turn_sleep is opt-in via KITTYPAW_EVAL_TURN_SLEEP" {
+  func=$(awk '/^turn_sleep\(\) \{/,/^\}/' "$APP_DIR/eval/secretary_smoke/run.sh")
+  [ -n "$func" ]
+  eval "$func"
+  sleep_log="$BATS_TEST_TMPDIR/sleep.log"
+  cat > "$BATS_TEST_TMPDIR/sleep_stub" <<'SLEEP'
+#!/usr/bin/env bash
+echo "$1" >> "$SLEEP_LOG"
+SLEEP
+  chmod +x "$BATS_TEST_TMPDIR/sleep_stub"
+  export SLEEP_BIN="$BATS_TEST_TMPDIR/sleep_stub"
+  export SLEEP_LOG="$sleep_log"
+
+  unset KITTYPAW_EVAL_TURN_SLEEP
+  turn_sleep
+  [ ! -f "$sleep_log" ]
+
+  KITTYPAW_EVAL_TURN_SLEEP=0
+  turn_sleep
+  [ ! -f "$sleep_log" ]
+
+  KITTYPAW_EVAL_TURN_SLEEP=60
+  turn_sleep
+  [ "$(cat "$sleep_log")" = "60" ]
+}
+
 # ---------- T5: recommend.sh + docs/models.md render ----------
 
 @test "T5: pass entry 있을 때 → 첫 pass id 추천 + status matrix" {
@@ -425,6 +685,40 @@ write_manifest() {
   grep -q "추천" "$T5_DOCS"
   grep -q "pass: 2" "$T5_DOCS"
   grep -q "fail: 1" "$T5_DOCS"
+}
+
+@test "T5: korean_score 우선, 동률이면 latency_p95_ms 낮은 모델 추천" {
+  write_metric_manifest "1700000100-1234" \
+    "slow-high" "pass" "groq" 0.90 2200 \
+    "fast-high" "pass" "mistral" 0.90 900 \
+    "low-score" "pass" "ollama" 0.70 200 >/dev/null
+  run bash "$RECOMMEND"
+  [ "$status" -eq 0 ]
+  grep -Fq '**추천**: `fast-high`' "$T5_DOCS"
+  grep -q 'korean_score 0.90' "$T5_DOCS"
+  grep -q 'latency_p95_ms 900' "$T5_DOCS"
+}
+
+@test "T5: API 추천과 Local 추천을 분리해서 표시 + free API 제외 note" {
+  write_metric_manifest "1700000101-1234" \
+    "mistral-medium" "pass" "mistral" 0.82 1200 \
+    "ollama-qwen2.5-32b" "pass" "ollama" 0.88 1800 >/dev/null
+  run bash "$RECOMMEND"
+  [ "$status" -eq 0 ]
+  grep -q 'API 추천' "$T5_DOCS"
+  grep -q 'Local 추천' "$T5_DOCS"
+  grep -q '`mistral-medium`' "$T5_DOCS"
+  grep -q '`ollama-qwen2.5-32b`' "$T5_DOCS"
+  grep -q 'free API' "$T5_DOCS"
+}
+
+@test "T5: run history baseline table shows n and mean score" {
+  write_metric_manifest "1700000000-1234" "mistral-medium" "pass" "mistral" 0.80 1300 >/dev/null
+  write_metric_manifest "1700000100-1234" "mistral-medium" "pass" "mistral" 0.90 1200 >/dev/null
+  run bash "$RECOMMEND"
+  [ "$status" -eq 0 ]
+  grep -q 'Run History Baseline' "$T5_DOCS"
+  grep -q '| `mistral-medium` | 2 | 0.850 |' "$T5_DOCS"
 }
 
 @test "T5: 모든 fail → '추천 없음' + exit 0 (manifest 보존)" {
@@ -451,4 +745,27 @@ write_manifest() {
   run bash "$RECOMMEND"
   [ "$status" -eq 2 ]
   echo "$output" | grep -q "no run found"
+}
+
+@test "T6: secretary_smoke writes summary.json with korean_score and latency_p95_ms" {
+  run bash "$RUN_SH"
+  # LIMIT=1 makes hardcoded category thresholds fail; metrics should still exist.
+  [ "$status" -eq 1 ]
+  [ -f "$T6_OUT/summary.json" ]
+  jq -e '.korean_score >= 0 and .korean_score <= 1' "$T6_OUT/summary.json" >/dev/null
+  jq -e '.latency_p95_ms >= 0' "$T6_OUT/summary.json" >/dev/null
+  jq -e '.categories | length == 5' "$T6_OUT/summary.json" >/dev/null
+  jq -e '.status == "fail"' "$T6_OUT/summary.json" >/dev/null
+}
+
+@test "T6: secretary_smoke writes compact JSONL — one object per fixture line" {
+  run bash "$RUN_SH"
+  [ "$status" -eq 1 ]
+  for file in "$T6_OUT"/*.jsonl; do
+    lines=$(wc -l < "$file" | tr -d ' ')
+    [ "$lines" -eq 1 ]
+    while IFS= read -r line; do
+      echo "$line" | jq -e '.' >/dev/null
+    done < "$file"
+  done
 }

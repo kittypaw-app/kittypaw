@@ -30,8 +30,10 @@ def main(argv: list[str]) -> int:
 
     out = sys.stdout
     out.write(SENTINEL + "\n\n")
+    default_model = next((m for m in models if m.get("eval_enabled") is not False), models[0])
+
     out.write("[llm]\n")
-    out.write(f'default = "{models[0]["id"]}"\n')
+    out.write(f'default = "{default_model["id"]}"\n')
     for m in models:
         out.write("\n[[llm.models]]\n")
         out.write(f'id = "{m["id"]}"\n')

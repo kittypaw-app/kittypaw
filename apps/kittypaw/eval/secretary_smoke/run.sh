@@ -17,6 +17,7 @@ EVAL_DIR="$ROOT_DIR/eval/secretary_smoke"
 FIX_DIR="$EVAL_DIR/fixtures"
 OUT_DIR="${OUT_DIR:-$EVAL_DIR/results}"
 SUMMARY="${SUMMARY:-$OUT_DIR/summary.md}"
+SUMMARY_JSON="${SUMMARY_JSON:-$OUT_DIR/summary.json}"
 LOCK_DIR="${LOCK_DIR:-$EVAL_DIR/.runner.lock}"
 KITTY_BIN="${KITTY_BIN:-$ROOT_DIR/bin/kittypaw}"
 JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5-20251001}"
@@ -85,6 +86,10 @@ write_summary_header() {
     echo "Server: $RUN_SERVER"
     echo
   } > "$SUMMARY"
+}
+
+now_ms() {
+  python3 -c 'import time; print(int(time.time() * 1000))'
 }
 
 cleanup() {
@@ -285,6 +290,12 @@ fixture_lines() {
   fi
 }
 
+turn_sleep() {
+  local seconds="${KITTYPAW_EVAL_TURN_SLEEP:-0}"
+  awk -v s="$seconds" 'BEGIN { exit (s > 0) ? 0 : 1 }' || return 0
+  "${SLEEP_BIN:-sleep}" "$seconds"
+}
+
 # Score a single fixture file. Echoes an aggregate JSON line.
 score_category() {
   local fixture="$1"
@@ -310,12 +321,16 @@ score_category() {
     echo "[$category] $id: $input" >&2
 
     # Run KittyPaw.
-    local raw_response
+    local raw_response started_ms ended_ms latency_ms
+    started_ms=$(now_ms)
     if ! raw_response=$("$KITTY_BIN" chat "$input" 2>&1); then
       echo "chat command failed for $category/$id:" >&2
       echo "$raw_response" >&2
       return 2
     fi
+    ended_ms=$(now_ms)
+    latency_ms=$((ended_ms - started_ms))
+    (( latency_ms < 0 )) && latency_ms=0
     local response
     response=$(echo "$raw_response" | strip_chat_output)
 
@@ -361,7 +376,7 @@ score_category() {
     # Track pass count.
     awk -v s="$score" 'BEGIN { exit (s >= 1.5) ? 0 : 1 }' && pass_q=$((pass_q + 1)) || true
 
-    jq -n \
+    jq -cn \
       --arg id "$id" \
       --arg input "$input" \
       --arg category "$category" \
@@ -369,10 +384,12 @@ score_category() {
       --argjson behaviors "$behavior_results" \
       --argjson penalty "$antipattern_penalty" \
       --arg score "$score" \
-      '{id: $id, input: $input, category: $category, response: $response, behaviors: $behaviors, antipattern_penalty: $penalty, score: ($score | tonumber)}' >> "$out"
+      --argjson latency "$latency_ms" \
+      '{id: $id, input: $input, category: $category, response: $response, behaviors: $behaviors, antipattern_penalty: $penalty, score: ($score | tonumber), latency_ms: $latency}' >> "$out"
+    turn_sleep
   done < <(fixture_lines "$fixture")
 
-  jq -n \
+  jq -cn \
     --arg category "$category" \
     --argjson total "$total_q" \
     --argjson pass "$pass_q" \
@@ -407,6 +424,9 @@ check_threshold() {
   echo "|---|---|---|---|---|"
 } >> "$SUMMARY"
 
+CATEGORY_JSONL="$OUT_DIR/.summary-categories.jsonl"
+: > "$CATEGORY_JSONL"
+
 categories=(vague domain weak_serp framing stale)
 overall_pass=0
 overall_categories=0
@@ -426,8 +446,44 @@ for cat in "${categories[@]}"; do
   antihit=$(echo "$agg" | jq -r '.antipattern_hits')
 
   echo "| $cat | $total | $pass | $antihit | $threshold |" >> "$SUMMARY"
-  [[ "$threshold" == PASS* ]] && overall_pass=$((overall_pass + 1))
+  threshold_pass=false
+  if [[ "$threshold" == PASS* ]]; then
+    threshold_pass=true
+    overall_pass=$((overall_pass + 1))
+  fi
+  echo "$agg" | jq -c \
+    --arg threshold "$threshold" \
+    --argjson threshold_pass "$threshold_pass" \
+    '. + {threshold: $threshold, threshold_pass: $threshold_pass}' >> "$CATEGORY_JSONL"
 done
+
+total_questions=$(jq -s 'map(.total) | add // 0' "$CATEGORY_JSONL")
+total_pass=$(jq -s 'map(.pass) | add // 0' "$CATEGORY_JSONL")
+korean_score=$(jq -n --argjson pass "$total_pass" --argjson total "$total_questions" \
+  'if $total == 0 then 0 else ($pass / $total) end')
+latency_p95_ms=$(jq -s '
+  [.[].latency_ms? // empty] | sort |
+  if length == 0 then 0 else .[((length - 1) * 95 / 100 | floor)] end
+' "$OUT_DIR"/*.jsonl)
+run_status="fail"
+(( overall_pass >= 4 )) && run_status="pass"
+
+jq -n \
+  --arg status "$run_status" \
+  --argjson korean_score "$korean_score" \
+  --argjson latency_p95_ms "$latency_p95_ms" \
+  --argjson overall_pass "$overall_pass" \
+  --argjson overall_categories "$overall_categories" \
+  --slurpfile categories "$CATEGORY_JSONL" \
+  '{
+    status: $status,
+    korean_score: $korean_score,
+    latency_p95_ms: $latency_p95_ms,
+    overall_pass: $overall_pass,
+    overall_categories: $overall_categories,
+    categories: $categories
+  }' > "$SUMMARY_JSON"
+rm -f "$CATEGORY_JSONL"
 
 {
   echo

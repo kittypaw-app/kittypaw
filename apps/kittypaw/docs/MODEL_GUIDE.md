@@ -1,6 +1,6 @@
 # KittyPaw LLM Model Guide
 
-> **Last verified**: 2026-05-04
+> **Last verified**: 2026-05-06
 > **Test machine (local)**: eMac (m3-enuma.local) — MacBook Pro **M3 Pro 36 GB**, 12-core (6P+6E), memory bandwidth 150 GB/s, macOS 26.3.1
 > **Runtimes covered**: Ollama 0.23.0 · LM Studio (`lms` 0.0.12 / llmster) · Cloud free tiers
 > **KittyPaw provider**: Anthropic Claude (default) + OpenAI Chat Completions wire (Cerebras/Groq/DeepSeek/OpenRouter/Ollama via `provider="<name>"` registry case)
@@ -19,9 +19,9 @@ This is a fact-only running log of which models work as a KittyPaw assistant, wh
 | **36 GB M3 Pro, local, privacy** (Ollama만, 즉답성 우선) | **`gemma4:latest` 8B** ★★★ | `qwen3:latest` 8B (max_tokens=1024) | warm 0.82-9s, multi-section |
 | **36 GB M3 Pro, local, privacy** (Ollama만, 정확성·reasoning 우선) | **`qwen2.5:32b-instruct`** ★★★ | gemma4:8B | thinking 없음, 정체성 일관, warm 3-9s |
 | **16 GB MBA, local, privacy** | **`phi4-mini:latest`** 3.8B ★★ | `qwen3:latest` 8B (max_tok=1024 thinking 부담) | phi4-mini 즉답 1-3s, 정체성 일관(Phi/Microsoft). granite4.1:8b는 정체성 hallucination(5.1.2) — system prompt 강제 안 하면 비추 |
-| **Cloud free, Korean priority** (KittyPaw chat 디폴트) | **Mistral `mistral-medium-latest`** ★★★ (실측 — AI 자칭 일관, 한국어 자연, 128K context, 카드 ❌ phone 인증) | **Groq `qwen/qwen3-32b`** ★★★ (단 KittyPaw 어댑터에 `reasoning_format=parsed` 송신 필수 — § 5.13) | Cerebras 8K cap = KittyPaw chat **디폴트 부적합** (§ 5.3 실측). Mistral large/small은 "개발자 페르소나" SFT (§ 5.11). Mistral magistral은 Native reasoning disable 불가 (§ 5.12) |
-| **Cloud free, speed + tool calling** | **Groq Llama 3.3 70B** ★★ | Cerebras Qwen3-235B (보조 phase, 8K cap 짧은 호출 한정) | Groq 한국어는 일본어 mixin 가끔. parallel tool 지원 (gpt-oss-* 제외) |
-| **Cloud free, 다양화 후보** | (시도 가능) Mistral `ministral-8b-latest` 256K · `pixtral-large-latest` (vision) | Gemini `gemini-2.5-flash-lite` (단 무료 quota 매우 빡빡) | OpenRouter `:free` 모델 20 RPM · DeepSeek (5M/30일 grant docs 미명시) — 다양화 시 § 4.5-4.8 참조 |
+| **Cloud free, Korean priority** (KittyPaw chat 디폴트) | **추천 없음** ✗ | paid/credit tier에서 Mistral `mistral-medium-latest` 재평가 | 2026-05-06 eval에서 Groq/Mistral/Gemini/OpenRouter free tier가 429/timeout 계열로 실패. 무료 API는 기본 추천 후보에서 제외 (§ 5.15). |
+| **Cloud free, speed + tool calling** | **추천 없음** ✗ | paid/credit tier에서 Groq Llama 3.3 70B 재평가 | free tier는 반복 측정과 기본 비서 운영에 안정적이지 않음. 짧은 수동 호출은 가능할 수 있으나 default recommendation은 아님. |
+| **Cloud API, paid/credit 재평가 후보** | Mistral `mistral-medium-latest` | Groq Llama 3.3 70B / Groq `qwen/qwen3-32b` | 모델 품질 후보와 무료 tier 안정성은 분리. paid/credit + cost cap이 생기면 별도 측정. |
 
 추천 등급: ★★★ 비서 즉답성·정확도·한국어 모두 통과 / ★★ 한 축 약점 / ★ 특정 시나리오 / ✗ 비서 부적합.
 
@@ -34,6 +34,7 @@ This is a fact-only running log of which models work as a KittyPaw assistant, wh
 | Provider · 모델 | 측정일 | 부적합 차원 | 재검토 트리거 | § |
 |---|---|---|---|---|
 | Cerebras `qwen-3-235b-a22b-instruct-2507` (free) | 2026-05-04 | 8K context cap. KittyPaw stateful daemon 누적 history → 측정 27회 중 8K 초과 52% (median 8001 / max 9919). 압축 후에도 평균 8.2K | paid tier 채택 / short-burst 보조 phase (mediate · summary · MoA candidate) 한정 | § 5.3 |
+| Groq/Mistral/Gemini/OpenRouter free tier eval candidates | 2026-05-06 | KittyPaw eval에서 429/timeout/readiness failure. 무료 API tier는 기본 비서 추천·반복 측정에 안정적이지 않음 | paid/credit tier + cost cap + provider별 backoff를 갖춘 별도 API 측정 | § 5.15 |
 | Mistral `mistral-large-latest` | 2026-05-05 | "호기심 많은 개발자" 페르소나 SFT 3회 재현. system prompt도 뚫고 나올 risk | 개발자 도구 use case / Mistral SFT 패치 release 후 재측정 | § 5.11 |
 | Mistral `mistral-small-latest` (max_tok ≥ 1024) | 2026-05-05 | max_tok=256은 정상, 1024+에서 "개발자" 페르소나 노출. 응답 길이가 페르소나 가시성 결정 | max_tok=256 한정 보조 호출 가능 | § 5.11 |
 | Mistral `magistral-medium-latest` | 2026-05-05 | Native reasoning disable 불가 (Mistral docs). content가 list-of-blocks 구조로 KittyPaw OpenAI 어댑터 호환 X | `reasoning_effort=none` 지원 모델 (mistral-small/medium-3-5) 별도 측정 후 | § 5.12 |
@@ -548,11 +549,31 @@ R3 production agent framework 채택 조사(2026-05-05)에서 발견 — Qwen3-C
 **load-bearing 결론**:
 - **KittyPaw OpenAI 어댑터에 `reasoning_format=parsed` 옵션 송신 권장** (Groq 어댑터 분기). 이 옵션 미송신 시 thinking leak — 비서 UX 망가짐.
 - Groq의 비표준 옵션 (`reasoning_format`)은 OpenAI Chat Completions 표준 X — provider 분기 필요.
-- 우회 가능 → § 1 Decision Matrix "Cloud free, Korean priority" 1순위 후보로 회복 (Cerebras qwen-3-235b의 8K cap 대안).
+- 우회 가능성은 모델 품질 측면의 후보성만 의미. 2026-05-06 eval에서 free tier 429가 재현되어, 기본 추천은 paid/credit tier에서 별도 재평가 필요 (§ 5.15).
 
 ### 5.14 무료 한도 공식 docs 격차 — provider 별 정량 기록 vs dashboard 분산
 
 § 4.9 매트릭스 참조. KittyPaw § 4 기록 시 정량/미명시 라벨링 일관 적용. 사용자 추천 docs는 "본인 dashboard 확인" 안내 추가 권장.
+
+### 5.15 Free API tier는 KittyPaw 기본 비서 추천에서 제외 (실측 2026-05-06)
+
+**측정 컨텍스트**: `make eval-models` / `secretary_smoke` / Korean stateful chat 디폴트. 후보는 Groq, Mistral, Gemini, OpenRouter free tier + local 후보. 목적은 "무료 API 중 KittyPaw 기본 추천 가능 모델" 확인.
+
+**결과**:
+
+| 후보군 | 실패 형태 | 해석 |
+|---|---|---|
+| Groq `qwen/qwen3-32b` | 첫 흐름 중 `openai: server returned 429` → `secretary_smoke exit 2` | 모델 품질 평가 전 free tier rate limit. 기본 추천 부적합 |
+| Groq Llama 3.3 70B | timeout / rate-limit 계열 | 반복 측정·기본 비서 운영에 안정성 부족 |
+| Mistral `mistral-medium` / `ministral-8b` | timeout 계열 | paid/credit tier에서만 재평가 가치 |
+| Gemini / OpenRouter free | readiness 또는 rate-limit/timeout 계열 | 무료 tier를 기본 추천으로 삼기 어려움 |
+| Gemini `gemini-2.5-flash-lite` human-paced retest | 2분 cooldown + readiness dummy chat 제거 + fixture 사이 60초 설정. 첫 실제 turn `vague-001: 엔화는?`에서 `gemini: server returned 429` | 현재 project 상태에서는 batch가 아니라 낮은 빈도 첫 호출도 실패. RPD/active quota 소진 가능성 포함 |
+
+**운영 결정**:
+- `eval/models.toml`에는 후보 기록을 유지하되, free API entries는 `eval_enabled = false`로 기본 측정에서 제외.
+- 기본 추천은 local (`lmstudio`, `ollama`) 우선.
+- API 모델은 paid/credit tier + cost cap + provider별 backoff가 준비된 별도 측정에서 재평가.
+- 명시 실험이 필요할 때만 `EVAL_INCLUDE_DISABLED=1 make eval-models`.
 
 ---
 
