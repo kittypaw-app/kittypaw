@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reflection — KittyPaw Guide</title>
+  <meta name="description" content="KittyPaw Reflection 가이드. 반복 의도 후보, first-turn suffix, 사용자 승인, dispatch 흐름을 설명합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/reflection.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand"><a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none"><span class="nav-brand-paw">🐾</span>KittyPaw</a></div>
+  <div class="nav-links"><a href="../cases/" class="nav-link">사례</a><a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a><a href="../#grow" class="nav-link">학습</a><a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a></div>
+</nav>
+<section class="guide-hero"><div class="guide-hero-inner"><span class="section-eyebrow">Reflection</span><h1>반복 요청을 후보로 보여주는 흐름</h1><p>Reflection 은 최근 대화에서 반복 의도와 토픽 후보를 찾고, 다음 대화 첫 turn 에 사용자에게 제안하는 실험입니다. 자동으로 코드를 바꾸는 기능이 아니라 승인 기반 dispatch 흐름입니다.</p></div></section>
+<main class="guide-shell">
+  <aside class="guide-sidebar"><div class="guide-sidebar-title">Guide Map</div><a href="./">전체 가이드</a><a href="quickstart.html">빠른 시작</a><a href="skills.html">스킬 패키지</a><a href="channels.html">채널 연결</a><a href="models.html">모델 선택</a><a class="guide-current" href="reflection.html">Reflection</a><a href="security.html">보안 모델</a><a href="operations.html">운영 점검</a></aside>
+  <article class="guide-content">
+    <h2>무엇이 검증됐나요?</h2>
+    <ul>
+      <li>최근 대화를 저장하고 반복 의도 후보를 만드는 흐름.</li>
+      <li>chat 첫 turn 에 suffix 로 후보를 surface 하는 흐름.</li>
+      <li>사용자가 "네"라고 답했을 때 install consent branch 로 dispatch 하는 흐름.</li>
+    </ul>
+
+    <h3>기본 동작</h3>
+    <p>사용자가 비슷한 요청을 반복하면 KittyPaw 는 해당 패턴을 후보로 저장합니다. 예를 들어 환율, 날씨, 사이트 상태처럼 반복되는 요청은 스킬 또는 스케줄 후보가 될 수 있습니다.</p>
+    <pre class="guide-code"><code>사용자: 오늘 환율 알려줘
+사용자: 달러 가격 얼마야?
+사용자: 환율 매일 확인해줘
+
+KittyPaw: 반복 요청 후보가 있습니다. 환율 조회를 자동화할까요?</code></pre>
+
+    <h3>승인과 한계</h3>
+    <p>Reflection 은 사용자가 승인하기 전에는 자동으로 설치하거나 코드를 바꾸지 않는 쪽으로 설계되어 있습니다. 자연어 스킬 생성은 syntax 검증이 개선됐지만, 생성된 코드의 런타임 안정성은 패키지마다 다릅니다.</p>
+
+    <h3>사용자가 점검할 것</h3>
+    <ul>
+      <li>제안이 실제 반복 요청인지, 우연히 비슷한 문장 몇 개를 묶은 것인지 확인합니다.</li>
+      <li>스케줄이 필요한 요청인지, 수동 실행만으로 충분한 요청인지 구분합니다.</li>
+      <li>외부 API key 나 민감한 데이터가 필요한 자동화는 보안 가이드를 먼저 확인합니다.</li>
+    </ul>
+
+    <div class="guide-callout">
+      <strong>좋은 후보</strong>
+      <p>매일 보는 지표, 주기적으로 확인하는 URL, 반복해서 묻는 뉴스/날씨/시장 요약처럼 실패해도 사용자가 이해하기 쉬운 요청부터 자동화하는 것이 좋습니다.</p>
+    </div>
+    <div class="guide-next"><a href="models.html">&larr; 이전: 모델 선택</a><a href="security.html">다음: 보안 모델 &rarr;</a></div>
+  </article>
+</main>
+<footer><div class="footer-links"><span>🐾 KittyPaw</span><span class="footer-sep">·</span><a href="./">가이드</a><span class="footer-sep">·</span><a href="../cases/pattern-automation.html">Reflection 사례</a></div></footer>
+<script src="../main.js"></script>
+</body>
+</html>

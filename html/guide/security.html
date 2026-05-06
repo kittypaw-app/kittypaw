@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>보안 모델 — KittyPaw Guide</title>
+  <meta name="description" content="KittyPaw 보안 가이드. goja sandbox, SSRF guard, permission, secrets.json, 로컬 저장 원칙을 설명합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/security.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand"><a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none"><span class="nav-brand-paw">🐾</span>KittyPaw</a></div>
+  <div class="nav-links"><a href="../cases/" class="nav-link">사례</a><a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a><a href="../#tech" class="nav-link">기술</a><a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a></div>
+</nav>
+<section class="guide-hero"><div class="guide-hero-inner"><span class="section-eyebrow">Security</span><h1>로컬 에이전트를 안전하게 운영하기</h1><p>KittyPaw 는 로컬 실행을 기본으로 하지만, 스킬은 네트워크와 외부 API 를 만질 수 있습니다. 그래서 sandbox, permission, secrets 분리가 운영 기준이 됩니다.</p></div></section>
+<main class="guide-shell">
+  <aside class="guide-sidebar"><div class="guide-sidebar-title">Guide Map</div><a href="./">전체 가이드</a><a href="quickstart.html">빠른 시작</a><a href="skills.html">스킬 패키지</a><a href="channels.html">채널 연결</a><a href="models.html">모델 선택</a><a href="reflection.html">Reflection</a><a class="guide-current" href="security.html">보안 모델</a><a href="operations.html">운영 점검</a></aside>
+  <article class="guide-content">
+    <h2>핵심 원칙</h2>
+    <ul>
+      <li>스킬 코드는 goja JavaScript sandbox 안에서 실행합니다.</li>
+      <li>위험한 operation 은 supervised mode 에서 사용자 승인을 요구합니다.</li>
+      <li>account 별 secret 은 source-bound config 와 <code>secrets.json</code> 으로 분리합니다.</li>
+      <li>SSRF guard 와 hop-by-hop header 차단으로 HTTP primitive 의 위험을 줄입니다.</li>
+    </ul>
+
+    <h3>위험도를 나누는 법</h3>
+    <div class="guide-grid">
+      <div class="guide-card"><h3>낮음</h3><p>공개 API 조회, 날씨, RSS, URL 상태 확인처럼 읽기 위주의 작업.</p></div>
+      <div class="guide-card"><h3>중간</h3><p>API key 가 필요한 외부 서비스, 개인 계정별 설정이 필요한 작업.</p></div>
+      <div class="guide-card"><h3>높음</h3><p>Shell 실행, Git push, 파일 변경, 외부 시스템에 쓰기 작업을 하는 스킬.</p></div>
+      <div class="guide-card"><h3>보류</h3><p>자동 생성 코드가 권한 있는 operation 을 요구하는 경우. 먼저 코드를 읽고 수동 실행으로 검증합니다.</p></div>
+    </div>
+
+    <h3>스킬 설치 전 체크</h3>
+    <ol>
+      <li>출처가 registry, GitHub, 로컬 path 중 어디인지 확인합니다.</li>
+      <li><code>package.toml</code> 의 config 와 trigger 를 봅니다.</li>
+      <li>어떤 primitive 를 쓰는지 확인합니다. HTTP 조회와 shell 실행은 위험도가 다릅니다.</li>
+      <li>처음 실행은 supervised mode 와 수동 실행으로 제한합니다.</li>
+    </ol>
+
+    <h3>민감 정보</h3>
+    <p>API key, channel token, webhook secret 은 대화에 그대로 붙여넣기보다 config 흐름으로 넣는 것이 좋습니다. 계정별로 다른 값을 쓰는 경우, 같은 스킬이라도 account 별 secret 이 섞이지 않는지 확인해야 합니다.</p>
+
+    <div class="guide-callout">
+      <strong>운영 전 기준</strong>
+      <p>스킬이 외부에 쓰기 작업을 하거나 shell/git operation 을 요구한다면, cron 으로 돌리기 전에 반드시 수동 실행과 permission prompt 를 확인하세요.</p>
+    </div>
+    <div class="guide-next"><a href="reflection.html">&larr; 이전: Reflection</a><a href="operations.html">다음: 운영 점검 &rarr;</a></div>
+  </article>
+</main>
+<footer><div class="footer-links"><span>🐾 KittyPaw</span><span class="footer-sep">·</span><a href="./">가이드</a><span class="footer-sep">·</span><a href="https://github.com/kittypaw-app/kitty">GitHub</a></div></footer>
+<script src="../main.js"></script>
+</body>
+</html>

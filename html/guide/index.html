@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KittyPaw Guide — 설치부터 운영까지</title>
+  <meta name="description" content="KittyPaw 사용자 가이드. 빠른 시작, 스킬, 채널, Reflection, 보안, 운영 흐름을 목적별로 안내합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/">
+  <meta property="og:title" content="KittyPaw Guide — 설치부터 운영까지">
+  <meta property="og:description" content="빠른 시작, 스킬, 채널, Reflection, 보안, 운영 흐름을 목적별로 안내합니다.">
+  <meta property="og:url" content="https://kittypaw.app/guide/">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand">
+    <a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none">
+      <span class="nav-brand-paw">🐾</span>
+      KittyPaw
+    </a>
+  </div>
+  <div class="nav-links">
+    <a href="../#features" class="nav-link">기능</a>
+    <a href="../cases/" class="nav-link">사례</a>
+    <a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a>
+    <a href="../#skills" class="nav-link">스킬</a>
+    <a href="../#tech" class="nav-link">기술</a>
+    <a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a>
+  </div>
+</nav>
+
+<section class="guide-hero">
+  <div class="guide-hero-inner">
+    <span class="section-eyebrow">KittyPaw Guide</span>
+    <h1>설치부터 운영까지 한 번에 보는 가이드</h1>
+    <p>KittyPaw 는 단일 Go 바이너리로 로컬에서 실행되는 AI 에이전트 실험입니다. 이 가이드는 처음 실행하는 사용자, 스킬을 붙이는 사용자, 채널과 권한을 점검하는 사용자가 바로 필요한 문서로 이동하도록 구성했습니다.</p>
+    <div class="install-box">
+      <span class="install-prompt">$</span>
+      <code class="install-cmd">curl -fsSL https://raw.githubusercontent.com/kittypaw-app/kitty/main/install-kittypaw.sh | sh</code>
+    </div>
+    <div class="hero-buttons">
+      <a href="quickstart.html" class="btn btn-primary">빠른 시작</a>
+      <a href="../cases/" class="btn btn-secondary">검증된 시나리오</a>
+    </div>
+  </div>
+</section>
+
+<main class="guide-shell">
+  <aside class="guide-sidebar">
+    <div class="guide-sidebar-title">Guide Map</div>
+    <a class="guide-current" href="./">전체 가이드</a>
+    <a href="quickstart.html">빠른 시작</a>
+    <a href="skills.html">스킬 패키지</a>
+    <a href="channels.html">채널 연결</a>
+    <a href="models.html">모델 선택</a>
+    <a href="reflection.html">Reflection</a>
+    <a href="security.html">보안 모델</a>
+    <a href="operations.html">운영 점검</a>
+  </aside>
+  <article class="guide-content">
+    <h2>목적별 시작 경로</h2>
+    <p>처음부터 모든 기능을 켤 필요는 없습니다. 아래 경로 중 하나만 골라서 작게 검증하고, 필요한 스킬과 채널을 점진적으로 늘리는 방식이 가장 안정적입니다.</p>
+    <div class="guide-grid">
+      <a class="guide-card" href="quickstart.html">
+        <h3>⚡ 10분 안에 실행</h3>
+        <p>설치, setup, 첫 대화, 로컬 서버 확인까지 최소 흐름만 따라갑니다.</p>
+      </a>
+      <a class="guide-card" href="../cases/morning-briefing.html">
+        <h3>☀️ 아침 브리핑</h3>
+        <p>날씨, 시장, RSS 패키지를 설치하고 cron 발송까지 확인합니다.</p>
+      </a>
+      <a class="guide-card" href="reflection.html">
+        <h3>🔄 반복 요청 자동화</h3>
+        <p>반복 의도 후보를 surface 하고 사용자 승인 후 dispatch 하는 흐름입니다.</p>
+      </a>
+      <a class="guide-card" href="security.html">
+        <h3>🔒 안전하게 운영</h3>
+        <p>sandbox, permission, secrets, 로컬 저장 원칙을 먼저 점검합니다.</p>
+      </a>
+    </div>
+
+    <h3>가이드 목차</h3>
+    <div class="guide-grid">
+      <a class="guide-card" href="quickstart.html">
+        <h4>1. 빠른 시작</h4>
+        <p>필수 준비물, 설치 명령, setup wizard, 첫 메시지, 서버 확인.</p>
+      </a>
+      <a class="guide-card" href="skills.html">
+        <h4>2. 스킬 패키지</h4>
+        <p>registry 설치, config 입력, manual run, cron trigger, package.toml 읽기.</p>
+      </a>
+      <a class="guide-card" href="channels.html">
+        <h4>3. 채널 연결</h4>
+        <p>CLI/Web UI, Telegram, Slack, Discord, Kakao, WebSocket 의 역할과 선택 기준.</p>
+      </a>
+      <a class="guide-card" href="models.html">
+        <h4>4. 모델 선택</h4>
+        <p>기본 모델, named model, <code>/model</code> 전환, cloud/local provider 선택 기준.</p>
+      </a>
+      <a class="guide-card" href="reflection.html">
+        <h4>5. Reflection</h4>
+        <p>최근 대화 분석, 반복 의도 후보, first-turn suffix, 승인 기반 dispatch.</p>
+      </a>
+      <a class="guide-card" href="security.html">
+        <h4>6. 보안 모델</h4>
+        <p>goja sandbox, SSRF guard, supervised permission, account 별 secrets 저장.</p>
+      </a>
+      <a class="guide-card" href="operations.html">
+        <h4>7. 운영 점검</h4>
+        <p>로컬 서버 상태, 스케줄 확인, 알림 실패 원인 분리, 업그레이드 전 체크.</p>
+      </a>
+    </div>
+
+    <h3>기본 데이터 흐름</h3>
+    <p>사용자는 CLI, 로컬 Web UI, 또는 채널 어댑터로 요청을 보냅니다. KittyPaw 서버는 로컬 SQLite 에 대화와 설정을 저장하고, 필요한 경우 스킬을 goja sandbox 안에서 실행합니다. 스킬 출력은 다시 채팅 응답이나 채널 발송으로 돌아갑니다.</p>
+    <div class="guide-flow-diagram" aria-label="KittyPaw 데이터 흐름 다이어그램">
+      <div class="guide-flow-row">
+        <div class="guide-flow-node guide-flow-source">CLI / Web UI</div>
+        <div class="guide-flow-node guide-flow-source">Telegram · Slack · Discord · Kakao</div>
+        <div class="guide-flow-node guide-flow-source">Cron Trigger</div>
+      </div>
+      <div class="guide-flow-arrow">↓</div>
+      <div class="guide-flow-node guide-flow-core">KittyPaw local server<br><span>account config · permissions · routing</span></div>
+      <div class="guide-flow-split">
+        <div>
+          <div class="guide-flow-arrow">↙</div>
+          <div class="guide-flow-node">Model routing<br><span>main · named models · fallback</span></div>
+          <div class="guide-flow-arrow">↓</div>
+          <div class="guide-flow-node">LLM providers<br><span>Claude · OpenAI · Gemini · Groq · local</span></div>
+        </div>
+        <div>
+          <div class="guide-flow-arrow">↓</div>
+          <div class="guide-flow-node">goja skill sandbox<br><span>package.toml · config · supervised ops</span></div>
+          <div class="guide-flow-arrow">↓</div>
+          <div class="guide-flow-node">Local SQLite + secrets<br><span>messages · schedules · account secrets</span></div>
+        </div>
+        <div>
+          <div class="guide-flow-arrow">↘</div>
+          <div class="guide-flow-node">Channel delivery<br><span>chat reply · scheduled briefing · alert</span></div>
+          <div class="guide-flow-arrow">↓</div>
+          <div class="guide-flow-node">User confirmation<br><span>approve · retry · adjust config</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="guide-callout">
+      <strong>운영 원칙</strong>
+      <p>Alpha 단계에서는 한 번에 큰 자동화를 만들기보다, 하나의 스킬을 설치하고 수동 실행으로 검증한 뒤 cron 과 채널 발송을 붙이는 순서를 권장합니다.</p>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="footer-links">
+    <span>🐾 KittyPaw</span>
+    <span class="footer-sep">·</span>
+    <a href="../">홈</a>
+    <span class="footer-sep">·</span>
+    <a href="https://github.com/kittypaw-app/kitty">GitHub</a>
+    <span class="footer-sep">·</span>
+    <a href="https://github.com/kittypaw-app/skills">스킬 레지스트리</a>
+  </div>
+</footer>
+<script src="../main.js"></script>
+</body>
+</html>

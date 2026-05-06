@@ -17,6 +17,25 @@
 - [x] Add `apps/kittypaw` release workflow plan for `kittypaw/v*` tags.
 - [ ] Add initial CI path-filter strategy.
 
+## Candidate: Agent Loop / Channel Safety Backlog
+
+> Input: Hermes Agent / OpenClaw comparison thread. Treat as product-direction
+> inspiration only; verify claims against upstream docs/repos before designing.
+
+- [ ] **Session search / recall**: Persist searchable conversation history and
+  retrieve relevant past sessions with summarization for current-turn context.
+  Useful for "지난번 설정", "전에 만든 스킬", 반복 workflow recall.
+- [ ] **Skill promote loop**: Reflection 후보를 곧바로 자동 실행 코드로
+  만들기보다, 사용자 승인 후 inspect 가능한 skill draft 로 승격한다.
+  Output should include `package.toml`, required config, trigger proposal, and
+  manual-run checklist before cron/channel enablement.
+- [ ] **Skill risk preview**: Before install or generated-skill enablement,
+  summarize package origin, primitives, trigger type, secret requirements, file
+  writes, shell/git access, and recommended first-run mode.
+- [ ] **Channel access policy**: Add per-channel allowlist / pairing /
+  mention-required policy so Telegram, Slack, Discord, Kakao, and WebSocket
+  entrypoints do not all share the same trust posture.
+
 ## Plan: OpenAI Function Calling ✅
 
 > Branch `feat/openai-tool-calling` — 커밋 `00d4e48`

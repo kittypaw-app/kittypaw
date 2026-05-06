@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>채널 연결 — KittyPaw Guide</title>
+  <meta name="description" content="KittyPaw 채널 연결 가이드. CLI, Web UI, Telegram, Slack, Discord, Kakao, WebSocket 선택 기준을 설명합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/channels.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand"><a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none"><span class="nav-brand-paw">🐾</span>KittyPaw</a></div>
+  <div class="nav-links"><a href="../cases/" class="nav-link">사례</a><a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a><a href="../#skills" class="nav-link">스킬</a><a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a></div>
+</nav>
+<section class="guide-hero"><div class="guide-hero-inner"><span class="section-eyebrow">Channels</span><h1>어떤 채널로 KittyPaw 를 쓸까요?</h1><p>KittyPaw 는 CLI/Web UI 를 기본으로 두고 Telegram, Slack, Discord, Kakao, WebSocket 어댑터를 실험합니다. 처음에는 하나의 채널만 붙여도 충분합니다.</p></div></section>
+<main class="guide-shell">
+  <aside class="guide-sidebar"><div class="guide-sidebar-title">Guide Map</div><a href="./">전체 가이드</a><a href="quickstart.html">빠른 시작</a><a href="skills.html">스킬 패키지</a><a class="guide-current" href="channels.html">채널 연결</a><a href="models.html">모델 선택</a><a href="reflection.html">Reflection</a><a href="security.html">보안 모델</a><a href="operations.html">운영 점검</a></aside>
+  <article class="guide-content">
+    <h2>선택 기준</h2>
+    <p>채널은 기능 차이보다 운영 환경 차이가 큽니다. 개인 자동화와 알림은 Telegram 이 가장 단순하고, 팀 채팅은 Slack/Discord 가 자연스럽습니다. Kakao 는 한국 사용자에게 친숙하지만 외부 relay 와 callback 제약을 더 신중히 봐야 합니다.</p>
+    <div class="guide-grid">
+      <div class="guide-card"><h3>CLI / Web UI</h3><p>처음 검증, 스킬 수동 실행, 실패 메시지 확인에 적합합니다.</p></div>
+      <div class="guide-card"><h3>Telegram</h3><p>개인 알림, 아침 브리핑, URL 모니터링처럼 검증된 흐름에 적합합니다.</p></div>
+      <div class="guide-card"><h3>Slack / Discord</h3><p>팀 채널에 결과를 흘리거나 운영 알림을 공유할 때 맞습니다.</p></div>
+      <div class="guide-card"><h3>Kakao / WebSocket</h3><p>한국 사용자 접점이나 hosted relay 실험에서 사용합니다.</p></div>
+    </div>
+
+    <h3>권장 연결 순서</h3>
+    <ol>
+      <li>CLI 또는 Web UI 에서 LLM 응답과 스킬 수동 실행을 확인합니다.</li>
+      <li>Telegram 같은 단일 개인 채널을 붙여 발송 경로를 확인합니다.</li>
+      <li>팀 채널 또는 Kakao 는 실패 시 원인 분리가 가능해진 뒤 붙입니다.</li>
+    </ol>
+
+    <h3>채널에서 확인할 것</h3>
+    <ul>
+      <li>메시지가 중복 발송되지 않는지.</li>
+      <li>스킬 실패가 조용히 사라지지 않고 사용자가 볼 수 있는 형태로 남는지.</li>
+      <li>이미지나 긴 메시지처럼 채널별 제약이 있는 출력은 fallback 이 있는지.</li>
+      <li>채널 token 또는 webhook secret 이 account 별로 분리되어 저장되는지.</li>
+    </ul>
+
+    <div class="guide-callout">
+      <strong>실패 분리 팁</strong>
+      <p>채널 발송이 실패했을 때는 같은 스킬을 CLI 에서 먼저 실행하세요. CLI 출력이 정상이라면 채널 credential, 라우팅, 외부 플랫폼 제한을 보면 됩니다.</p>
+    </div>
+    <div class="guide-next"><a href="skills.html">&larr; 이전: 스킬 패키지</a><a href="models.html">다음: 모델 선택 &rarr;</a></div>
+  </article>
+</main>
+<footer><div class="footer-links"><span>🐾 KittyPaw</span><span class="footer-sep">·</span><a href="./">가이드</a><span class="footer-sep">·</span><a href="../cases/">사례</a></div></footer>
+<script src="../main.js"></script>
+</body>
+</html>

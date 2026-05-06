@@ -104,7 +104,7 @@ endpoints or non-default local servers.`,
 	}
 	cmd.Flags().StringVar(&flags.accountID, "account", "", "local account id")
 	cmd.Flags().StringVar(&flags.id, "id", "", "model id (default: auto-generated from provider + model)")
-	cmd.Flags().StringVar(&flags.provider, "provider", "", "API provider (anthropic|openai|gemini|openrouter|groq|mistral|ollama|lmstudio|llamacpp)")
+	cmd.Flags().StringVar(&flags.provider, "provider", "", "API provider (anthropic|openai|gemini|openrouter|groq|mistral|deepseek|cerebras|ollama|lmstudio|llamacpp)")
 	cmd.Flags().StringVar(&flags.model, "model", "", "provider model name")
 	cmd.Flags().StringVar(&flags.baseURL, "base-url", "", "advanced: custom Chat Completions endpoint")
 	cmd.Flags().StringVar(&flags.apiKey, "api-key", "", "API key for this provider (stored in account secrets; visible in ps)")

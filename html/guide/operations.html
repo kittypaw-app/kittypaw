@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>운영 점검 — KittyPaw Guide</title>
+  <meta name="description" content="KittyPaw 운영 가이드. 로컬 서버, 스케줄, 채널 발송, 업그레이드 전 점검 흐름을 설명합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/operations.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand"><a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none"><span class="nav-brand-paw">🐾</span>KittyPaw</a></div>
+  <div class="nav-links"><a href="../cases/" class="nav-link">사례</a><a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a><a href="../#tech" class="nav-link">기술</a><a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a></div>
+</nav>
+<section class="guide-hero"><div class="guide-hero-inner"><span class="section-eyebrow">Operations</span><h1>로컬 서버와 자동 실행을 점검하는 법</h1><p>운영은 멋진 자동화보다 반복 가능한 확인 절차가 중요합니다. 스킬, cron, 채널, provider 를 분리해서 보면 대부분의 실패 원인을 빨리 찾을 수 있습니다.</p></div></section>
+<main class="guide-shell">
+  <aside class="guide-sidebar"><div class="guide-sidebar-title">Guide Map</div><a href="./">전체 가이드</a><a href="quickstart.html">빠른 시작</a><a href="skills.html">스킬 패키지</a><a href="channels.html">채널 연결</a><a href="models.html">모델 선택</a><a href="reflection.html">Reflection</a><a href="security.html">보안 모델</a><a class="guide-current" href="operations.html">운영 점검</a></aside>
+  <article class="guide-content">
+    <h2>문제가 생겼을 때 보는 순서</h2>
+    <ol>
+      <li>로컬 서버가 떠 있는지 확인합니다.</li>
+      <li>같은 스킬을 수동으로 실행해 스킬 자체가 정상인지 봅니다.</li>
+      <li>LLM provider 응답 실패인지, 외부 API 실패인지, 채널 발송 실패인지 분리합니다.</li>
+      <li>cron trigger 는 마지막에 확인합니다. 수동 실행이 실패하면 cron 도 실패합니다.</li>
+    </ol>
+
+    <h3>스케줄 운영</h3>
+    <p>cron trigger 는 서버가 실행 중일 때만 의미가 있습니다. 노트북 절전, 네트워크 단절, provider quota 초과처럼 로컬 환경의 영향을 받기 때문에 중요한 알림은 처음 며칠 동안 수동 확인을 병행하는 것이 좋습니다.</p>
+
+    <h3>업그레이드 전 체크</h3>
+    <ul>
+      <li>현재 쓰는 스킬 목록과 config 를 확인합니다.</li>
+      <li>아침 브리핑, URL 모니터링처럼 매일 쓰는 흐름을 하나씩 수동 실행합니다.</li>
+      <li>업그레이드 후 같은 명령을 다시 실행해 출력과 채널 발송이 같은지 비교합니다.</li>
+    </ul>
+
+    <h3>장애 원인 분리 예시</h3>
+    <div class="guide-grid">
+      <div class="guide-card"><h3>스킬 실패</h3><p>CLI 수동 실행도 실패합니다. config, 외부 API, 스킬 코드부터 확인합니다.</p></div>
+      <div class="guide-card"><h3>LLM 실패</h3><p>API key, 모델 이름, provider endpoint, local model tool-use 지원 여부를 확인합니다.</p></div>
+      <div class="guide-card"><h3>채널 실패</h3><p>CLI 결과는 정상인데 Telegram/Slack/Discord/Kakao 발송만 실패합니다.</p></div>
+      <div class="guide-card"><h3>cron 실패</h3><p>수동 실행은 정상인데 예약 시각에 실행되지 않습니다. 서버 실행 상태와 trigger 를 봅니다.</p></div>
+    </div>
+
+    <div class="guide-callout">
+      <strong>운영 기준</strong>
+      <p>자동화는 한 번 성공보다 재시작 후에도 다시 성공하는지가 중요합니다. setup 저장, server restart, manual run, channel delivery 순서로 다시 확인하세요.</p>
+    </div>
+    <div class="guide-next"><a href="security.html">&larr; 이전: 보안 모델</a><a href="./">전체 가이드 &rarr;</a></div>
+  </article>
+</main>
+<footer><div class="footer-links"><span>🐾 KittyPaw</span><span class="footer-sep">·</span><a href="./">가이드</a><span class="footer-sep">·</span><a href="../cases/site-monitoring.html">모니터링 사례</a></div></footer>
+<script src="../main.js"></script>
+</body>
+</html>

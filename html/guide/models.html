@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>모델 선택 — KittyPaw Guide</title>
+  <meta name="description" content="KittyPaw 모델 선택 가이드. 기본 모델, named model, kittypaw model add [id], /model 전환, cloud/local provider 선택 기준을 설명합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/models.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand"><a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none"><span class="nav-brand-paw">🐾</span>KittyPaw</a></div>
+  <div class="nav-links"><a href="../cases/" class="nav-link">사례</a><a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a><a href="../#tech" class="nav-link">기술</a><a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a></div>
+</nav>
+<section class="guide-hero">
+  <div class="guide-hero-inner">
+    <span class="section-eyebrow">Models</span>
+    <h1>작업에 맞는 모델을 고르고 전환하기</h1>
+    <p>KittyPaw 는 setup 으로 정한 기본 모델을 쓰되, 추가 named model 을 등록해 채팅 중 <code>/model &lt;id&gt;</code> 로 전환할 수 있습니다. 비싼 모델은 판단이 필요한 작업에, 빠른 로컬 모델은 반복 확인에 쓰는 식으로 나누면 운영 비용과 지연을 줄일 수 있습니다.</p>
+  </div>
+</section>
+<main class="guide-shell">
+  <aside class="guide-sidebar">
+    <div class="guide-sidebar-title">Guide Map</div>
+    <a href="./">전체 가이드</a>
+    <a href="quickstart.html">빠른 시작</a>
+    <a href="skills.html">스킬 패키지</a>
+    <a href="channels.html">채널 연결</a>
+    <a class="guide-current" href="models.html">모델 선택</a>
+    <a href="reflection.html">Reflection</a>
+    <a href="security.html">보안 모델</a>
+    <a href="operations.html">운영 점검</a>
+  </aside>
+  <article class="guide-content">
+    <h2>기본 모델과 named model</h2>
+    <p><code>kittypaw setup</code> 으로 정한 모델은 기본 모델입니다. 추가 모델은 별도 ID 를 갖는 named model 로 저장됩니다. 채팅 중 모델을 바꿔 테스트하거나, 특정 provider 의 응답 품질을 비교할 때 named model 이 유용합니다.</p>
+
+    <h3>1. setup 때 추가 모델 넣기</h3>
+    <p>비대화형 setup 에서는 <code>--extra-model</code> 로 추가 모델을 함께 저장할 수 있습니다. API key 는 account secret 으로 저장되며, 모델 ID 는 <code>main</code> 을 예약어로 사용하지 않습니다.</p>
+    <pre class="guide-code"><code>kittypaw setup --account alice --no-chat \
+  --extra-model id=openai-fast,provider=openai,model=gpt-5.5</code></pre>
+
+    <h3>2. 나중에 모델 추가하기</h3>
+    <p>이미 setup 이 끝난 계정에는 <code>kittypaw model add [id]</code> 로 모델을 추가합니다. <code>[id]</code> 를 생략하면 provider 와 model 이름으로 안정적인 ID 를 만듭니다. 예를 들어 <code>groq</code> 의 <code>qwen/qwen3-32b</code> 는 <code>groq-qwen3-32b</code> 로 저장됩니다. 명령은 연결 확인을 먼저 시도하고, 서버가 떠 있으면 reload 를 요청해 새 모델을 바로 반영합니다.</p>
+    <pre class="guide-code"><code>kittypaw model add \
+  --provider groq \
+  --model qwen/qwen3-32b
+
+kittypaw model add local-fast \
+  --provider lmstudio \
+  --model qwen3-30b-a3b-instruct-2507
+
+kittypaw model add \
+  --provider gemini \
+  --model gemini-3.1-pro-preview \
+  --replace</code></pre>
+
+    <h3>3. 채팅 중 전환하기</h3>
+    <p>등록된 모델은 채팅 안에서 <code>/model &lt;id&gt;</code> 로 전환합니다. 전환은 실험과 비교에 적합합니다. 중요한 자동화의 기본 모델을 바꾸기 전에는 같은 질문과 같은 스킬을 여러 모델에 반복 실행해 차이를 확인하세요.</p>
+    <pre class="guide-code"><code>kittypaw chat
+&gt; /model groq-qwen
+&gt; 이 RSS 요약을 한국어 5줄로 줄여줘</code></pre>
+
+    <h3>모델 목록과 삭제</h3>
+    <p><code>kittypaw model list</code> 는 현재 account 의 모델을 <code>ID</code>, <code>Provider</code>, <code>Model</code>, <code>Default</code> 열로 보여줍니다. 더 이상 쓰지 않는 named model 은 <code>kittypaw model remove</code> 로 제거합니다. <code>main</code> 은 setup 기본 모델 예약어라 삭제할 수 없고, 대화형 모드에서는 삭제 확인을 거칩니다.</p>
+    <pre class="guide-code"><code>kittypaw model list --account alice
+
+kittypaw model remove gemini-gemini-3.1-pro-preview-2 \
+  --account alice \
+  --force</code></pre>
+
+    <h3>ID 충돌과 교체</h3>
+    <p>자동 ID 가 이미 있으면 대화형 모드에서 <code>ID already exists</code> 를 보여주고, 기본 선택은 <code>Add as new</code> 입니다. 그대로 Enter 를 누르면 <code>-2</code>, <code>-3</code> 같은 suffix 가 붙은 새 모델로 저장됩니다. 기존 모델을 갱신하려면 충돌 프롬프트에서 replace 를 고르거나 비대화형 실행에 <code>--replace</code> 를 붙입니다.</p>
+
+    <h3>Provider 와 endpoint 선택 기준</h3>
+    <p><code>model add</code> 는 <code>anthropic</code>, <code>openai</code>, <code>gemini</code>, <code>openrouter</code>, <code>groq</code>, <code>mistral</code>, <code>deepseek</code>, <code>cerebras</code>, <code>ollama</code>, <code>lmstudio</code>, <code>llamacpp</code> 를 provider 로 받습니다. 알려진 cloud provider 는 기본 endpoint 를 사용하므로 <code>--base-url</code> 이 필요 없습니다. custom endpoint, OpenAI 호환 사설 endpoint, 기본 포트가 아닌 로컬 서버에만 <code>--base-url</code> 을 지정하세요. <code>llamacpp</code> 는 입력이 없으면 <code>http://localhost:8080/v1/chat/completions</code> 를 기본값으로 씁니다.</p>
+    <div class="guide-grid">
+      <div class="guide-card"><h3>Claude / OpenAI / Gemini</h3><p>기본 대화, 복잡한 reasoning, tool use 안정성을 우선할 때 적합합니다.</p></div>
+      <div class="guide-card"><h3>Groq / Cerebras / DeepSeek</h3><p>OpenAI 호환 endpoint 로 빠른 응답이나 저비용 실험을 할 때 좋습니다. rate limit 과 모델별 tool-call 품질을 확인하세요.</p></div>
+      <div class="guide-card"><h3>OpenRouter / Mistral</h3><p>여러 모델을 비교하거나 긴 context / 특정 모델 카탈로그가 필요할 때 유용합니다.</p></div>
+      <div class="guide-card"><h3>Ollama / LM Studio / llama.cpp</h3><p>로컬 실행과 개인정보 보존이 중요할 때 적합합니다. 단, 작은 모델은 tool use 와 지시 준수가 약할 수 있습니다.</p></div>
+    </div>
+
+    <h3>운영 패턴</h3>
+    <ul>
+      <li><strong>main:</strong> 가장 안정적인 모델. 스킬 실행과 채널 발송에 기본 사용합니다.</li>
+      <li><strong>fast:</strong> 짧은 요약, 상태 확인, 반복 질문에 쓰는 저비용/저지연 모델.</li>
+      <li><strong>local:</strong> 민감한 입력이나 네트워크 비용을 줄이고 싶은 작업에 사용합니다.</li>
+      <li><strong>debug:</strong> 모델 품질 비교나 provider 장애 확인용으로 임시 등록합니다.</li>
+    </ul>
+
+    <div class="guide-callout">
+      <strong>API key 주의</strong>
+      <p><code>--api-key</code> 로 넘긴 값은 process list 에 보일 수 있습니다. 가능하면 환경 변수나 대화형 prompt 를 쓰세요. 기존 secret 이 있는 모델을 <code>--replace</code> 할 때는 <code>Enter=keep existing</code> 프롬프트가 나오므로 Enter 로 키를 유지하거나 새 키를 입력할 수 있습니다. 로컬 provider 는 API key 없이 저장되고, custom base URL 을 붙인 OpenAI 호환 모델은 provider 공용 secret 대신 모델 ID 단위 credential 로 분리됩니다.</p>
+    </div>
+    <div class="guide-callout">
+      <strong>검증 기준</strong>
+      <p>모델을 추가한 뒤에는 일반 대화 1회, 스킬 수동 실행 1회, 필요한 경우 채널 발송 1회를 같은 입력으로 비교하세요. 로컬 모델은 특히 tool call 누락, JSON 인자 형식, 한국어 안정성을 확인해야 합니다.</p>
+    </div>
+    <div class="guide-next"><a href="channels.html">&larr; 이전: 채널 연결</a><a href="reflection.html">다음: Reflection &rarr;</a></div>
+  </article>
+</main>
+<footer><div class="footer-links"><span>🐾 KittyPaw</span><span class="footer-sep">·</span><a href="./">가이드</a><span class="footer-sep">·</span><a href="https://github.com/kittypaw-app/kitty">GitHub</a></div></footer>
+<script src="../main.js"></script>
+</body>
+</html>

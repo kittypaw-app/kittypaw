@@ -310,6 +310,19 @@ func TestRootCommandRegistersModelAdd(t *testing.T) {
 	}
 }
 
+func TestModelAddProviderHelpListsAllSupportedProviders(t *testing.T) {
+	cmd := newModelAddCmd()
+	providerFlag := cmd.Flags().Lookup("provider")
+	if providerFlag == nil {
+		t.Fatal("provider flag missing")
+	}
+	for _, want := range []string{"deepseek", "cerebras"} {
+		if !strings.Contains(providerFlag.Usage, want) {
+			t.Fatalf("provider help %q missing %q", providerFlag.Usage, want)
+		}
+	}
+}
+
 func TestModelListPrintsAccountAndModels(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>스킬 패키지 — KittyPaw Guide</title>
+  <meta name="description" content="KittyPaw 스킬 패키지 가이드. registry 설치, config, manual run, cron trigger, package.toml 흐름을 설명합니다.">
+  <link rel="canonical" href="https://kittypaw.app/guide/skills.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="guide-page">
+<nav class="nav">
+  <div class="nav-brand"><a href="../" style="display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none"><span class="nav-brand-paw">🐾</span>KittyPaw</a></div>
+  <div class="nav-links"><a href="../cases/" class="nav-link">사례</a><a href="./" class="nav-link" style="color:var(--blue-600)">가이드</a><a href="../#skills" class="nav-link">스킬</a><a href="https://github.com/kittypaw-app/kitty" class="nav-link nav-cta">GitHub</a></div>
+</nav>
+<section class="guide-hero"><div class="guide-hero-inner"><span class="section-eyebrow">Skills</span><h1>스킬 패키지를 설치하고 실행하는 법</h1><p>스킬은 KittyPaw 의 확장 단위입니다. registry, GitHub URL, 로컬 path 에서 설치하고 config 를 채운 뒤 수동 실행 또는 cron trigger 로 운영합니다.</p></div></section>
+<main class="guide-shell">
+  <aside class="guide-sidebar">
+    <div class="guide-sidebar-title">Guide Map</div>
+    <a href="./">전체 가이드</a><a href="quickstart.html">빠른 시작</a><a class="guide-current" href="skills.html">스킬 패키지</a><a href="channels.html">채널 연결</a><a href="models.html">모델 선택</a><a href="reflection.html">Reflection</a><a href="security.html">보안 모델</a><a href="operations.html">운영 점검</a>
+  </aside>
+  <article class="guide-content">
+    <h2>기본 순서</h2>
+    <ol>
+      <li>패키지를 설치합니다.</li>
+      <li><code>package.toml</code> 에 정의된 config key 를 채웁니다.</li>
+      <li>수동 실행으로 출력과 실패 메시지를 확인합니다.</li>
+      <li>필요하면 cron trigger 와 채널 발송을 켭니다.</li>
+    </ol>
+
+    <h3>1. 설치</h3>
+    <p>레지스트리 패키지는 이름만으로 설치합니다. 실험 중인 패키지는 GitHub URL 또는 로컬 디렉터리로도 설치할 수 있습니다.</p>
+    <pre class="guide-code"><code>kittypaw skill install weather-briefing
+kittypaw skill install macro-economy-report
+kittypaw skill install rss-digest</code></pre>
+
+    <h3>2. config 입력</h3>
+    <p>스킬별 필수 config 는 패키지의 <code>package.toml</code> 에 들어 있습니다. API key 가 필요 없는 패키지는 바로 실행할 수 있지만, 위치나 RSS feed 처럼 사용자가 정해야 하는 값은 직접 입력해야 합니다.</p>
+    <pre class="guide-code"><code>kittypaw skill config weather-briefing latitude 37.57
+kittypaw skill config weather-briefing longitude 126.98
+kittypaw skill config rss-digest feed_url https://example.com/feed.xml</code></pre>
+
+    <h3>3. 수동 실행으로 검증</h3>
+    <p>cron 으로 보내기 전에 반드시 수동 실행을 먼저 해보는 편이 좋습니다. 이 단계에서 외부 API 실패, config 누락, LLM 요약 실패를 분리할 수 있습니다.</p>
+    <pre class="guide-code"><code>kittypaw skill run weather-briefing
+kittypaw skill run rss-digest</code></pre>
+
+    <h3>4. cron 과 채널</h3>
+    <p>cron trigger 가 있는 패키지는 서버가 실행 중일 때 정해진 시각에 자동 실행됩니다. 발송 대상은 setup 된 채널 어댑터입니다. 채널을 붙이지 않은 상태라면 먼저 CLI/Web UI 에서 결과를 확인하세요.</p>
+
+    <div class="guide-callout">
+      <strong>추천 검증 순서</strong>
+      <p>설치 성공보다 중요한 것은 출력이 실제로 쓸 만한지입니다. <code>skill run</code> 결과가 만족스럽고 실패 메시지가 이해 가능할 때만 cron 을 켜는 흐름을 권장합니다.</p>
+    </div>
+    <div class="guide-next"><a href="quickstart.html">&larr; 이전: 빠른 시작</a><a href="channels.html">다음: 채널 연결 &rarr;</a></div>
+  </article>
+</main>
+<footer><div class="footer-links"><span>🐾 KittyPaw</span><span class="footer-sep">·</span><a href="./">가이드</a><span class="footer-sep">·</span><a href="https://github.com/kittypaw-app/skills">스킬 레지스트리</a></div></footer>
+<script src="../main.js"></script>
+</body>
+</html>
