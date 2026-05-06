@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -224,6 +225,44 @@ func TestExplicitBlockedEntitlementOverridesDefaultAllow(t *testing.T) {
 	}
 }
 
+func TestNilQuotaStoresEmptyObject(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	adminUser, err := users.CreateOrUpdate(ctx, "google", "admin-nil-quota", "admin-nil-quota@example.com", "Admin", "")
+	if err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-nil-quota", "target-nil-quota@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	if err := store.UpsertUserEntitlement(ctx, connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "nil-quota-provider",
+		Status:     connectadmin.EntitlementAllowed,
+		Reason:     "no quota",
+		GrantedBy:  adminUser.ID,
+	}); err != nil {
+		t.Fatalf("UpsertUserEntitlement nil quota: %v", err)
+	}
+
+	var quotaIsEmptyObject bool
+	err = pool.QueryRow(ctx, `
+		SELECT quota_json = '{}'::jsonb
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2
+	`, targetUser.ID, "nil-quota-provider").Scan(&quotaIsEmptyObject)
+	if err != nil {
+		t.Fatalf("query quota_json: %v", err)
+	}
+	if !quotaIsEmptyObject {
+		t.Fatal("quota_json is not empty object")
+	}
+}
+
 func TestRevokedEntitlementStoresRevokedAtOnFirstInsert(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()
@@ -278,6 +317,59 @@ func TestRevokedEntitlementStoresRevokedAtOnFirstInsert(t *testing.T) {
 	}
 	if !revokedAtSet {
 		t.Fatal("revoked_at is null, want timestamp")
+	}
+}
+
+func TestRepeatedRevokedEntitlementPreservesRevokedAt(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	adminUser, err := users.CreateOrUpdate(ctx, "google", "admin-repeat-revoke", "admin-repeat-revoke@example.com", "Admin", "")
+	if err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-repeat-revoke", "target-repeat-revoke@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	entitlement := connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "repeat-revoke-provider",
+		Status:     connectadmin.EntitlementRevoked,
+		QuotaJSON:  map[string]any{},
+		Reason:     "manual revoke",
+		GrantedBy:  adminUser.ID,
+	}
+	if err := store.UpsertUserEntitlement(ctx, entitlement); err != nil {
+		t.Fatalf("initial revoked upsert: %v", err)
+	}
+	var firstRevokedAt time.Time
+	err = pool.QueryRow(ctx, `
+		SELECT revoked_at
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2
+	`, targetUser.ID, "repeat-revoke-provider").Scan(&firstRevokedAt)
+	if err != nil {
+		t.Fatalf("query first revoked_at: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if err := store.UpsertUserEntitlement(ctx, entitlement); err != nil {
+		t.Fatalf("repeated revoked upsert: %v", err)
+	}
+	var secondRevokedAt time.Time
+	err = pool.QueryRow(ctx, `
+		SELECT revoked_at
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2
+	`, targetUser.ID, "repeat-revoke-provider").Scan(&secondRevokedAt)
+	if err != nil {
+		t.Fatalf("query second revoked_at: %v", err)
+	}
+	if !secondRevokedAt.Equal(firstRevokedAt) {
+		t.Fatalf("revoked_at changed from %s to %s", firstRevokedAt.Format(time.RFC3339Nano), secondRevokedAt.Format(time.RFC3339Nano))
 	}
 }
 

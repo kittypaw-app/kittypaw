@@ -69,6 +69,9 @@ func (s *PostgresStore) ListProviderPolicies(ctx context.Context) ([]ProviderPol
 }
 
 func (s *PostgresStore) UpsertUserEntitlement(ctx context.Context, e UserEntitlement) error {
+	if e.QuotaJSON == nil {
+		e.QuotaJSON = map[string]any{}
+	}
 	quota, err := json.Marshal(e.QuotaJSON)
 	if err != nil {
 		return fmt.Errorf("marshal quota: %w", err)
@@ -83,7 +86,11 @@ func (s *PostgresStore) UpsertUserEntitlement(ctx context.Context, e UserEntitle
 			reason = excluded.reason,
 			granted_by = excluded.granted_by,
 			granted_at = now(),
-			revoked_at = CASE WHEN excluded.status = 'revoked' THEN now() ELSE null END
+			revoked_at = CASE
+				WHEN excluded.status = 'revoked' AND connect_user_entitlements.status = 'revoked' THEN connect_user_entitlements.revoked_at
+				WHEN excluded.status = 'revoked' THEN now()
+				ELSE null
+			END
 	`, e.UserID, e.ProviderID, e.Status, string(quota), e.Reason, e.GrantedBy)
 	return err
 }
