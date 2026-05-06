@@ -71,6 +71,18 @@ func TestStorePolicyEntitlementAndAudit(t *testing.T) {
 	if !allowed {
 		t.Fatal("UserAllowed = false, want true")
 	}
+	var monthlyPostReads float64
+	err = pool.QueryRow(ctx, `
+		SELECT (quota_json->>'monthly_post_reads')::float8
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2
+	`, targetUser.ID, "x").Scan(&monthlyPostReads)
+	if err != nil {
+		t.Fatalf("query quota_json: %v", err)
+	}
+	if monthlyPostReads != 100 {
+		t.Fatalf("monthly_post_reads = %v, want 100", monthlyPostReads)
+	}
 
 	if err := store.AppendAuditEvent(ctx, connectadmin.AuditEvent{
 		ActorUserID:  adminUser.ID,
@@ -87,6 +99,12 @@ func TestStorePolicyEntitlementAndAudit(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Action != "entitlement.grant" {
 		t.Fatalf("events = %#v", events)
+	}
+	if events[0].ProviderID != "x" || events[0].TargetUserID != targetUser.ID {
+		t.Fatalf("event target = provider %q user %q, want provider %q user %q", events[0].ProviderID, events[0].TargetUserID, "x", targetUser.ID)
+	}
+	if events[0].After["status"] != "allowed" {
+		t.Fatalf("event after status = %#v, want allowed", events[0].After["status"])
 	}
 	if b, _ := json.Marshal(events[0]); string(b) == "" {
 		t.Fatal("audit event should be JSON encodable")
@@ -164,6 +182,45 @@ func TestUserAllowedFallsBackToProviderDefault(t *testing.T) {
 	}
 	if allowed {
 		t.Fatal("UserAllowed missing provider = true, want false")
+	}
+}
+
+func TestExplicitBlockedEntitlementOverridesDefaultAllow(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-blocked", "target-blocked@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "blocked-provider",
+		Enabled:            true,
+		DefaultEntitlement: connectadmin.DefaultEntitlementAllow,
+		RequestedScopes:    []string{},
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("upsert policy: %v", err)
+	}
+	if err := store.UpsertUserEntitlement(ctx, connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "blocked-provider",
+		Status:     connectadmin.EntitlementBlocked,
+		QuotaJSON:  map[string]any{},
+		Reason:     "blocked override",
+	}); err != nil {
+		t.Fatalf("UpsertUserEntitlement blocked: %v", err)
+	}
+
+	allowed, err := store.UserAllowed(ctx, targetUser.ID, "blocked-provider")
+	if err != nil {
+		t.Fatalf("UserAllowed blocked: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed blocked = true, want false")
 	}
 }
 
