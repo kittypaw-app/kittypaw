@@ -4,7 +4,7 @@ VERSION ?= $(shell git -C ../.. describe --tags --always 2>/dev/null || echo dev
 COMMIT  ?= $(shell git -C ../.. rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
-.PHONY: build test test-integration test-integration-all test-integration-calendar test-integration-air test-integration-down test-migration lint run clean seed-wikidata seed-seoul-metro benchmark-resolve smoke
+.PHONY: build test test-integration test-integration-all test-integration-public test-integration-calendar test-integration-air test-integration-weather-almanac test-integration-down test-migration lint run clean seed-wikidata seed-seoul-metro benchmark-resolve smoke
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(PKG)
@@ -47,8 +47,11 @@ benchmark-resolve:
 # L1.B/C/D sibling plan 시점.
 
 # Backward-compatible umbrella — 모든 integration 그룹 sequential 실행.
-test-integration-all: test-integration test-integration-calendar test-integration-air
+test-integration-all: test-integration test-integration-public
 	@echo "all integration test groups passed"
+
+test-integration-public: test-integration-calendar test-integration-air test-integration-weather-almanac
+	@echo "public data integration test groups passed"
 
 # Calendar 그룹 (holiday_integration_test.go) — 외부 KASI 호출, DB 무관.
 # `HOLIDAY_API_KEY` 누락 시 t.Skipf 패턴 (weather/almanac 과 동일).
@@ -62,9 +65,13 @@ test-integration-air:
 	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && \
 		go test -tags=air_integration -count=1 ./internal/proxy/... -run TestAirKorea
 
-# 기존 (model + weather + almanac) — docker-compose 기반.
+test-integration-weather-almanac:
+	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && \
+		go test -tags=integration -count=1 ./internal/proxy -run 'Test(VillageForecast_LiveKMA|UltraShort_LiveKMA|Almanac_LiveKASI)'
+
+# DB-backed integration tests — docker-compose 기반.
 # Spins up postgres:17-alpine on port 15432 with pg_trgm pre-installed,
-# applies all migrations, then runs `go test -tags=integration ./...`.
+# applies migrations, then runs DB integration packages sequentially.
 # Container persists between runs for fast iteration; tear down with
 # `make test-integration-down`.
 test-integration:
@@ -77,7 +84,9 @@ test-integration:
 		sleep 1; \
 	done
 	DATABASE_URL="postgres://kittypaw:kittypaw@localhost:15432/kittypaw_api_test?sslmode=disable" \
-		go test -tags=integration -count=1 ./...
+		go test -tags=integration -count=1 ./internal/model
+	DATABASE_URL="postgres://kittypaw:kittypaw@localhost:15432/kittypaw_api_test?sslmode=disable" \
+		go test -tags=integration -count=1 ./internal/proxy -run 'TestResolve_Integration'
 
 test-integration-down:
 	@docker-compose -f docker-compose.test.yml down -v

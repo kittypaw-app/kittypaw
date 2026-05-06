@@ -9,6 +9,8 @@ import (
 )
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("expected DATABASE_URL error")

@@ -5,6 +5,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kittypaw-app/kittyapi/internal/model"
@@ -63,6 +67,11 @@ func setupGeoIntegration(t *testing.T) *geoSetup {
 		t.Fatalf("pg_advisory_lock(%d): %v", advisoryLockID, err)
 	}
 
+	if err := migrateGeoIntegrationDB(dsn); err != nil {
+		pool.Close()
+		t.Fatalf("migrate geo integration db: %v", err)
+	}
+
 	store := model.NewPlaceStore(pool)
 	h := &proxy.PlacesHandler{Store: store}
 	server := httptest.NewServer(h.Resolve())
@@ -81,6 +90,26 @@ func setupGeoIntegration(t *testing.T) *geoSetup {
 	})
 
 	return &geoSetup{pool: pool, server: server}
+}
+
+func migrateGeoIntegrationDB(dsn string) error {
+	m, err := migrate.New("file://../../migrations", "pgx5://"+stripPostgresScheme(dsn))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = m.Close()
+	}()
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return err
+	}
+	return nil
+}
+
+func stripPostgresScheme(dsn string) string {
+	dsn = strings.TrimPrefix(dsn, "postgres://")
+	dsn = strings.TrimPrefix(dsn, "postgresql://")
+	return dsn
 }
 
 func seedPlace(t *testing.T, pool *pgxpool.Pool, nameKo string, lat, lon float64, typ, source, sourceRef string) {
