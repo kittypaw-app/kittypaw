@@ -1,6 +1,7 @@
 package smoke
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -94,6 +95,42 @@ func TestRemoteWebSocketURLRejectsUnsupportedScheme(t *testing.T) {
 }
 
 func TestRunRemoteCompletesCredentialedRoundTrip(t *testing.T) {
-	t.Skip("implemented after remote runner exists")
-	_ = context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	router, cleanup, err := localRouter()
+	if err != nil {
+		t.Fatalf("localRouter() error = %v", err)
+	}
+	defer cleanup()
+	srv, err := newLocalServer(router, nil)
+	if err != nil {
+		t.Fatalf("newLocalServer() error = %v", err)
+	}
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err = RunRemote(ctx, RemoteConfig{
+		BaseURL:        srv.URL,
+		UserToken:      localAPIToken,
+		DeviceToken:    localDeviceToken,
+		DeviceID:       localDeviceID,
+		LocalAccountID: localAccountID,
+		UserID:         localUserID,
+		Timeout:        5 * time.Second,
+	}, &out)
+	if err != nil {
+		t.Fatalf("RunRemote() error = %v; output=%s", err, out.String())
+	}
+
+	output := out.String()
+	for _, want := range []string{
+		"ok daemon connected",
+		"ok route discovery dev_1/alice",
+		"ok chat completion relayed",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("RunRemote() output = %q, want %q", output, want)
+		}
+	}
 }
