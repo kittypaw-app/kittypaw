@@ -56,6 +56,7 @@ setup() {
   case "$BATS_TEST_DESCRIPTION" in
     T2:*) _setup_t2 ;;
     T3:*) _setup_t3 ;;
+    T4:*) _setup_t4 ;;
     *) return 0 ;;
   esac
 }
@@ -151,6 +152,46 @@ KP
   grep -q '^default = "old-model"$' "$T3_CFG"
 }
 
+_setup_t4() {
+  T4_TMP="$BATS_TEST_TMPDIR/eval-tmp"
+  T4_BIN="$BATS_TEST_TMPDIR/bin"
+  T4_RUNS="$BATS_TEST_TMPDIR/runs"
+  T4_LOG="$BATS_TEST_TMPDIR/kp.log"
+  mkdir -p "$T4_TMP" "$T4_BIN" "$T4_RUNS"
+  # Mock kittypaw — `server start` exec sleep so background & exits quickly.
+  # `chat ping` returns 0 but healthz never listens, so readiness fails.
+  cat > "$T4_BIN/kittypaw" <<KP
+#!/usr/bin/env bash
+echo "kittypaw \$*" >> "$T4_LOG"
+# Explicit colon delimiter — \$1 \$2 단어 합치기보다 명확.
+case "\$1:\${2:-}" in
+  "server:start") exec sleep 1 ;;
+  "server:stop")  exit 0 ;;
+  "chat:ping")    exit 0 ;;
+  *) exit 0 ;;
+esac
+KP
+  chmod +x "$T4_BIN/kittypaw"
+  cat > "$T4_BIN/secretary_smoke_mock.sh" <<'MS'
+#!/usr/bin/env bash
+echo "secretary_smoke $*" >> "$T4_LOG"
+exit 0
+MS
+  chmod +x "$T4_BIN/secretary_smoke_mock.sh"
+  export KITTY_BIN="$T4_BIN/kittypaw"
+  export SECRETARY_RUN="$T4_BIN/secretary_smoke_mock.sh"
+  export EVAL_TMP="$T4_TMP"
+  export RUNS_ROOT="$T4_RUNS"
+  export READINESS_TIMEOUT=1
+  export EVAL_SKIP_JUDGE_CHECK=1
+  export GROQ_API_KEY="fake"
+  export MISTRAL_API_KEY="fake"
+  export GEMINI_API_KEY="fake"
+  export OPENROUTER_API_KEY="fake"
+  export ANTHROPIC_API_KEY="fake"
+  RUN_MODELS="$APP_DIR/eval/run-models.sh"
+}
+
 @test "T3: stale .swap_backup → exit 2 + manual recovery 안내 (영구 cfg 오염 차단)" {
   export KITTYPAW_CONFIG_DIR="$T3_HOME"
   # Simulate previous run interrupted: backup exists from earlier swap.
@@ -205,4 +246,43 @@ KP
   run bash "$DEV_MODELS" setup --force
   [ "$status" -eq 0 ]
   head -1 "$CFG" | grep -q "GENERATED FROM eval/models.toml"
+}
+
+# ---------- T4: run-models.sh wrapper (per-run daemon, sequential) ----------
+
+@test "T4: auth missing (MISTRAL_API_KEY) → exit 2" {
+  unset MISTRAL_API_KEY
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q "MISTRAL_API_KEY"
+}
+
+@test "T4: ANTHROPIC_API_KEY missing (judge) → exit 2" {
+  unset ANTHROPIC_API_KEY
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q "ANTHROPIC_API_KEY"
+}
+
+@test "T4: TMPDIR 작성 실패 → exit 2" {
+  unset EVAL_TMP
+  export TMPDIR="/nonexistent/path/no-write"
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -q "cannot create"
+}
+
+@test "T4: daemon readiness timeout → 7 모델 모두 status=fail + 다음 모델 진행 (whole-run abort 금지)" {
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]  # whole-run completes despite per-model failures
+  # Single run dir was created.
+  run_dir="$(ls "$T4_RUNS")"
+  manifest="$T4_RUNS/$run_dir/manifest.json"
+  [ -f "$manifest" ]
+  count=$(jq '.models | length' "$manifest")
+  [ "$count" -eq 7 ]
+  fail_count=$(jq '[.models[] | select(.status == "fail")] | length' "$manifest")
+  [ "$fail_count" -eq 7 ]
+  # secretary_smoke never ran (readiness failed before invocation).
+  ! grep -q "secretary_smoke" "$T4_LOG"
 }
