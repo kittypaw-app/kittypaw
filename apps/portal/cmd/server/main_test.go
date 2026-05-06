@@ -259,12 +259,48 @@ func TestConnectXLoginRouteUsesConnectXClient(t *testing.T) {
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
 	cfg.ConnectXClientID = "x-connect-client-id"
 	cfg.ConnectXAuthURL = "https://x.example/auth"
-	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-1": {ID: "user-1", Email: "alice@example.com"},
+	}}
+	r, cleanup := NewRouter(cfg, users, nil, nil, &fakeConnectAdminStore{allowed: true})
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/connect/x/login?mode=code", nil)
 	req.Host = "connect.kittypaw.app"
 	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized && w.Code != http.StatusForbidden {
+		t.Fatalf("direct status = %d, want 401 or 403; body=%s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Fatalf("direct Location = %q, want no redirect", loc)
+	}
+
+	sessionReq := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"code"}`))
+	sessionReq.Host = "connect.kittypaw.app"
+	sessionReq.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-1", 15*time.Minute))
+	sessionW := httptest.NewRecorder()
+	r.ServeHTTP(sessionW, sessionReq)
+	if sessionW.Code != http.StatusOK {
+		t.Fatalf("session status = %d, want 200; body=%s", sessionW.Code, sessionW.Body.String())
+	}
+	var sessionBody struct {
+		LoginURL string `json:"login_url"`
+	}
+	if err := json.NewDecoder(sessionW.Body).Decode(&sessionBody); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	loginURL, err := url.Parse(sessionBody.LoginURL)
+	if err != nil {
+		t.Fatalf("parse login_url: %v", err)
+	}
+	if loginURL.Host != "connect.kittypaw.app" || loginURL.Path != "/connect/x/login" || loginURL.Query().Get("session") == "" {
+		t.Fatalf("login_url = %q", sessionBody.LoginURL)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, loginURL.RequestURI(), nil)
+	req.Host = "connect.kittypaw.app"
+	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302; body=%s", w.Code, w.Body.String())
@@ -799,6 +835,7 @@ func (s *fakeRouterUserStore) FindByID(_ context.Context, id string) (*model.Use
 type fakeConnectAdminStore struct {
 	policies    []connectadmin.ProviderPolicy
 	auditEvents []connectadmin.AuditEvent
+	allowed     bool
 }
 
 func (s *fakeConnectAdminStore) UpsertProviderPolicy(_ context.Context, policy connectadmin.ProviderPolicy) error {
@@ -829,7 +866,10 @@ func (s *fakeConnectAdminStore) UpdateUserEntitlementWithAudit(_ context.Context
 }
 
 func (s *fakeConnectAdminStore) UserAllowed(context.Context, string, string) (bool, error) {
-	return false, nil
+	if s == nil {
+		return false, nil
+	}
+	return s.allowed, nil
 }
 
 func (s *fakeConnectAdminStore) AppendAuditEvent(_ context.Context, event connectadmin.AuditEvent) error {

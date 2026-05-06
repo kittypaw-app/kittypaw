@@ -2,7 +2,9 @@ package connect
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
+	"github.com/kittypaw-app/kittyportal/internal/model"
 )
 
 func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptest.Server) {
@@ -74,6 +77,18 @@ func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptes
 		UserInfoURL:  fakeOAuth.URL + "/users/me",
 	}, fakeOAuth.Client())
 	return NewHandler(provider, xProvider, states, codes), states, codes, fakeOAuth
+}
+
+type fakeEntitlementChecker struct {
+	allowed bool
+	err     error
+}
+
+func (c fakeEntitlementChecker) UserAllowed(context.Context, string, string) (bool, error) {
+	if c.err != nil {
+		return false, c.err
+	}
+	return c.allowed, nil
 }
 
 func TestHandlerGmailLoginRedirectsToGoogle(t *testing.T) {
@@ -203,16 +218,101 @@ func TestHandlerRefresh(t *testing.T) {
 	}
 }
 
-func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
-	h, states, _, fakeOAuth := testHandler(t)
+func TestHandlerXSessionRequiresEntitlement(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	h.Entitlements = fakeEntitlementChecker{allowed: false}
+
+	req := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"code"}`))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.HandleXSession()(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlerXSessionReturnsLoginURL(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	h.Entitlements = fakeEntitlementChecker{allowed: true}
+
+	req := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"http","port":"12345"}`))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.HandleXSession()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Fatalf("Location = %q, want no redirect", loc)
+	}
+	var body struct {
+		LoginURL string `json:"login_url"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.HasPrefix(body.LoginURL, "https://connect.kittypaw.app/connect/x/login?session=") {
+		t.Fatalf("login_url = %q", body.LoginURL)
+	}
+}
+
+func TestHandlerXSessionFailsClosedOnEntitlementError(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	h.Entitlements = fakeEntitlementChecker{allowed: true, err: errors.New("boom")}
+
+	req := httptest.NewRequest(http.MethodPost, "/connect/x/sessions", strings.NewReader(`{"mode":"code"}`))
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.HandleXSession()(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlerXLoginRequiresPreauthSession(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
 
 	login := httptest.NewRecorder()
 	h.HandleXLogin()(login, httptest.NewRequest(http.MethodGet, "/connect/x/login?mode=code", nil))
+	if login.Code != http.StatusUnauthorized && login.Code != http.StatusForbidden {
+		t.Fatalf("login status = %d, want 401 or 403; body=%s", login.Code, login.Body.String())
+	}
+	if loc := login.Header().Get("Location"); loc != "" {
+		t.Fatalf("Location = %q, want no redirect", loc)
+	}
+}
+
+func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
+	h, states, _, fakeOAuth := testHandler(t)
+	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})
+	session, err := h.PreauthStore.Create(PreauthSession{
+		UserID:   "user-1",
+		Provider: XProviderID,
+		Mode:     "code",
+	})
+	if err != nil {
+		t.Fatalf("Create preauth: %v", err)
+	}
+
+	login := httptest.NewRecorder()
+	h.HandleXLogin()(login, httptest.NewRequest(http.MethodGet, "/connect/x/login?session="+url.QueryEscape(session), nil))
 	if login.Code != http.StatusFound {
 		t.Fatalf("login status = %d; body=%s", login.Code, login.Body.String())
 	}
 	if loc := login.Header().Get("Location"); !strings.HasPrefix(loc, fakeOAuth.URL+"/auth?") {
 		t.Fatalf("login Location = %q", loc)
+	}
+	replay := httptest.NewRecorder()
+	h.HandleXLogin()(replay, httptest.NewRequest(http.MethodGet, "/connect/x/login?session="+url.QueryEscape(session), nil))
+	if replay.Code != http.StatusUnauthorized {
+		t.Fatalf("replay status = %d, want 401; body=%s", replay.Code, replay.Body.String())
 	}
 
 	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code"})

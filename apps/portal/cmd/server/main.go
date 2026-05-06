@@ -264,6 +264,8 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			states,
 			connectCodes,
 		)
+		connectHandler.PreauthStore = connect.NewPreauthStore(connect.PreauthStoreOptions{})
+		connectHandler.Entitlements = connectAdminStore
 		r.Group(func(r chi.Router) {
 			r.Use(connectOnly)
 			r.Get("/connect", handleConnectHome(cfg))
@@ -271,6 +273,7 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.Get("/connect/gmail/login", connectHandler.HandleGmailLogin())
 			r.Get("/connect/gmail/callback", connectHandler.HandleGmailCallback())
 			r.Get("/connect/x/login", connectHandler.HandleXLogin())
+			r.With(authMW).Post("/connect/x/sessions", connectHandler.HandleXSession())
 			r.Get("/connect/x/callback", connectHandler.HandleXCallback())
 			r.Post("/connect/cli/exchange", connectHandler.HandleCLIExchange())
 			r.Post("/connect/gmail/refresh", connectHandler.HandleGmailRefresh())

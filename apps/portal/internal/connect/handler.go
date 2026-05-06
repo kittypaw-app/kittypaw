@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
 )
@@ -16,10 +17,16 @@ import (
 const maxConnectBodyBytes = 1024
 
 type Handler struct {
-	Gmail      *GmailProvider
-	X          *XProvider
-	StateStore *auth.StateStore
-	CodeStore  *CodeStore
+	Gmail        *GmailProvider
+	X            *XProvider
+	StateStore   *auth.StateStore
+	CodeStore    *CodeStore
+	PreauthStore *PreauthStore
+	Entitlements EntitlementChecker
+}
+
+type EntitlementChecker interface {
+	UserAllowed(context.Context, string, string) (bool, error)
 }
 
 func NewHandler(gmail *GmailProvider, x *XProvider, states *auth.StateStore, codes *CodeStore) *Handler {
@@ -27,44 +34,135 @@ func NewHandler(gmail *GmailProvider, x *XProvider, states *auth.StateStore, cod
 }
 
 func (h *Handler) HandleGmailLogin() http.HandlerFunc {
-	return h.handleLogin("gmail", h.Gmail.AuthURL)
+	return func(w http.ResponseWriter, r *http.Request) {
+		mode, port, ok := parseLoginMode(w, r)
+		if !ok {
+			return
+		}
+		h.startOAuthLogin(w, r, mode, port, h.Gmail.AuthURL)
+	}
 }
 
 func (h *Handler) HandleXLogin() http.HandlerFunc {
-	return h.handleLogin("x", h.X.AuthURL)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.PreauthStore == nil {
+			http.Error(w, "preauth store unavailable", http.StatusForbidden)
+			return
+		}
+		code := r.URL.Query().Get("session")
+		if code == "" {
+			http.Error(w, "session required", http.StatusUnauthorized)
+			return
+		}
+		session, err := h.PreauthStore.Consume(code)
+		if err != nil || session.Provider != XProviderID {
+			http.Error(w, "invalid or expired session", http.StatusUnauthorized)
+			return
+		}
+		if h.X == nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		h.startOAuthLogin(w, r, session.Mode, session.Port, h.X.AuthURL)
+	}
 }
 
-func (h *Handler) handleLogin(_ string, authURL func(state, verifier string) string) http.HandlerFunc {
+func (h *Handler) HandleXSession() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		mode := r.URL.Query().Get("mode")
-		if mode != "http" && mode != "code" {
-			http.Error(w, "mode must be 'http' or 'code'", http.StatusBadRequest)
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		user := auth.UserFromContext(r.Context())
+		if user == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxConnectBodyBytes)
+		var req struct {
+			Mode string `json:"mode"`
+			Port string `json:"port"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
 
-		meta := map[string]string{"mode": mode}
-		if mode == "http" {
-			port := r.URL.Query().Get("port")
-			portNum, err := strconv.Atoi(port)
-			if err != nil || portNum < 1024 || portNum > 65535 {
-				http.Error(w, "port must be a number between 1024 and 65535", http.StatusBadRequest)
-				return
-			}
-			meta["port"] = strconv.Itoa(portNum)
+		port, ok := normalizeModePort(w, req.Mode, req.Port)
+		if !ok {
+			return
+		}
+		if h.Entitlements == nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		allowed, err := h.Entitlements.UserAllowed(r.Context(), user.ID, XProviderID)
+		if err != nil || !allowed {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if h.PreauthStore == nil || h.X == nil || h.X.cfg.BaseURL == "" {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
 		}
 
-		verifier, err := auth.GenerateVerifier()
+		code, err := h.PreauthStore.Create(PreauthSession{
+			UserID:   user.ID,
+			Provider: XProviderID,
+			Mode:     req.Mode,
+			Port:     port,
+		})
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		state, err := h.StateStore.CreateWithMeta(verifier, meta)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		http.Redirect(w, r, authURL(state, verifier), http.StatusFound)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"login_url": strings.TrimRight(h.X.cfg.BaseURL, "/") + "/connect/x/login?session=" + url.QueryEscape(code),
+		})
 	}
+}
+
+func parseLoginMode(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	mode := r.URL.Query().Get("mode")
+	port, ok := normalizeModePort(w, mode, r.URL.Query().Get("port"))
+	return mode, port, ok
+}
+
+func normalizeModePort(w http.ResponseWriter, mode, port string) (string, bool) {
+	if mode != "http" && mode != "code" {
+		http.Error(w, "mode must be 'http' or 'code'", http.StatusBadRequest)
+		return "", false
+	}
+	if mode != "http" {
+		return "", true
+	}
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1024 || portNum > 65535 {
+		http.Error(w, "port must be a number between 1024 and 65535", http.StatusBadRequest)
+		return "", false
+	}
+	return strconv.Itoa(portNum), true
+}
+
+func (h *Handler) startOAuthLogin(w http.ResponseWriter, r *http.Request, mode, port string, authURL func(state, verifier string) string) {
+	meta := map[string]string{"mode": mode}
+	if mode == "http" {
+		meta["port"] = port
+	}
+
+	verifier, err := auth.GenerateVerifier()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	state, err := h.StateStore.CreateWithMeta(verifier, meta)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, authURL(state, verifier), http.StatusFound)
 }
 
 func (h *Handler) HandleGmailCallback() http.HandlerFunc {
