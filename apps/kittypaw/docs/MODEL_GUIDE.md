@@ -25,6 +25,38 @@ This is a fact-only running log of which models work as a KittyPaw assistant, wh
 
 추천 등급: ★★★ 비서 즉답성·정확도·한국어 모두 통과 / ★★ 한 축 약점 / ★ 특정 시나리오 / ✗ 비서 부적합.
 
+### 1.1 Rejected — 테스트 후 KittyPaw 비서 디폴트 부적합 (전제 명시)
+
+**스코프 (load-bearing)**: 본 표는 **KittyPaw 비서 = Korean stateful chat 디폴트** 전제에서 부적합으로 판정한 모델 모음. 다른 use case (영어 function calling 전용, max_tok=256 단발 보조 호출, tool 직렬화 폴백 구현 후, paid tier 등) 에서는 후보가 다시 살아날 수 있음 — "재검토 트리거" 칼럼이 그 조건을 명시. 측정 fact 자체는 § 5.x single source, 본 표는 lookup 인덱스.
+
+**Cloud free**
+
+| Provider · 모델 | 측정일 | 부적합 차원 | 재검토 트리거 | § |
+|---|---|---|---|---|
+| Cerebras `qwen-3-235b-a22b-instruct-2507` (free) | 2026-05-04 | 8K context cap. KittyPaw stateful daemon 누적 history → 측정 27회 중 8K 초과 52% (median 8001 / max 9919). 압축 후에도 평균 8.2K | paid tier 채택 / short-burst 보조 phase (mediate · summary · MoA candidate) 한정 | § 5.3 |
+| Mistral `mistral-large-latest` | 2026-05-05 | "호기심 많은 개발자" 페르소나 SFT 3회 재현. system prompt도 뚫고 나올 risk | 개발자 도구 use case / Mistral SFT 패치 release 후 재측정 | § 5.11 |
+| Mistral `mistral-small-latest` (max_tok ≥ 1024) | 2026-05-05 | max_tok=256은 정상, 1024+에서 "개발자" 페르소나 노출. 응답 길이가 페르소나 가시성 결정 | max_tok=256 한정 보조 호출 가능 | § 5.11 |
+| Mistral `magistral-medium-latest` | 2026-05-05 | Native reasoning disable 불가 (Mistral docs). content가 list-of-blocks 구조로 KittyPaw OpenAI 어댑터 호환 X | `reasoning_effort=none` 지원 모델 (mistral-small/medium-3-5) 별도 측정 후 | § 5.12 |
+| Groq `qwen/qwen3-32b` (default, 옵션 미송신) | 2026-05-05 | thinking variant — `<think>` 토큰이 content에 누수, 비서 UX 망가짐 | KittyPaw OpenAI 어댑터에 `reasoning_format=parsed` 송신 분기 구현 시 ★★★ 1순위 후보로 회복 | § 5.13 |
+| Groq `gpt-oss-*` (multi-tool 시) | (5.x 측정) | parallel tool 미지원. multi-tool 시 sequential 직렬화 폴백 필요 | KittyPaw OpenAI provider 직렬화 폴백 구현 시 | § 5.4 |
+| DeepSeek V4 | (5.x 측정) | tool_call content 평문 누수 ~11% | content fallback 정규식 파서 구현 시 | § 5.5 |
+
+**Local Ollama (eMac 36 GB)**
+
+| 모델 | 측정일 | 부적합 차원 | 재검토 트리거 | § |
+|---|---|---|---|---|
+| `qwen3:4b` / `:latest`(8B) / `:14b` / `:30b-a3b` (default = thinking) | 2026-05-04 | 4종 모두 thinking 토큰 출력. 14B max_tok=1024에서 57s. 4B는 1241 thinking 토큰으로 max_tok 한도 도달 후 final 0 | instruct variant 사용 (LM Studio MLX 4bit Qwen3-30B-A3B-Instruct-2507) | § 5.1 |
+| `hermes3:8b` | (5.x) | 한국어 자기소개 매 호출마다 가공된 이름 자칭 (agent persona/RP 학습 누수) | 영어 function calling 전용 (Berkeley FC 91% 강점) | § 5.1.1 |
+| `granite4.1:8b` | (5.x) | 정체성 unstable hallucination — ChatGPT/Gemini/Granite 매 호출 다르게 자칭 | system prompt에 정체성 강제 시 ★★ | § 5.1.2 |
+| `mistral-nemo:12b-instruct-2407-q4_K_M` | (5.x) | 한국어 안정성 부족 — 영어 응답, 러시아어 mixin. Tekken은 토큰 효율이지 한국어 품질 X | 영어 코드/툴 보조 용도 | § 5.1.3 |
+| `llama3.3:70b` Q4_K_M (Ollama) | 2026-05-05 | Markdown/Go code block 직접 출력 → JS sandbox SyntaxError 3 retry → empty fallback. cloud (Groq/OpenRouter) 버전은 같은 모델인데 ★★ 통과 | cloud (Groq/OpenRouter) 사용 / Q4 vs full precision 측정 후 | § 5.1.4 |
+
+**Tool calling 한정 부적합 (외부 보고)**
+
+| 모델 | 측정일 | 부적합 차원 | 재검토 트리거 | § |
+|---|---|---|---|---|
+| Qwen3-Coder 30B A3B family (multi-step tool chain) | 2026-05-05 (외부 6+ 보고) | RooCode/Continue/OpenCode/qwen-code/LM Studio 등 production framework 일관 실패. KittyPaw 자체 단순 prompt는 통과하나 multi-step tool chain 미측정 | KittyPaw 회귀 테스트에 multi-step tool chain (`Calc.add → Search.go → Memory.write`) 추가 후 자체 측정 | § 5.10 |
+
 ---
 
 ## 2. Verified Local Models — Ollama (eMac M3 Pro 36 GB · ssh tunnel `:11500 → emac:11434`)
