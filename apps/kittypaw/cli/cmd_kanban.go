@@ -40,6 +40,13 @@ type kanbanListFlags struct {
 	status    string
 }
 
+type kanbanStaleFlags struct {
+	shared     *kanbanSharedFlags
+	project    string
+	staleAfter string
+	limit      int
+}
+
 type kanbanEditFlags struct {
 	shared         *kanbanSharedFlags
 	actor          string
@@ -127,6 +134,7 @@ func newKanbanCmd() *cobra.Command {
 	cmd.AddCommand(
 		newKanbanCreateCmd(flags),
 		newKanbanListCmd(flags),
+		newKanbanStaleCmd(flags),
 		newKanbanShowCmd(flags),
 		newKanbanEditCmd(flags),
 		newKanbanArchiveCmd(flags),
@@ -179,6 +187,21 @@ func newKanbanListCmd(shared *kanbanSharedFlags) *cobra.Command {
 	cmd.Flags().StringVar(&flags.board, "board", "", "board id or slug")
 	cmd.Flags().StringVar(&flags.milestone, "milestone", "", "milestone id or slug")
 	cmd.Flags().StringVar(&flags.status, "status", "", "task status")
+	return cmd
+}
+
+func newKanbanStaleCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanStaleFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "stale",
+		Short: "List stale running Kanban runs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanStale(flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.project, "project", "", "project id or slug")
+	cmd.Flags().StringVar(&flags.staleAfter, "stale-after", "", "stale duration threshold, for example 10m or 1h")
+	cmd.Flags().IntVar(&flags.limit, "limit", 50, "maximum stale runs to list")
 	return cmd
 }
 
@@ -485,6 +508,64 @@ func runKanbanList(flags *kanbanListFlags) error {
 	_, _ = fmt.Fprintln(w, "ID\tStatus\tPriority\tAssignee\tTitle")
 	for _, task := range tasks {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", task.ID, task.Status, task.Priority, task.Assignee, task.Title)
+	}
+	return w.Flush()
+}
+
+func runKanbanStale(flags *kanbanStaleFlags) error {
+	if flags == nil {
+		flags = &kanbanStaleFlags{shared: &kanbanSharedFlags{}}
+	}
+	staleAfterRaw := strings.TrimSpace(flags.staleAfter)
+	if staleAfterRaw == "" {
+		return fmt.Errorf("--stale-after is required")
+	}
+	staleAfter, err := time.ParseDuration(staleAfterRaw)
+	if err != nil || staleAfter <= 0 {
+		return fmt.Errorf("positive --stale-after duration is required")
+	}
+	if flags.limit <= 0 {
+		return fmt.Errorf("--limit must be positive")
+	}
+
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	projectID := ""
+	if strings.TrimSpace(flags.project) != "" {
+		project, err := resolveKanbanProject(st, flags.project)
+		if err != nil {
+			return err
+		}
+		projectID = project.ID
+	}
+	cutoff := time.Now().UTC().Add(-staleAfter).Format("2006-01-02T15:04:05Z")
+	staleRuns, err := st.ListStaleKanbanRuns(store.KanbanStaleRunFilter{
+		ProjectID:   projectID,
+		StaleBefore: cutoff,
+		Limit:       flags.limit,
+	})
+	if err != nil {
+		return err
+	}
+	if len(staleRuns) == 0 {
+		fmt.Println("No stale runs.")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "TASK\tRUN\tPROJECT\tACTOR\tHEARTBEAT\tTITLE")
+	for _, item := range staleRuns {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			item.Task.ID,
+			item.Run.ID,
+			item.ProjectSlug,
+			item.Run.Actor,
+			item.Run.HeartbeatAt,
+			item.Task.Title,
+		)
 	}
 	return w.Flush()
 }
