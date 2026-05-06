@@ -292,6 +292,12 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.Use(admin.Middleware(cfg.PortalAdminEmails))
 			r.Get("/admin/connect", connectAdminHandler.HandleHome())
 			r.Get("/admin/connect/", connectAdminHandler.HandleHome())
+			r.Get("/admin/connect/users", connectAdminHandler.HandleUsers())
+			r.Get("/admin/connect/users/", connectAdminHandler.HandleUsers())
+			r.Post("/admin/connect/users", connectAdminHandler.HandleUserProviderUpdateFromForm())
+			r.Post("/admin/connect/users/{user_id}/providers/{provider_id}", func(w http.ResponseWriter, req *http.Request) {
+				connectAdminHandler.HandleUserProviderUpdate(chi.URLParam(req, "user_id"), chi.URLParam(req, "provider_id"))(w, req)
+			})
 		})
 	}
 

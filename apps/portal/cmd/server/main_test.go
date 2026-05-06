@@ -453,6 +453,108 @@ func TestConnectAdminAllowsConfiguredAdmin(t *testing.T) {
 	}
 }
 
+func TestConnectAdminUsersPageAllowsConfiguredAdmin(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-admin": {ID: "user-admin", Email: "admin@example.com"},
+	}}
+	r, cleanup := NewRouter(cfg, users, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect/users", nil)
+	req.Host = "portal.kittypaw.app"
+	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", 15*time.Minute))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("portal host status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{"Connect User Entitlements", `name="user_id"`, `name="provider_id"`, `monthly_post_reads`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("admin users page missing %q: %s", want, w.Body.String())
+		}
+	}
+}
+
+func TestConnectAdminEntitlementPostServedOnPortalHost(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-admin": {ID: "user-admin", Email: "admin@example.com"},
+	}}
+	store := &fakeConnectAdminStore{}
+	r, cleanup := NewRouter(cfg, users, nil, nil, store)
+	t.Cleanup(cleanup)
+
+	form := url.Values{
+		"status":             {"allowed"},
+		"reason":             {"internal beta"},
+		"monthly_post_reads": {"100"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-target/providers/x", strings.NewReader(form.Encode()))
+	req.Host = "portal.kittypaw.app"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", 15*time.Minute))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("portal host status = %d, want 303; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Location"); got != "/admin/connect/users" {
+		t.Fatalf("Location = %q, want /admin/connect/users", got)
+	}
+	if len(store.entitlements) != 1 {
+		t.Fatalf("entitlements len = %d, want 1", len(store.entitlements))
+	}
+	entitlement := store.entitlements[0]
+	if entitlement.UserID != "user-target" || entitlement.ProviderID != "x" || entitlement.Status != connectadmin.EntitlementAllowed {
+		t.Fatalf("entitlement = %#v", entitlement)
+	}
+	if got := entitlement.QuotaJSON["monthly_post_reads"]; got != 100 {
+		t.Fatalf("monthly_post_reads = %#v, want 100", got)
+	}
+	if len(store.auditEvents) != 1 {
+		t.Fatalf("audit events len = %d, want 1", len(store.auditEvents))
+	}
+}
+
+func TestConnectAdminEntitlementPostNotServedOnConnectHost(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-admin": {ID: "user-admin", Email: "admin@example.com"},
+	}}
+	store := &fakeConnectAdminStore{}
+	r, cleanup := NewRouter(cfg, users, nil, nil, store)
+	t.Cleanup(cleanup)
+
+	form := url.Values{"status": {"allowed"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-target/providers/x", strings.NewReader(form.Encode()))
+	req.Host = "connect.kittypaw.app"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", 15*time.Minute))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("connect host status = %d, want 404", w.Code)
+	}
+	if len(store.entitlements) != 0 || len(store.auditEvents) != 0 {
+		t.Fatalf("connect host mutated admin store: entitlements=%d audit=%d", len(store.entitlements), len(store.auditEvents))
+	}
+}
+
 func TestConnectAdminRejectsAuthenticatedNonAdmin(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
@@ -833,9 +935,10 @@ func (s *fakeRouterUserStore) FindByID(_ context.Context, id string) (*model.Use
 }
 
 type fakeConnectAdminStore struct {
-	policies    []connectadmin.ProviderPolicy
-	auditEvents []connectadmin.AuditEvent
-	allowed     bool
+	policies     []connectadmin.ProviderPolicy
+	entitlements []connectadmin.UserEntitlement
+	auditEvents  []connectadmin.AuditEvent
+	allowed      bool
 }
 
 func (s *fakeConnectAdminStore) UpsertProviderPolicy(_ context.Context, policy connectadmin.ProviderPolicy) error {
@@ -860,7 +963,8 @@ func (s *fakeConnectAdminStore) UpsertUserEntitlement(context.Context, connectad
 	return nil
 }
 
-func (s *fakeConnectAdminStore) UpdateUserEntitlementWithAudit(_ context.Context, _ connectadmin.UserEntitlement, event connectadmin.AuditEvent) error {
+func (s *fakeConnectAdminStore) UpdateUserEntitlementWithAudit(_ context.Context, entitlement connectadmin.UserEntitlement, event connectadmin.AuditEvent) error {
+	s.entitlements = append(s.entitlements, entitlement)
 	s.auditEvents = append(s.auditEvents, event)
 	return nil
 }
