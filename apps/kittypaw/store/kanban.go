@@ -369,10 +369,24 @@ func (s *Store) CreateKanbanTask(req CreateKanbanTaskRequest) (*KanbanTask, erro
 			return nil, fmt.Errorf("resolve default board: %w", err)
 		}
 		boardID = board.ID
+	} else {
+		board, err := s.GetKanbanBoard(req.ProjectID, boardID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve board: %w", err)
+		}
+		boardID = board.ID
 	}
 	status := req.Status
 	if status == "" {
 		status = KanbanStatusTriage
+	}
+	var milestone any
+	if req.MilestoneID != "" {
+		ms, err := s.GetKanbanMilestone(req.ProjectID, req.MilestoneID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve milestone: %w", err)
+		}
+		milestone = ms.ID
 	}
 	now := kanbanNow()
 	id := newKanbanID("tsk_")
@@ -383,10 +397,6 @@ func (s *Store) CreateKanbanTask(req CreateKanbanTaskRequest) (*KanbanTask, erro
 	}
 	defer tx.Rollback()
 
-	var milestone any
-	if req.MilestoneID != "" {
-		milestone = req.MilestoneID
-	}
 	if _, err := tx.Exec(`
 		INSERT INTO kanban_tasks (
 			id, project_id, board_id, milestone_id, title, body, status,
@@ -514,7 +524,7 @@ func (s *Store) CompleteKanbanTask(taskID string, req CompleteKanbanTaskRequest)
 
 	now := kanbanNow()
 	metadata := normalizeKanbanJSON(req.MetadataJSON)
-	if _, err := tx.Exec(`
+	res, err := tx.Exec(`
 		UPDATE kanban_task_runs
 		SET outcome = ?, summary = ?, metadata_json = ?, finished_at = ?, heartbeat_at = ?
 		WHERE id = (
@@ -523,8 +533,16 @@ func (s *Store) CompleteKanbanTask(taskID string, req CompleteKanbanTaskRequest)
 			ORDER BY started_at DESC
 			LIMIT 1
 		)`,
-		KanbanRunCompleted, req.Summary, metadata, now, now, taskID, KanbanRunRunning); err != nil {
+		KanbanRunCompleted, req.Summary, metadata, now, now, taskID, KanbanRunRunning)
+	if err != nil {
 		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return fmt.Errorf("task %s has no running run", taskID)
 	}
 	if _, err := tx.Exec(`
 		UPDATE kanban_tasks

@@ -136,6 +136,83 @@ func TestKanbanTaskClaimCompleteRecordsRun(t *testing.T) {
 	}
 }
 
+func TestKanbanCompleteRequiresRunningRun(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Finish without claim",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+
+	if err := st.CompleteKanbanTask(task.ID, CompleteKanbanTaskRequest{Actor: "alice", Summary: "done"}); err == nil {
+		t.Fatal("expected completing an unclaimed task to fail")
+	}
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != KanbanStatusTodo || got.CompletedAt != "" {
+		t.Fatalf("task after rejected complete = %+v", got)
+	}
+}
+
+func TestKanbanTaskRejectsBoardAndMilestoneFromOtherProject(t *testing.T) {
+	st := openTestStore(t)
+	left, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "left",
+		Name:     "Left",
+		RootPath: "/repo/left",
+	})
+	if err != nil {
+		t.Fatalf("Create left project: %v", err)
+	}
+	right, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "right",
+		Name:     "Right",
+		RootPath: "/repo/right",
+	})
+	if err != nil {
+		t.Fatalf("Create right project: %v", err)
+	}
+	rightBoard, err := st.GetDefaultKanbanBoard(right.ID)
+	if err != nil {
+		t.Fatalf("Get right default board: %v", err)
+	}
+	rightMilestone, err := st.CreateKanbanMilestone(CreateKanbanMilestoneRequest{
+		ProjectID: right.ID,
+		Title:     "Other project milestone",
+	})
+	if err != nil {
+		t.Fatalf("Create right milestone: %v", err)
+	}
+
+	if _, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: left.ID,
+		BoardID:   rightBoard.ID,
+		Title:     "Wrong board",
+	}); err == nil {
+		t.Fatal("expected task with another project's board to fail")
+	}
+	if _, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID:   left.ID,
+		MilestoneID: rightMilestone.ID,
+		Title:       "Wrong milestone",
+	}); err == nil {
+		t.Fatal("expected task with another project's milestone to fail")
+	}
+}
+
 func TestKanbanBlockUnblockAndComment(t *testing.T) {
 	st := openTestStore(t)
 	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
