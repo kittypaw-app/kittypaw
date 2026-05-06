@@ -274,6 +274,84 @@ func (s *Server) handleKanbanTaskShow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	task, err := kanbanResolveTask(s.store, taskID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	var body struct {
+		Actor          string  `json:"actor"`
+		Title          *string `json:"title"`
+		Body           *string `json:"body"`
+		Status         *string `json:"status"`
+		Priority       *int    `json:"priority"`
+		Assignee       *string `json:"assignee"`
+		Milestone      *string `json:"milestone"`
+		ClearMilestone bool    `json:"clear_milestone"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.Milestone != nil && body.ClearMilestone {
+		writeError(w, http.StatusBadRequest, "milestone and clear_milestone are mutually exclusive")
+		return
+	}
+
+	req := store.UpdateKanbanTaskRequest{
+		Actor:          strings.TrimSpace(body.Actor),
+		ClearMilestone: body.ClearMilestone,
+	}
+	if body.Title != nil {
+		title := strings.TrimSpace(*body.Title)
+		if title == "" {
+			writeError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		req.Title = &title
+	}
+	if body.Body != nil {
+		bodyText := strings.TrimSpace(*body.Body)
+		req.Body = &bodyText
+	}
+	if body.Status != nil {
+		status, ok := kanbanValidateStatus(w, *body.Status, false)
+		if !ok {
+			return
+		}
+		req.Status = &status
+	}
+	if body.Priority != nil {
+		priority := *body.Priority
+		req.Priority = &priority
+	}
+	if body.Assignee != nil {
+		assignee := strings.TrimSpace(*body.Assignee)
+		req.Assignee = &assignee
+	}
+	if body.Milestone != nil {
+		milestoneArg := strings.TrimSpace(*body.Milestone)
+		if milestoneArg == "" {
+			writeError(w, http.StatusBadRequest, "milestone is required when supplied")
+			return
+		}
+		milestoneID, err := kanbanResolveMilestoneID(s.store, task.ProjectID, milestoneArg)
+		if err != nil {
+			kanbanWriteStoreError(w, err)
+			return
+		}
+		req.MilestoneID = &milestoneID
+	}
+
+	updated, err := s.store.UpdateKanbanTask(task.ID, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": updated})
+}
+
 func (s *Server) handleKanbanTaskClaim(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
 	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
@@ -383,6 +461,28 @@ func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 	task, err := s.store.GetKanbanTask(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTaskArchive(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	var body struct {
+		Actor string `json:"actor"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeBody(w, r, &body) {
+			return
+		}
+	}
+	task, err := s.store.ArchiveKanbanTask(taskID, strings.TrimSpace(body.Actor))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": task})

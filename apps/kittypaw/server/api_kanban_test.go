@@ -263,6 +263,77 @@ func TestKanbanAPITaskActionsCommentsRunsAndLinks(t *testing.T) {
 	}
 }
 
+func TestKanbanAPITaskUpdateAndArchive(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	kanbanAPICreateMilestone(t, srv, "kitty", "Release One")
+	taskID := kanbanAPICreateTask(t, srv, "kitty", "Old title")
+
+	var updated struct {
+		Task struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			Body        string `json:"body"`
+			Status      string `json:"status"`
+			Priority    int    `json:"priority"`
+			Assignee    string `json:"assignee"`
+			MilestoneID string `json:"milestone_id"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
+		"actor":     "alice",
+		"title":     "New title",
+		"body":      "",
+		"status":    "ready",
+		"priority":  5,
+		"assignee":  "bob",
+		"milestone": "release-one",
+	}, http.StatusOK, &updated)
+	if updated.Task.ID != taskID || updated.Task.Title != "New title" || updated.Task.Body != "" || updated.Task.Status != "ready" || updated.Task.Priority != 5 || updated.Task.Assignee != "bob" || updated.Task.MilestoneID == "" {
+		t.Fatalf("updated task = %+v", updated.Task)
+	}
+
+	var cleared struct {
+		Task struct {
+			ID          string `json:"id"`
+			MilestoneID string `json:"milestone_id"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
+		"clear_milestone": true,
+	}, http.StatusOK, &cleared)
+	if cleared.Task.ID != taskID || cleared.Task.MilestoneID != "" {
+		t.Fatalf("milestone not cleared: %+v", cleared.Task)
+	}
+
+	var archived struct {
+		Task struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/archive", map[string]any{
+		"actor": "alice",
+	}, http.StatusOK, &archived)
+	if archived.Task.ID != taskID || archived.Task.Status != "archived" {
+		t.Fatalf("archived task = %+v", archived.Task)
+	}
+
+	var listed struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks?project=kitty", nil, http.StatusOK, &listed)
+	if len(listed.Tasks) != 0 {
+		t.Fatalf("default listed tasks = %+v, want archived hidden", listed.Tasks)
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks?project=kitty&status=archived", nil, http.StatusOK, &listed)
+	if len(listed.Tasks) != 1 || listed.Tasks[0].ID != taskID {
+		t.Fatalf("archived listed tasks = %+v", listed.Tasks)
+	}
+}
+
 func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	srv := newKanbanAPITestServer(t)
 
@@ -292,6 +363,17 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/fail", map[string]any{
 		"actor": "alice",
+	}, http.StatusBadRequest, nil)
+
+	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
+		"title": " ",
+	}, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
+		"status": "running",
+	}, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
+		"milestone":       "release-one",
+		"clear_milestone": true,
 	}, http.StatusBadRequest, nil)
 }
 
@@ -369,9 +451,11 @@ func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
 		body   any
 	}{
 		{"show", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID, nil},
+		{"update", http.MethodPatch, "/api/v1/kanban/tasks/" + missingTaskID, map[string]any{"title": "x"}},
 		{"claim", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/claim", map[string]any{"actor": "alice"}},
 		{"complete", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/complete", map[string]any{"summary": "done"}},
 		{"fail", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/fail", map[string]any{"error": "boom"}},
+		{"archive", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/archive", map[string]any{}},
 		{"block", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/block", map[string]any{"reason": "missing"}},
 		{"unblock", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/unblock", map[string]any{}},
 		{"comments list", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID + "/comments", nil},
