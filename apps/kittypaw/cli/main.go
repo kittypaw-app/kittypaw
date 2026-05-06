@@ -136,6 +136,7 @@ func newRootCmd() *cobra.Command {
 		newChatRelayCmd(),
 		newAccountCmd(),
 		newProjectCmd(),
+		newKanbanCmd(),
 	)
 
 	return cmd
