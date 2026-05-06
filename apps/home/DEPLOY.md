@@ -2,14 +2,47 @@
 
 Deploy `apps/home` behind nginx/systemd.
 
+## Initial Setup
+
 ```bash
-make -C apps/home build
+cd apps/home
+DEPLOY_DOMAIN=home.kittypaw.app uv run fab setup
 ```
 
-Production smoke:
+The setup task installs rendered nginx/systemd templates and creates
+`/home/jinto/kittyhome/.env` from `deploy/env.example` only when it does not
+already exist.
+
+Current production templates bind the process to a Unix socket owned by systemd:
+
+```env
+KITTYHOME_BIND_ADDR=unix:/run/kittyhome/kittyhome.sock
+```
+
+## Deploy
+
+```bash
+cd apps/home
+uv run fab deploy
+uv run fab status
+uv run fab logs
+```
+
+`fab deploy` builds a linux/amd64 `kittyhome` binary, uploads it, restarts the
+`kittyhome` service, and runs production smoke.
+
+Rollback restores the previous binary:
+
+```bash
+cd apps/home
+uv run fab rollback
+```
+
+## Verify
 
 ```bash
 BASE_URL=https://home.kittypaw.app bash apps/home/deploy/smoke.sh
+cd apps/home && uv run fab smoke
 ```
 
 This credential-free smoke checks `/health`, `/chat/`, `/assets/chat.js`,

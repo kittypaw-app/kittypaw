@@ -4,10 +4,14 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/jinto/kittyhome
-EnvironmentFile=/home/jinto/kittyhome/.env
-ExecStart=/home/jinto/kittyhome/kittyhome
-Restart=always
+User={{SERVICE_USER}}
+Group={{SERVICE_GROUP}}
+WorkingDirectory={{REMOTE_DIR}}
+EnvironmentFile={{REMOTE_DIR}}/.env
+ExecStart={{REMOTE_DIR}}/kittyhome
+RuntimeDirectory=kittyhome
+RuntimeDirectoryMode=0755
+Restart=on-failure
 RestartSec=5
 
 [Install]
