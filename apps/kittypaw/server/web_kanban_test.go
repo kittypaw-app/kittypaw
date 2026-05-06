@@ -52,3 +52,25 @@ func TestKanbanWebModuleUsesAuthenticatedAPIAndExpectedEndpoints(t *testing.T) {
 		t.Fatal("kanban module must use api(), not apiRaw/apiPost, for /api/v1 routes")
 	}
 }
+
+func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
+	src := readWebAssetForKanbanTest(t, "web/kanban.js")
+	for _, token := range []string{
+		"id=\"kanban-project-form\"",
+		"id=\"kanban-task-form\"",
+		"method: 'POST'",
+		"root_path",
+		"/api/v1/kanban/tasks'",
+		"/claim'",
+		"/complete'",
+		"/block'",
+		"/unblock'",
+		"/comments'",
+		"kanban-runs",
+		"kanban-comments",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("kanban module missing token %s", token)
+		}
+	}
+}
