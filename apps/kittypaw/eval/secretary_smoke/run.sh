@@ -15,9 +15,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EVAL_DIR="$ROOT_DIR/eval/secretary_smoke"
 FIX_DIR="$EVAL_DIR/fixtures"
-OUT_DIR="$EVAL_DIR/results"
-SUMMARY="$OUT_DIR/summary.md"
-LOCK_DIR="$EVAL_DIR/.runner.lock"
+OUT_DIR="${OUT_DIR:-$EVAL_DIR/results}"
+SUMMARY="${SUMMARY:-$OUT_DIR/summary.md}"
+LOCK_DIR="${LOCK_DIR:-$EVAL_DIR/.runner.lock}"
 KITTY_BIN="${KITTY_BIN:-$ROOT_DIR/bin/kittypaw}"
 JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5-20251001}"
 RUN_ACCOUNT="${KITTYPAW_ACCOUNT:-auto}"
@@ -25,6 +25,50 @@ RUN_PROVIDER="${KITTYPAW_EVAL_PROVIDER:-configured}"
 RUN_MODEL="${KITTYPAW_EVAL_MODEL:-configured}"
 RUN_SERVER="${KITTYPAW_EVAL_SERVER:-${KITTYPAW_EVAL_DAEMON:-local}}"
 FINISHED=0
+
+# T3: --model <id> opt-in flag — config swap + reload + trap restore.
+# Default path (flag absent) keeps the existing "configured" behavior intact
+# (AC #3, make smoke 회귀 0).
+SWAP_MODEL=""
+SWAP_BACKUP=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model)
+      [[ -z "${2:-}" ]] && { echo "--model requires <id>" >&2; exit 2; }
+      SWAP_MODEL="$2"
+      shift 2
+      ;;
+    --model=*)
+      SWAP_MODEL="${1#*=}"
+      shift
+      ;;
+    *)
+      echo "unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -n "$SWAP_MODEL" ]]; then
+  # Protect the user's ~/.kittypaw — --model only swaps inside an isolated cfg dir.
+  if [[ -z "${KITTYPAW_CONFIG_DIR:-}" ]]; then
+    echo "--model requires KITTYPAW_CONFIG_DIR (사용자 ~/.kittypaw 보호)" >&2
+    exit 2
+  fi
+  # Reject sed-meta / shell-special characters in SWAP_MODEL — defense in depth
+  # against arbitrary config injection. eval/models.toml ids are alphanumeric +
+  # `._-` only, so this is the canonical id shape.
+  if [[ ! "$SWAP_MODEL" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "--model id must match ^[A-Za-z0-9._-]+\$ (got: $SWAP_MODEL)" >&2
+    exit 2
+  fi
+  SWAP_CFG="$KITTYPAW_CONFIG_DIR/accounts/default/config.toml"
+  if [[ ! -f "$SWAP_CFG" ]]; then
+    echo "config.toml not found: $SWAP_CFG" >&2
+    exit 2
+  fi
+  RUN_MODEL="$SWAP_MODEL"
+fi
 
 mkdir -p "$OUT_DIR"
 
@@ -47,6 +91,42 @@ cleanup() {
   rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
+# T3: restore [llm].default after --model swap. Reload daemon so it sees the
+# pre-swap cfg again. No-op when --model absent. Also clears any .tmp leak
+# from an interrupted swap_default.
+restore_swap() {
+  if [[ -n "${SWAP_CFG:-}" ]]; then
+    rm -f "$SWAP_CFG.tmp" 2>/dev/null || true
+  fi
+  if [[ -n "$SWAP_BACKUP" && -f "$SWAP_BACKUP" ]]; then
+    cp "$SWAP_BACKUP" "$SWAP_CFG"
+    rm -f "$SWAP_BACKUP"
+    "$KITTY_BIN" server reload >/dev/null 2>&1 || true
+  fi
+}
+
+# T3: swap [llm].default to SWAP_MODEL and reload daemon. Backup retained
+# until restore_swap runs (trap EXIT). Refuses to overwrite a stale backup
+# from a previously interrupted run — protects against permanent cfg 오염
+# when SIGKILL/power-loss skipped restore_swap.
+swap_default() {
+  SWAP_BACKUP="$SWAP_CFG.swap_backup"
+  if [[ -e "$SWAP_BACKUP" ]]; then
+    echo "stale backup found: $SWAP_BACKUP — previous run did not restore." >&2
+    echo "manual recovery: cp '$SWAP_BACKUP' '$SWAP_CFG' && rm '$SWAP_BACKUP'" >&2
+    SWAP_BACKUP=""  # don't let restore_swap touch a stale backup we didn't create
+    return 2
+  fi
+  cp "$SWAP_CFG" "$SWAP_BACKUP"
+  # POSIX-portable in-place edit: write to .tmp then mv.
+  sed "s|^default = .*|default = \"$SWAP_MODEL\"|" "$SWAP_CFG" > "$SWAP_CFG.tmp"
+  mv "$SWAP_CFG.tmp" "$SWAP_CFG"
+  if ! "$KITTY_BIN" server reload >/dev/null 2>&1; then
+    echo "kittypaw server reload failed after swap" >&2
+    return 2
+  fi
+}
+
 finish() {
   local state="$1"
   local code="$2"
@@ -63,7 +143,7 @@ finish() {
   exit "$code"
 }
 
-trap 'rc=$?; if (( rc != 0 && FINISHED == 0 )); then cleanup; echo "STATE: INFRA"; echo "runner aborted with exit $rc" >&2; exit 2; fi; cleanup' EXIT
+trap 'rc=$?; restore_swap; if (( rc != 0 && FINISHED == 0 )); then cleanup; echo "STATE: INFRA"; echo "runner aborted with exit $rc" >&2; exit 2; fi; cleanup' EXIT
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -72,6 +152,14 @@ need_cmd() {
 }
 
 write_summary_header
+
+# T3: perform swap before KITTYPAW_EVAL_SKIP check so swap+restore runs even
+# in skip mode (bats can verify the swap mechanism without running fixtures).
+if [[ -n "$SWAP_MODEL" ]]; then
+  if ! swap_default; then
+    finish INFRA 2 "swap to model=$SWAP_MODEL failed"
+  fi
+fi
 
 if [[ "${KITTYPAW_EVAL_SKIP:-}" == "1" ]]; then
   finish NOT_RUN 3 "KITTYPAW_EVAL_SKIP=1"
