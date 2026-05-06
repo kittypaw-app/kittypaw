@@ -33,6 +33,11 @@ const (
 	// (`make dev-models-tunnel-lms`); production callers can override via
 	// ModelConfig.BaseURL. See docs/DEV_MODELS.md.
 	lmstudioDefaultBaseURL = "http://localhost:11600/v1/chat/completions"
+
+	// llama.cpp's OpenAI-compatible server defaults to :8080. It is exposed as
+	// a first-class provider name so users don't have to know that the wire
+	// protocol is OpenAI-shaped.
+	llamaCppDefaultBaseURL = "http://localhost:8080/v1/chat/completions"
 )
 
 // Option is a functional option for NewProvider.
@@ -98,6 +103,15 @@ func NewProvider(provider, apiKey, model string, maxTokens int, opts ...Option) 
 
 	case "lmstudio":
 		baseURL := lmstudioDefaultBaseURL
+		if o.baseURL != "" {
+			baseURL = o.baseURL
+		}
+		return NewOpenAI(apiKey, model, maxTokens,
+			WithBaseURL(baseURL),
+		), nil
+
+	case "llamacpp", "llama.cpp", "llama-cpp":
+		baseURL := llamaCppDefaultBaseURL
 		if o.baseURL != "" {
 			baseURL = o.baseURL
 		}

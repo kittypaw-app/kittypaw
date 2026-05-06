@@ -41,6 +41,20 @@ func TestNewProviderOllama(t *testing.T) {
 	}
 }
 
+func TestNewProviderLlamaCpp(t *testing.T) {
+	p, err := NewProvider("llamacpp", "", "qwen2.5", 1024)
+	if err != nil {
+		t.Fatalf("NewProvider(llamacpp) error: %v", err)
+	}
+	op, ok := p.(*OpenAIProvider)
+	if !ok {
+		t.Fatalf("expected *OpenAIProvider for llamacpp, got %T", p)
+	}
+	if op.baseURL != llamaCppDefaultBaseURL {
+		t.Errorf("baseURL = %q, want %q", op.baseURL, llamaCppDefaultBaseURL)
+	}
+}
+
 func TestNewProviderGemini(t *testing.T) {
 	p, err := NewProvider("gemini", "test-key", "gemini-3.1-pro-preview", 1024)
 	if err != nil {

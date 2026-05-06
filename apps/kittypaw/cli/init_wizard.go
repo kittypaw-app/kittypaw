@@ -295,7 +295,7 @@ func wizardLLM(scanner *bufio.Scanner, existing *core.Config, w *core.WizardResu
 			return nil
 		}
 		fmt.Println("  This changes only the default `main` model.")
-		fmt.Println("  Extra models stay unchanged. Add more named models with --extra-model.")
+		fmt.Println("  Extra models stay unchanged. Add more named models with `kittypaw model add`.")
 	}
 
 	defaultIdx := setupLLMDefaultIndex(existing)

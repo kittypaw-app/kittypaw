@@ -125,6 +125,7 @@ func newRootCmd() *cobra.Command {
 		newServerCmd(),
 		newSetupCmd(),
 		newChatCmd(),
+		newModelCmd(),
 		newSkillCmd(),
 		newConfigCmd(),
 		newMemoryCmd(),
