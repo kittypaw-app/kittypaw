@@ -449,6 +449,104 @@ func TestKanbanReclaimRequiresActorReasonAndRunningRun(t *testing.T) {
 	}
 }
 
+func TestKanbanListStaleRunsFiltersOrdersAndLimits(t *testing.T) {
+	st := openTestStore(t)
+	kitty, err := st.CreateKanbanProject(CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: "/repo/kitty"})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject kitty: %v", err)
+	}
+	space, err := st.CreateKanbanProject(CreateKanbanProjectRequest{Slug: "space", Name: "Space", RootPath: "/repo/space"})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject space: %v", err)
+	}
+
+	oldestTask := mustCreateKanbanTaskForStaleTest(t, st, kitty.ID, "Oldest")
+	oldTask := mustCreateKanbanTaskForStaleTest(t, st, kitty.ID, "Old")
+	freshTask := mustCreateKanbanTaskForStaleTest(t, st, kitty.ID, "Fresh")
+	otherProjectTask := mustCreateKanbanTaskForStaleTest(t, st, space.ID, "Other project")
+	canceledTask := mustCreateKanbanTaskForStaleTest(t, st, kitty.ID, "Canceled")
+
+	oldestRun := mustClaimKanbanTaskForStaleTest(t, st, oldestTask.ID, "alice")
+	oldRun := mustClaimKanbanTaskForStaleTest(t, st, oldTask.ID, "bob")
+	freshRun := mustClaimKanbanTaskForStaleTest(t, st, freshTask.ID, "carol")
+	otherRun := mustClaimKanbanTaskForStaleTest(t, st, otherProjectTask.ID, "dave")
+	canceledRun := mustClaimKanbanTaskForStaleTest(t, st, canceledTask.ID, "erin")
+
+	mustSetKanbanRunHeartbeatForStaleTest(t, st, oldestRun.ID, "2026-05-07T01:00:00Z")
+	mustSetKanbanRunHeartbeatForStaleTest(t, st, oldRun.ID, "2026-05-07T01:30:00Z")
+	mustSetKanbanRunHeartbeatForStaleTest(t, st, freshRun.ID, "2026-05-07T02:30:00Z")
+	mustSetKanbanRunHeartbeatForStaleTest(t, st, otherRun.ID, "2026-05-07T01:15:00Z")
+	mustSetKanbanRunHeartbeatForStaleTest(t, st, canceledRun.ID, "2026-05-07T01:10:00Z")
+	if _, err := st.CancelKanbanTask(canceledTask.ID, CancelKanbanTaskRequest{Actor: "erin", Reason: "stop"}); err != nil {
+		t.Fatalf("CancelKanbanTask: %v", err)
+	}
+
+	stale, err := st.ListStaleKanbanRuns(KanbanStaleRunFilter{
+		ProjectID:   kitty.ID,
+		StaleBefore: "2026-05-07T02:00:00Z",
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("ListStaleKanbanRuns: %v", err)
+	}
+	if len(stale) != 2 {
+		t.Fatalf("stale len = %d, want 2: %+v", len(stale), stale)
+	}
+	if stale[0].Run.ID != oldestRun.ID || stale[1].Run.ID != oldRun.ID {
+		t.Fatalf("stale order = %+v", stale)
+	}
+	if stale[0].Task.ID != oldestTask.ID || stale[0].ProjectSlug != "kitty" || stale[0].ProjectName != "KittyPaw" {
+		t.Fatalf("stale context = %+v", stale[0])
+	}
+
+	limited, err := st.ListStaleKanbanRuns(KanbanStaleRunFilter{
+		StaleBefore: "2026-05-07T02:00:00Z",
+		Limit:       1,
+	})
+	if err != nil {
+		t.Fatalf("ListStaleKanbanRuns limited: %v", err)
+	}
+	if len(limited) != 1 || limited[0].Run.ID != oldestRun.ID {
+		t.Fatalf("limited stale = %+v", limited)
+	}
+}
+
+func TestKanbanListStaleRunsRequiresCutoff(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := st.ListStaleKanbanRuns(KanbanStaleRunFilter{}); err == nil {
+		t.Fatal("expected missing stale cutoff to fail")
+	}
+}
+
+func mustCreateKanbanTaskForStaleTest(t *testing.T, st *Store, projectID, title string) *KanbanTask {
+	t.Helper()
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: projectID,
+		Title:     title,
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask %q: %v", title, err)
+	}
+	return task
+}
+
+func mustClaimKanbanTaskForStaleTest(t *testing.T, st *Store, taskID, actor string) *KanbanRun {
+	t.Helper()
+	run, err := st.ClaimKanbanTask(taskID, ClaimKanbanTaskRequest{Actor: actor})
+	if err != nil {
+		t.Fatalf("ClaimKanbanTask %s: %v", taskID, err)
+	}
+	return run
+}
+
+func mustSetKanbanRunHeartbeatForStaleTest(t *testing.T, st *Store, runID, heartbeat string) {
+	t.Helper()
+	if _, err := st.db.Exec(`UPDATE kanban_task_runs SET heartbeat_at = ? WHERE id = ?`, heartbeat, runID); err != nil {
+		t.Fatalf("set run heartbeat %s: %v", runID, err)
+	}
+}
+
 func TestKanbanUpdateTaskEditsFieldsAndMilestone(t *testing.T) {
 	st := openTestStore(t)
 	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
