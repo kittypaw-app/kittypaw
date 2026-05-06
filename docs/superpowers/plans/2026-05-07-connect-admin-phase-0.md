@@ -601,17 +601,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store interface {
-	ListProviderPolicies(context.Context) ([]ProviderPolicy, error)
-	ListAuditEvents(context.Context, int) ([]AuditEvent, error)
-	UpsertProviderPolicy(context.Context, ProviderPolicy) error
-	GetProviderPolicy(context.Context, string) (ProviderPolicy, error)
-	UpsertUserEntitlement(context.Context, UserEntitlement) error
-	UserAllowed(context.Context, string, string) (bool, error)
-	AppendAuditEvent(context.Context, AuditEvent) error
-	EnsureDefaultPolicies(context.Context, ProviderRegistry) error
-}
-
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
@@ -934,6 +923,17 @@ func (r ProviderRegistry) List() []ProviderInfo {
 In `apps/portal/internal/connectadmin/store.go`, add:
 
 ```go
+type Store interface {
+	ListProviderPolicies(context.Context) ([]ProviderPolicy, error)
+	ListAuditEvents(context.Context, int) ([]AuditEvent, error)
+	UpsertProviderPolicy(context.Context, ProviderPolicy) error
+	GetProviderPolicy(context.Context, string) (ProviderPolicy, error)
+	UpsertUserEntitlement(context.Context, UserEntitlement) error
+	UserAllowed(context.Context, string, string) (bool, error)
+	AppendAuditEvent(context.Context, AuditEvent) error
+	EnsureDefaultPolicies(context.Context, ProviderRegistry) error
+}
+
 func (s *PostgresStore) EnsureDefaultPolicies(ctx context.Context, registry ProviderRegistry) error {
 	for _, provider := range registry.List() {
 		var exists bool
