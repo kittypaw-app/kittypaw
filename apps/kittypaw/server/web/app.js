@@ -221,7 +221,7 @@ const App = {
   showShell() {
     this._teardown();
     const adminNav = this.isDefault
-      ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="skills">Skills</button>'
+      ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="kanban">Kanban</button><button class="nav-item" data-tab="skills">Skills</button>'
       : '';
 
     // Override #app centering from stylesheet
@@ -277,6 +277,8 @@ const App = {
     content.style.display = '';
     if (tab === 'dashboard') {
       this._showDashboard(content);
+    } else if (tab === 'kanban') {
+      Kanban.mount(content);
     } else if (tab === 'skills') {
       Skills.mount(content);
     } else {
