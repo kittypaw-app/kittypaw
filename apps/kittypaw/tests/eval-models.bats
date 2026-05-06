@@ -346,8 +346,10 @@ write_manifest() {
   grep -q 'PER_MODEL_TIMEOUT="\${PER_MODEL_TIMEOUT:-180}"' "$APP_DIR/eval/run-models.sh"
 }
 
-@test "T2: run-models.sh exports KITTYPAW_EVAL_FIXTURE_LIMIT to secretary_smoke" {
-  grep -q 'KITTYPAW_EVAL_FIXTURE_LIMIT="\${KITTYPAW_EVAL_FIXTURE_LIMIT:-2}"' "$APP_DIR/eval/run-models.sh"
+@test "T2: run-models.sh exports KITTYPAW_EVAL_FIXTURE_LIMIT to secretary_smoke (default 0 = no limit, opt-in)" {
+  # Default 0 — secretary_smoke threshold logic (hardcoded fixture counts)
+  # would auto-FAIL every model if LIMIT < threshold. Opt-in only.
+  grep -q 'KITTYPAW_EVAL_FIXTURE_LIMIT="\${KITTYPAW_EVAL_FIXTURE_LIMIT:-0}"' "$APP_DIR/eval/run-models.sh"
   grep -q 'KITTYPAW_EVAL_FIXTURE_LIMIT="\$KITTYPAW_EVAL_FIXTURE_LIMIT"' "$APP_DIR/eval/run-models.sh"
 }
 

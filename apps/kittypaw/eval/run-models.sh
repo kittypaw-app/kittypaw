@@ -36,9 +36,12 @@ PER_MODEL_TIMEOUT="${PER_MODEL_TIMEOUT:-180}"
 # Inter-model spacing — provider rate limit 회복 시간 (free tier 20-30 RPM).
 # Iteration 2: 10→60s after first 실측 cycle hit 5/7 fail on cloud RPM.
 INTER_MODEL_SLEEP="${INTER_MODEL_SLEEP:-60}"
-# Per-category fixture limit — 5 → 2 cuts cycle time from ~25min → ~10min for
-# iteration 2 first cycle. Set to 0 (or unset) to disable limit.
-KITTYPAW_EVAL_FIXTURE_LIMIT="${KITTYPAW_EVAL_FIXTURE_LIMIT:-2}"
+# Per-category fixture limit — opt-in env (default unset = full fixtures).
+# secretary_smoke threshold logic is hardcoded for full fixture counts
+# (vague: pass>=6/8, stale: pass>=8/10 etc.) — limiting < threshold makes
+# every model auto-FAIL. Use LIMIT only for fast wiring smoke, not actual
+# quality measurement. Iteration 2 첫 cycle은 풀 fixture로 진행 (~25-40분).
+KITTYPAW_EVAL_FIXTURE_LIMIT="${KITTYPAW_EVAL_FIXTURE_LIMIT:-0}"
 
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 EVAL_TMP="${EVAL_TMP:-${TMPDIR:-/tmp}/kittypaw-eval-$RUN_ID}"
