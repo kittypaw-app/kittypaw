@@ -6,7 +6,7 @@
 #   - v   == 2
 #   - sub is a non-empty string
 #   - "uid" key absent (legacy artifact must not reappear)
-#   - aud contains both API and Chat URL-form audiences
+#   - aud contains API, Chat, and Home URL-form audiences during migration
 #   - scope contains both "chat:relay" and "models:read"
 #
 # Usage:
@@ -62,7 +62,7 @@ if printf '%s' "$PAYLOAD" | jq -e '
     and .v  == 2
     and (.sub | type == "string" and length > 0)
     and (has("uid") | not)
-    and ((.aud   // []) | index("https://api.kittypaw.app") != null and index("https://chat.kittypaw.app") != null)
+    and ((.aud   // []) | index("https://api.kittypaw.app") != null and index("https://chat.kittypaw.app") != null and index("https://home.kittypaw.app") != null)
     and ((.scope // []) | index("chat:relay") != null and index("models:read") != null)
 ' >/dev/null 2>&1; then
     printf "${G}✓${N} PASS — wire-format matches portal contract\n"

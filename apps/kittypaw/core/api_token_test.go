@@ -372,6 +372,52 @@ func TestAPITokenManager_ResolveConnectBaseURLFallbacks(t *testing.T) {
 	}
 }
 
+func TestAPITokenManager_SaveLoadAndResolveHomeBaseURL(t *testing.T) {
+	secrets := &SecretsStore{
+		path: t.TempDir() + "/secrets.json",
+		data: make(map[string]map[string]string),
+	}
+	mgr := NewAPITokenManager("", secrets)
+	apiURL := "https://portal.kittypaw.app"
+	ns := NamespaceForURL(apiURL)
+
+	if err := mgr.SaveHomeBaseURL(apiURL, "https://home.kittypaw.app/"); err != nil {
+		t.Fatalf("SaveHomeBaseURL: %v", err)
+	}
+	got, ok := mgr.LoadHomeBaseURL(apiURL)
+	if !ok || got != "https://home.kittypaw.app" {
+		t.Fatalf("LoadHomeBaseURL = (%q, %v), want home base URL", got, ok)
+	}
+	if stored, ok := secrets.Get(ns, "home_base_url"); !ok || stored != "https://home.kittypaw.app" {
+		t.Fatalf("stored home_base_url = (%q, %v)", stored, ok)
+	}
+	if resolved := mgr.ResolveHomeBaseURL(apiURL); resolved != "https://home.kittypaw.app" {
+		t.Fatalf("ResolveHomeBaseURL = %q", resolved)
+	}
+	if err := mgr.SaveHomeBaseURL(apiURL, ""); err != nil {
+		t.Fatalf("SaveHomeBaseURL empty: %v", err)
+	}
+	got, ok = mgr.LoadHomeBaseURL(apiURL)
+	if ok || got != "" {
+		t.Fatalf("after empty save, LoadHomeBaseURL = (%q, %v), want empty false", got, ok)
+	}
+}
+
+func TestAPITokenManager_ResolveHomeBaseURLFallbacks(t *testing.T) {
+	secrets := &SecretsStore{
+		path: t.TempDir() + "/secrets.json",
+		data: make(map[string]map[string]string),
+	}
+	mgr := NewAPITokenManager("", secrets)
+
+	if got := mgr.ResolveHomeBaseURL("https://portal.kittypaw.app"); got != "https://home.kittypaw.app" {
+		t.Fatalf("ResolveHomeBaseURL portal fallback = %q", got)
+	}
+	if got := mgr.ResolveHomeBaseURL("http://localhost:8080"); got != "http://localhost:8080" {
+		t.Fatalf("ResolveHomeBaseURL localhost fallback = %q", got)
+	}
+}
+
 func TestAPITokenManager_SaveLoadAndClearChatRelayDeviceTokens(t *testing.T) {
 	secrets := &SecretsStore{
 		path: t.TempDir() + "/secrets.json",

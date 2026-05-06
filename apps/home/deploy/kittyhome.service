@@ -1,0 +1,14 @@
+[Unit]
+Description=KittyPaw Home
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jinto/kittyhome
+EnvironmentFile=/home/jinto/kittyhome/.env
+ExecStart=/home/jinto/kittyhome/kittyhome
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

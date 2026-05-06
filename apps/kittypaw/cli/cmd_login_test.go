@@ -33,6 +33,7 @@ func TestApplyDiscoveryStoresChatRelayURL(t *testing.T) {
 			"api_base_url":"https://api.kittypaw.app",
 			"auth_base_url":"https://portal.kittypaw.app/auth",
 			"connect_base_url":"https://connect.kittypaw.app",
+			"home_base_url":"https://home.kittypaw.app",
 			"chat_relay_url":"https://chat.kittypaw.app",
 			"kakao_relay_url":"https://kakao.kittypaw.app",
 			"skills_registry_url":"https://github.com/kittypaw-app/skills"
@@ -62,6 +63,10 @@ func TestApplyDiscoveryStoresChatRelayURL(t *testing.T) {
 	gotConnectBase, ok := mgr.LoadConnectBaseURL(ts.URL)
 	if !ok || gotConnectBase != "https://connect.kittypaw.app" {
 		t.Fatalf("LoadConnectBaseURL = (%q, %v), want connect base URL", gotConnectBase, ok)
+	}
+	gotHomeBase, ok := mgr.LoadHomeBaseURL(ts.URL)
+	if !ok || gotHomeBase != "https://home.kittypaw.app" {
+		t.Fatalf("LoadHomeBaseURL = (%q, %v), want home base URL", gotHomeBase, ok)
 	}
 }
 
@@ -118,6 +123,42 @@ func TestMaybePairChatRelayDevicePairsWhenRelayDiscovered(t *testing.T) {
 	}
 	tokens, ok := mgr.LoadChatRelayDeviceTokens(apiURL)
 	if !ok || tokens.DeviceID != "dev_123" || tokens.AccessToken != "access-1" || tokens.RefreshToken != "refresh-1" {
+		t.Fatalf("tokens = (%#v, %v), want stored pair response", tokens, ok)
+	}
+}
+
+func TestMaybePairChatRelayDevicePairsWhenHomeDiscovered(t *testing.T) {
+	var gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/devices/pair" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"device_id":"dev_home","device_access_token":"access-home","device_refresh_token":"refresh-home","expires_in":900}`)
+	}))
+	defer ts.Close()
+
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := "https://portal.kittypaw.app"
+	if err := mgr.SaveAuthBaseURL(apiURL, ts.URL+"/auth"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveHomeBaseURL(apiURL, "https://home.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if paired := maybePairChatRelayDevice(apiURL, mgr, "user-access", &out); !paired {
+		t.Fatal("maybePairChatRelayDevice paired = false, want true with Home discovery")
+	}
+	if gotAuth != "Bearer user-access" {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	tokens, ok := mgr.LoadChatRelayDeviceTokens(apiURL)
+	if !ok || tokens.DeviceID != "dev_home" || tokens.AccessToken != "access-home" || tokens.RefreshToken != "refresh-home" {
 		t.Fatalf("tokens = (%#v, %v), want stored pair response", tokens, ok)
 	}
 }

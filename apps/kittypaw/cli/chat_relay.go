@@ -125,7 +125,10 @@ func buildChatRelayConnectorRuntimeConfig(dep *server.AccountDeps, daemonVersion
 		return chatRelayConnectorRuntimeConfig{}, false
 	}
 	apiURL := accountAPIURL(dep.Secrets)
-	relayURL, ok := dep.APITokenMgr.LoadChatRelayURL(apiURL)
+	relayURL, ok := dep.APITokenMgr.LoadHomeBaseURL(apiURL)
+	if !ok || relayURL == "" {
+		relayURL, ok = dep.APITokenMgr.LoadChatRelayURL(apiURL)
+	}
 	if !ok || relayURL == "" {
 		return chatRelayConnectorRuntimeConfig{}, false
 	}

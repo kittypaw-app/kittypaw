@@ -232,11 +232,10 @@ func TestWebExchange_Happy(t *testing.T) {
 		t.Fatalf("unexpected token shape: %+v", resp)
 	}
 
-	// Pin multi-aud contract — token MUST verify under both AudienceAPI
-	// and AudienceChat. chat-side verifier (kittychat) pins AudienceChat;
-	// our middleware pins AudienceAPI. Drift on either breaks something.
+	// Pin multi-aud contract — token MUST verify under API, legacy Chat,
+	// and Home during the Home migration.
 	provider := auth.NewSingleKeyProvider(&cfg.JWTPrivateKey.PublicKey, cfg.JWTKID)
-	for _, aud := range []string{auth.AudienceAPI, auth.AudienceChat} {
+	for _, aud := range []string{auth.AudienceAPI, auth.AudienceChat, auth.AudienceHome} {
 		claims, verr := auth.Verify(resp.AccessToken, provider, aud)
 		if verr != nil {
 			t.Fatalf("Verify(aud=%s): %v", aud, verr)

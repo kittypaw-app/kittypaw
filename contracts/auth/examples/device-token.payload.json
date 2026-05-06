@@ -1,7 +1,7 @@
 {
   "iss": "https://portal.kittypaw.app/auth",
   "sub": "device:dev_123",
-  "aud": ["https://chat.kittypaw.app"],
+  "aud": ["https://chat.kittypaw.app", "https://home.kittypaw.app"],
   "scope": ["daemon:connect"],
   "v": 2,
   "user_id": "user_123",

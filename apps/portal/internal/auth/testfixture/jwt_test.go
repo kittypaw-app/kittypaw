@@ -29,7 +29,7 @@ func TestIssueDeviceJWT_RoundTrip(t *testing.T) {
 	claims := testfixture.DeviceClaims{
 		UserID:   "user-abc",
 		DeviceID: "dev-xyz",
-		Audience: []string{"https://chat.kittypaw.app"},
+		Audience: []string{"https://chat.kittypaw.app", "https://home.kittypaw.app"},
 		Scope:    []string{"daemon:connect"},
 		Version:  2,
 		IssuedAt: now,
@@ -106,8 +106,8 @@ func TestIssueDeviceJWT_RoundTrip(t *testing.T) {
 	if got.UserID != "user-abc" {
 		t.Fatalf("user_id = %q, want user-abc", got.UserID)
 	}
-	if len(got.Aud) != 1 || got.Aud[0] != "https://chat.kittypaw.app" {
-		t.Fatalf("aud = %v, want [https://chat.kittypaw.app]", got.Aud)
+	if len(got.Aud) != 2 || got.Aud[0] != "https://chat.kittypaw.app" || got.Aud[1] != "https://home.kittypaw.app" {
+		t.Fatalf("aud = %v, want [https://chat.kittypaw.app https://home.kittypaw.app]", got.Aud)
 	}
 	if len(got.Scope) != 1 || got.Scope[0] != "daemon:connect" {
 		t.Fatalf("scope = %v, want [daemon:connect]", got.Scope)

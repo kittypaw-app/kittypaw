@@ -63,6 +63,40 @@ func TestChatRelayConnectorConfigsRequiresCompleteAccountSecrets(t *testing.T) {
 	}
 }
 
+func TestChatRelayConnectorConfigsPrefersHomeBaseURL(t *testing.T) {
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := core.DefaultAPIServerURL
+	if err := mgr.SaveChatRelayURL(apiURL, "https://chat.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveHomeBaseURL(apiURL, "https://home.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_123",
+		AccessToken:  chatRelayTestAccessToken("device-token-1"),
+		RefreshToken: "refresh-token-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := chatRelayConnectorConfigs([]*server.AccountDeps{
+		{
+			Account:     &core.Account{ID: "alice"},
+			Secrets:     secrets,
+			APITokenMgr: mgr,
+		},
+	}, "0.1.5", false)
+
+	if len(got) != 1 {
+		t.Fatalf("connector configs = %d, want 1", len(got))
+	}
+	if got[0].RelayURL != "https://home.kittypaw.app" {
+		t.Fatalf("RelayURL = %q, want Home base URL", got[0].RelayURL)
+	}
+}
+
 func TestChatRelayConnectorConfigsAdvertisesDefaultCapabilitiesWhenDispatchIsReady(t *testing.T) {
 	secrets := testSecretsStore(t)
 	mgr := core.NewAPITokenManager("", secrets)

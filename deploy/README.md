@@ -7,6 +7,7 @@ deploy/
   kittyapi/
   portal/
   chat/
+  home/
   kakao/
 ```
 

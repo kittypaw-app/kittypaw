@@ -94,7 +94,7 @@ func TestSignForAudiences_RoundTrip(t *testing.T) {
 
 	token, err := auth.SignForAudiences(
 		"user-abc",
-		[]string{"https://api.kittypaw.app", "https://chat.kittypaw.app"},
+		[]string{"https://api.kittypaw.app", "https://chat.kittypaw.app", "https://home.kittypaw.app"},
 		[]string{"chat:relay", "models:read"},
 		cfg.JWTPrivateKey,
 		cfg.JWTKID,
@@ -143,8 +143,8 @@ func TestSignForAudiences_RoundTrip(t *testing.T) {
 	if claims.UserID != "user-abc" {
 		t.Fatalf("UserID = %q", claims.UserID)
 	}
-	if got := []string(claims.Audience); len(got) != 2 || got[0] != "https://api.kittypaw.app" || got[1] != "https://chat.kittypaw.app" {
-		t.Fatalf("Audience = %v, want [https://api.kittypaw.app https://chat.kittypaw.app] (Plan 13 URL form)", got)
+	if got := []string(claims.Audience); len(got) != 3 || got[0] != "https://api.kittypaw.app" || got[1] != "https://chat.kittypaw.app" || got[2] != "https://home.kittypaw.app" {
+		t.Fatalf("Audience = %v, want [https://api.kittypaw.app https://chat.kittypaw.app https://home.kittypaw.app] (Home migration URL form)", got)
 	}
 	if len(claims.Scope) != 2 || claims.Scope[0] != "chat:relay" || claims.Scope[1] != "models:read" {
 		t.Fatalf("Scope = %v, want [chat:relay models:read]", claims.Scope)
