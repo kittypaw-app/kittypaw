@@ -13,6 +13,17 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
+type Store interface {
+	UpsertProviderPolicy(context.Context, ProviderPolicy) error
+	GetProviderPolicy(context.Context, string) (ProviderPolicy, error)
+	ListProviderPolicies(context.Context) ([]ProviderPolicy, error)
+	UpsertUserEntitlement(context.Context, UserEntitlement) error
+	UserAllowed(context.Context, string, string) (bool, error)
+	AppendAuditEvent(context.Context, AuditEvent) error
+	ListAuditEvents(context.Context, int) ([]AuditEvent, error)
+	EnsureDefaultPolicies(context.Context, ProviderRegistry) error
+}
+
 func NewStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
@@ -36,6 +47,25 @@ func (s *PostgresStore) UpsertProviderPolicy(ctx context.Context, p ProviderPoli
 			updated_at = now()
 	`, p.ProviderID, p.Enabled, p.DefaultEntitlement, p.RequestedScopes, p.VerificationStatus, p.CostMode, p.Notes, p.UpdatedBy)
 	return err
+}
+
+func (s *PostgresStore) EnsureDefaultPolicies(ctx context.Context, registry ProviderRegistry) error {
+	for _, provider := range registry.List() {
+		p := provider.DefaultPolicy
+		if p.RequestedScopes == nil {
+			p.RequestedScopes = []string{}
+		}
+		_, err := s.pool.Exec(ctx, `
+			INSERT INTO connect_provider_policies
+				(provider_id, enabled, default_entitlement, requested_scopes, verification_status, cost_mode, notes, updated_by, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, '')::uuid, now())
+			ON CONFLICT (provider_id) DO NOTHING
+		`, p.ProviderID, p.Enabled, p.DefaultEntitlement, p.RequestedScopes, p.VerificationStatus, p.CostMode, p.Notes, p.UpdatedBy)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *PostgresStore) GetProviderPolicy(ctx context.Context, providerID string) (ProviderPolicy, error) {
