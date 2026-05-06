@@ -185,11 +185,10 @@ Initial commands:
 kittypaw project create <slug> --root <path> [--name <name>]
 kittypaw project list
 kittypaw project show <project>
+kittypaw project board list <project>
 
-kittypaw board list --project <project>
-
-kittypaw milestone create <title> --project <project> [--target-date YYYY-MM-DD]
-kittypaw milestone list --project <project>
+kittypaw project milestone create <project> <title> [--target-date YYYY-MM-DD]
+kittypaw project milestone list <project>
 
 kittypaw kanban create <title> --project <project> [--board <board>] [--milestone <milestone>] [--body <text>] [--assignee <profile>]
 kittypaw kanban list --project <project> [--board <board>] [--milestone <milestone>] [--status <status>]
@@ -263,7 +262,7 @@ The automatic dispatcher is a separate follow-up:
 ## Implementation Stages
 
 1. Kernel schema and store methods.
-2. Project, board, milestone CLI.
+2. Project CLI, including board and milestone subcommands.
 3. Task, link, comment, run CLI.
 4. State-transition tests and dependency promotion.
 5. Server API.
@@ -298,4 +297,3 @@ Minimum coverage for stages 1-4:
 - WebSocket live board updates
 - hosted cross-service contracts
 - direct cross-account task sharing
-
