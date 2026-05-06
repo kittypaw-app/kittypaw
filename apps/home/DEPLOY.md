@@ -50,6 +50,23 @@ anonymous `/chat/api/session` rejection, and the Portal Google login redirect.
 Run `make -C apps/home smoke-local` before deploy to verify the full local BFF
 round-trip with fake Portal and fake daemon services.
 
+After deploying Home and provisioning real Portal credentials, run the
+credentialed cutover smoke:
+
+```bash
+cd apps/home
+HOME_BASE_URL=https://home.kittypaw.app \
+HOME_USER_TOKEN=<user-access-token> \
+HOME_DEVICE_TOKEN=<device-token> \
+HOME_DEVICE_ID=<device-id> \
+HOME_LOCAL_ACCOUNT_ID=<local-account-id> \
+make smoke-cutover
+```
+
+This starts a fake daemon with the device token, waits for `/v1/routes` to show
+the device/account, and verifies a chat completion round-trip through Home. It
+must pass before `apps/chat` is considered safe to stop.
+
 Portal must include:
 
 ```text

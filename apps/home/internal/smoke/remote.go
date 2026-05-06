@@ -96,15 +96,19 @@ func LoadRemoteConfig() (RemoteConfig, error) {
 		UserID:         strings.TrimSpace(os.Getenv("HOME_SMOKE_USER_ID")),
 		Timeout:        defaultRemoteSmokeTimeout,
 	}
-	for name, value := range map[string]string{
-		"HOME_BASE_URL":         cfg.BaseURL,
-		"HOME_USER_TOKEN":       cfg.UserToken,
-		"HOME_DEVICE_TOKEN":     cfg.DeviceToken,
-		"HOME_DEVICE_ID":        cfg.DeviceID,
-		"HOME_LOCAL_ACCOUNT_ID": cfg.LocalAccountID,
-	} {
-		if value == "" {
-			return RemoteConfig{}, fmt.Errorf("%s is required", name)
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "HOME_BASE_URL", value: cfg.BaseURL},
+		{name: "HOME_USER_TOKEN", value: cfg.UserToken},
+		{name: "HOME_DEVICE_TOKEN", value: cfg.DeviceToken},
+		{name: "HOME_DEVICE_ID", value: cfg.DeviceID},
+		{name: "HOME_LOCAL_ACCOUNT_ID", value: cfg.LocalAccountID},
+	}
+	for _, item := range required {
+		if item.value == "" {
+			return RemoteConfig{}, fmt.Errorf("%s is required", item.name)
 		}
 	}
 	if raw := strings.TrimSpace(os.Getenv("HOME_SMOKE_TIMEOUT")); raw != "" {
