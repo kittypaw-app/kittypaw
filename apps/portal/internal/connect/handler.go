@@ -39,7 +39,7 @@ func (h *Handler) HandleGmailLogin() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		h.startOAuthLogin(w, r, mode, port, h.Gmail.AuthURL)
+		h.startOAuthLogin(w, r, GmailProviderID, mode, port, h.Gmail.AuthURL)
 	}
 }
 
@@ -63,12 +63,13 @@ func (h *Handler) HandleXLogin() http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		h.startOAuthLogin(w, r, session.Mode, session.Port, h.X.AuthURL)
+		h.startOAuthLogin(w, r, XProviderID, session.Mode, session.Port, h.X.AuthURL)
 	}
 }
 
 func (h *Handler) HandleXSession() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setSensitiveResponseHeaders(w.Header())
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -146,8 +147,8 @@ func normalizeModePort(w http.ResponseWriter, mode, port string) (string, bool) 
 	return strconv.Itoa(portNum), true
 }
 
-func (h *Handler) startOAuthLogin(w http.ResponseWriter, r *http.Request, mode, port string, authURL func(state, verifier string) string) {
-	meta := map[string]string{"mode": mode}
+func (h *Handler) startOAuthLogin(w http.ResponseWriter, r *http.Request, provider, mode, port string, authURL func(state, verifier string) string) {
+	meta := map[string]string{"mode": mode, "provider": provider}
 	if mode == "http" {
 		meta["port"] = port
 	}
@@ -185,6 +186,10 @@ func (h *Handler) handleCallback(provider string, exchange func(context.Context,
 		verifier, meta, err := h.StateStore.ConsumeMeta(state)
 		if err != nil {
 			http.Error(w, "invalid state", http.StatusBadRequest)
+			return
+		}
+		if meta["provider"] != provider {
+			http.Error(w, "invalid state provider", http.StatusBadRequest)
 			return
 		}
 		tokens, err := exchange(r.Context(), code, verifier)
@@ -265,6 +270,12 @@ func (h *Handler) handleRefresh(provider string, refresh func(context.Context, s
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(tokens)
 	}
+}
+
+func setSensitiveResponseHeaders(header http.Header) {
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Referrer-Policy", "no-referrer")
 }
 
 func connectCodePage(code string) string {

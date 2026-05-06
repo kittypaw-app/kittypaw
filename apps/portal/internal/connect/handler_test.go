@@ -134,7 +134,7 @@ func TestHandlerGmailLoginRejectsInvalidModeAndPort(t *testing.T) {
 
 func TestHandlerGmailCallbackReturnsOnlyOneTimeCode(t *testing.T) {
 	h, states, _, _ := testHandler(t)
-	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "http", "port": "12345"})
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "http", "port": "12345", "provider": GmailProviderID})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestHandlerGmailCallbackReturnsOnlyOneTimeCode(t *testing.T) {
 
 func TestHandlerCodeModeAndExchangeConsumeOnce(t *testing.T) {
 	h, states, _, _ := testHandler(t)
-	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code"})
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": GmailProviderID})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -258,6 +258,7 @@ func TestHandlerXSessionReturnsLoginURL(t *testing.T) {
 	if !strings.HasPrefix(body.LoginURL, "https://connect.kittypaw.app/connect/x/login?session=") {
 		t.Fatalf("login_url = %q", body.LoginURL)
 	}
+	assertSensitiveResponseHeaders(t, w.Header())
 }
 
 func TestHandlerXSessionFailsClosedOnEntitlementError(t *testing.T) {
@@ -315,7 +316,7 @@ func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
 		t.Fatalf("replay status = %d, want 401; body=%s", replay.Code, replay.Body.String())
 	}
 
-	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code"})
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": XProviderID})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -350,6 +351,62 @@ func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
 	}
 	if tokens.Provider != "x" || tokens.AccessToken != "x-access-2" || tokens.RefreshToken != "x-refresh-2" {
 		t.Fatalf("refreshed = %#v", tokens)
+	}
+}
+
+func TestHandlerXCallbackRejectsGmailStateWithoutTokenExchange(t *testing.T) {
+	var xTokenCalls int
+	fakeOAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			xTokenCalls++
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"x-access","refresh_token":"x-refresh","token_type":"bearer","expires_in":7200,"scope":"`+XReadOnlyScope+`"}`)
+		case "/users/me":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"id":"123","name":"Jay Park","username":"jaypark"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fakeOAuth.Close)
+
+	states := auth.NewStateStore()
+	t.Cleanup(states.Close)
+	h := NewHandler(nil, NewXProvider(XConfig{
+		ClientID:     "x-client-id",
+		ClientSecret: "x-secret",
+		BaseURL:      "https://connect.kittypaw.app",
+		AuthURL:      fakeOAuth.URL + "/auth",
+		TokenURL:     fakeOAuth.URL + "/token",
+		UserInfoURL:  fakeOAuth.URL + "/users/me",
+	}, fakeOAuth.Client()), states, NewCodeStore(CodeStoreOptions{}))
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": GmailProviderID})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+
+	callback := httptest.NewRecorder()
+	h.HandleXCallback()(callback, httptest.NewRequest(http.MethodGet, "/connect/x/callback?code=x-code&state="+url.QueryEscape(state), nil))
+
+	if callback.Code != http.StatusBadRequest {
+		t.Fatalf("callback status = %d, want 400; body=%s", callback.Code, callback.Body.String())
+	}
+	if xTokenCalls != 0 {
+		t.Fatalf("x token calls = %d, want 0", xTokenCalls)
+	}
+}
+
+func assertSensitiveResponseHeaders(t *testing.T, header http.Header) {
+	t.Helper()
+	if got := header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := header.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
 	}
 }
 
