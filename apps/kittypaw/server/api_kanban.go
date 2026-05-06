@@ -140,12 +140,155 @@ func (s *Server) handleKanbanProjectMilestonesCreate(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusCreated, map[string]any{"milestone": milestone})
 }
 
+func (s *Server) handleKanbanTasksCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Project   string `json:"project"`
+		Board     string `json:"board"`
+		Milestone string `json:"milestone"`
+		Title     string `json:"title"`
+		Body      string `json:"body"`
+		Status    string `json:"status"`
+		Priority  int    `json:"priority"`
+		Assignee  string `json:"assignee"`
+		CreatedBy string `json:"created_by"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	project, err := kanbanResolveProject(s.store, body.Project)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	status, ok := kanbanValidateStatus(w, body.Status, true)
+	if !ok {
+		return
+	}
+	boardID, err := kanbanResolveBoardID(s.store, project.ID, body.Board)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	milestoneID, err := kanbanResolveMilestoneID(s.store, project.ID, body.Milestone)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	task, err := s.store.CreateKanbanTask(store.CreateKanbanTaskRequest{
+		ProjectID:   project.ID,
+		BoardID:     boardID,
+		MilestoneID: milestoneID,
+		Title:       strings.TrimSpace(body.Title),
+		Body:        strings.TrimSpace(body.Body),
+		Status:      status,
+		Priority:    body.Priority,
+		Assignee:    strings.TrimSpace(body.Assignee),
+		CreatedBy:   strings.TrimSpace(body.CreatedBy),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTasksList(w http.ResponseWriter, r *http.Request) {
+	project, err := kanbanResolveProject(s.store, r.URL.Query().Get("project"))
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	status, ok := kanbanValidateStatus(w, r.URL.Query().Get("status"), true)
+	if !ok {
+		return
+	}
+	boardID, err := kanbanResolveBoardID(s.store, project.ID, r.URL.Query().Get("board"))
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	milestoneID, err := kanbanResolveMilestoneID(s.store, project.ID, r.URL.Query().Get("milestone"))
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	tasks, err := s.store.ListKanbanTasks(store.KanbanTaskListFilter{
+		ProjectID:   project.ID,
+		BoardID:     boardID,
+		MilestoneID: milestoneID,
+		Status:      status,
+	})
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	if tasks == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"tasks": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
+}
+
+func (s *Server) handleKanbanTaskShow(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	task, err := s.store.GetKanbanTask(taskID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	comments, err := s.store.ListKanbanComments(task.ID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	events, err := s.store.ListKanbanEvents(task.ID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	runs, err := s.store.ListKanbanRuns(task.ID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"task":     task,
+		"comments": kanbanSliceOrEmpty(comments),
+		"events":   kanbanSliceOrEmpty(events),
+		"runs":     kanbanSliceOrEmpty(runs),
+	})
+}
+
 func kanbanResolveProject(st *store.Store, projectArg string) (*store.KanbanProject, error) {
 	projectArg = strings.TrimSpace(projectArg)
 	if projectArg == "" {
 		return nil, sql.ErrNoRows
 	}
 	return st.GetKanbanProject(projectArg)
+}
+
+func kanbanResolveBoardID(st *store.Store, projectID, boardArg string) (string, error) {
+	boardArg = strings.TrimSpace(boardArg)
+	if boardArg == "" {
+		return "", nil
+	}
+	board, err := st.GetKanbanBoard(projectID, boardArg)
+	if err != nil {
+		return "", err
+	}
+	return board.ID, nil
+}
+
+func kanbanResolveMilestoneID(st *store.Store, projectID, milestoneArg string) (string, error) {
+	milestoneArg = strings.TrimSpace(milestoneArg)
+	if milestoneArg == "" {
+		return "", nil
+	}
+	milestone, err := st.GetKanbanMilestone(projectID, milestoneArg)
+	if err != nil {
+		return "", err
+	}
+	return milestone.ID, nil
 }
 
 func kanbanValidateDate(w http.ResponseWriter, value string) (string, bool) {
@@ -158,6 +301,33 @@ func kanbanValidateDate(w http.ResponseWriter, value string) (string, bool) {
 		return "", false
 	}
 	return value, true
+}
+
+func kanbanValidateStatus(w http.ResponseWriter, status string, allowEmpty bool) (string, bool) {
+	status = strings.TrimSpace(status)
+	if status == "" && allowEmpty {
+		return "", true
+	}
+	switch status {
+	case store.KanbanStatusTriage,
+		store.KanbanStatusTodo,
+		store.KanbanStatusReady,
+		store.KanbanStatusRunning,
+		store.KanbanStatusBlocked,
+		store.KanbanStatusDone,
+		store.KanbanStatusArchived:
+		return status, true
+	default:
+		writeError(w, http.StatusBadRequest, "unknown kanban status")
+		return "", false
+	}
+}
+
+func kanbanSliceOrEmpty[T any](items []T) any {
+	if items == nil {
+		return []any{}
+	}
+	return items
 }
 
 func kanbanWriteStoreError(w http.ResponseWriter, err error) {

@@ -113,11 +113,86 @@ func TestKanbanAPIProjectMilestoneLifecycle(t *testing.T) {
 	}
 }
 
+func TestKanbanAPITaskCreateListShow(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	kanbanAPICreateMilestone(t, srv, "kitty", "Kanban API")
+
+	var created struct {
+		Task struct {
+			ID          string `json:"id"`
+			ProjectID   string `json:"project_id"`
+			MilestoneID string `json:"milestone_id"`
+			Title       string `json:"title"`
+			Status      string `json:"status"`
+			Assignee    string `json:"assignee"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks", map[string]any{
+		"project":    "kitty",
+		"milestone":  "kanban-api",
+		"title":      "Expose task API",
+		"body":       "HTTP task create/list/show",
+		"status":     "todo",
+		"priority":   3,
+		"assignee":   "alice",
+		"created_by": "bob",
+	}, http.StatusCreated, &created)
+	if created.Task.ID == "" || created.Task.Title != "Expose task API" || created.Task.Status != "todo" || created.Task.Assignee != "alice" || created.Task.MilestoneID == "" {
+		t.Fatalf("created task = %+v", created.Task)
+	}
+
+	var listed struct {
+		Tasks []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Title  string `json:"title"`
+		} `json:"tasks"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks?project=kitty&status=todo", nil, http.StatusOK, &listed)
+	if len(listed.Tasks) != 1 || listed.Tasks[0].ID != created.Task.ID || listed.Tasks[0].Status != "todo" {
+		t.Fatalf("listed tasks = %+v", listed.Tasks)
+	}
+
+	var shown struct {
+		Task struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"task"`
+		Comments []any `json:"comments"`
+		Events   []any `json:"events"`
+		Runs     []any `json:"runs"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks/"+created.Task.ID, nil, http.StatusOK, &shown)
+	if shown.Task.ID != created.Task.ID || shown.Task.Title != "Expose task API" {
+		t.Fatalf("shown task = %+v", shown.Task)
+	}
+	if shown.Comments == nil || shown.Events == nil || shown.Runs == nil {
+		t.Fatalf("task detail missing comments/events/runs envelopes: %+v", shown)
+	}
+}
+
 func newKanbanAPITestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := core.DefaultConfig()
 	cfg.Server.APIKey = "api-key"
 	return newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+}
+
+func kanbanAPICreateProject(t *testing.T, srv *Server, slug string) {
+	t.Helper()
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/projects", map[string]any{
+		"slug":      slug,
+		"name":      slug,
+		"root_path": "/repo/" + slug,
+	}, http.StatusCreated, nil)
+}
+
+func kanbanAPICreateMilestone(t *testing.T, srv *Server, project, title string) {
+	t.Helper()
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/projects/"+project+"/milestones", map[string]any{
+		"title": title,
+	}, http.StatusCreated, nil)
 }
 
 func kanbanAPIRequest(t *testing.T, srv *Server, method, path string, body any, wantStatus int, dst any) *httptest.ResponseRecorder {
