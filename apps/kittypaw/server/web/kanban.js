@@ -245,6 +245,9 @@ const Kanban = {
   _actionRowHTML() {
     return '<div class="kanban-action-row">' +
       '<button class="btn btn--secondary btn--sm" id="kanban-claim-task" type="button">Claim</button>' +
+      '<button class="btn btn--secondary btn--sm" id="kanban-heartbeat-task" type="button">Heartbeat</button>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-cancel-task" type="button">Cancel</button>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-reclaim-task" type="button">Reclaim</button>' +
       '<button class="btn btn--primary btn--sm" id="kanban-complete-task" type="button">Complete</button>' +
       '<button class="btn btn--ghost btn--sm" id="kanban-block-task" type="button">Block</button>' +
       '<button class="btn btn--ghost btn--sm" id="kanban-unblock-task" type="button">Unblock</button>' +
@@ -315,6 +318,11 @@ const Kanban = {
       html += '<div class="kanban-list-item"><div><strong>' + esc(run.outcome || '') + '</strong> ' +
         esc(run.actor || '') + '</div>';
       if (run.work_dir) html += '<span>' + esc(run.work_dir) + '</span>';
+      const runTimes = [];
+      if (run.started_at) runTimes.push('started ' + run.started_at);
+      if (run.heartbeat_at) runTimes.push('heartbeat ' + run.heartbeat_at);
+      if (run.finished_at) runTimes.push('finished ' + run.finished_at);
+      if (runTimes.length) html += '<span class="kanban-run-time">' + esc(runTimes.join(' | ')) + '</span>';
       if (run.summary) html += '<p>' + esc(run.summary) + '</p>';
       if (run.metadata_json) html += '<pre>' + esc(run.metadata_json) + '</pre>';
       html += '</div>';
@@ -379,6 +387,15 @@ const Kanban = {
 
     const claim = document.getElementById('kanban-claim-task');
     if (claim) claim.addEventListener('click', () => this._claimTask());
+
+    const heartbeat = document.getElementById('kanban-heartbeat-task');
+    if (heartbeat) heartbeat.addEventListener('click', () => this._heartbeatTask());
+
+    const cancel = document.getElementById('kanban-cancel-task');
+    if (cancel) cancel.addEventListener('click', () => this._cancelTask());
+
+    const reclaim = document.getElementById('kanban-reclaim-task');
+    if (reclaim) reclaim.addEventListener('click', () => this._reclaimTask());
 
     const complete = document.getElementById('kanban-complete-task');
     if (complete) complete.addEventListener('click', () => this._completeTask());
@@ -467,6 +484,30 @@ const Kanban = {
 
   async _claimTask() {
     await this._taskAction('/claim', { actor: 'web' });
+  },
+
+  async _heartbeatTask() {
+    await this._taskAction('/heartbeat', { actor: 'web' });
+  },
+
+  async _cancelTask() {
+    const reason = (prompt('Cancel reason') || '').trim();
+    if (!reason) return;
+    await this._taskAction('/cancel', {
+      actor: 'web',
+      reason: reason,
+      metadata: { source: 'web' },
+    });
+  },
+
+  async _reclaimTask() {
+    const reason = (prompt('Reclaim reason') || '').trim();
+    if (!reason) return;
+    await this._taskAction('/reclaim', {
+      actor: 'web',
+      reason: reason,
+      metadata: { source: 'web' },
+    });
   },
 
   async _completeTask() {

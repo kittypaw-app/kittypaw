@@ -83,6 +83,31 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 	}
 }
 
+func TestKanbanWebModuleSupportsRunLifecycleActions(t *testing.T) {
+	src := readWebAssetForKanbanTest(t, "web/kanban.js")
+	for _, token := range []string{
+		"id=\"kanban-heartbeat-task\"",
+		"id=\"kanban-cancel-task\"",
+		"id=\"kanban-reclaim-task\"",
+		"/heartbeat'",
+		"/cancel'",
+		"/reclaim'",
+		"_heartbeatTask",
+		"_cancelTask",
+		"_reclaimTask",
+		"prompt('Cancel reason')",
+		"prompt('Reclaim reason')",
+		"metadata: { source: 'web' }",
+		"run.started_at",
+		"run.heartbeat_at",
+		"run.finished_at",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("kanban module missing run lifecycle token %s", token)
+		}
+	}
+}
+
 func TestKanbanWebModuleRendersCleanFormLabels(t *testing.T) {
 	src := readWebAssetForKanbanTest(t, "web/kanban.js")
 	for _, bad := range []string{"Status><select", "Milestone><select"} {
@@ -109,6 +134,7 @@ func TestKanbanWebStylesProvideBoardDrawerAndResponsiveRules(t *testing.T) {
 		".kanban-status-dot",
 		".kanban-column--triage .kanban-status-dot",
 		".kanban-form",
+		".kanban-run-time",
 		"@media (max-width: 900px)",
 	} {
 		if !strings.Contains(src, token) {
