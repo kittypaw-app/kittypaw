@@ -18,6 +18,9 @@ func NewStore(pool *pgxpool.Pool) *PostgresStore {
 }
 
 func (s *PostgresStore) UpsertProviderPolicy(ctx context.Context, p ProviderPolicy) error {
+	if p.RequestedScopes == nil {
+		p.RequestedScopes = []string{}
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO connect_provider_policies
 			(provider_id, enabled, default_entitlement, requested_scopes, verification_status, cost_mode, notes, updated_by, updated_at)

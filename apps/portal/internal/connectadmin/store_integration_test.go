@@ -112,6 +112,31 @@ func TestStorePolicyEntitlementAndAudit(t *testing.T) {
 	}
 }
 
+func TestNilRequestedScopesStoresEmptyArray(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+
+	store := connectadmin.NewStore(pool)
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "nil-scopes",
+		Enabled:            true,
+		DefaultEntitlement: connectadmin.DefaultEntitlementDeny,
+		RequestedScopes:    nil,
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("UpsertProviderPolicy nil scopes: %v", err)
+	}
+
+	got, err := store.GetProviderPolicy(ctx, "nil-scopes")
+	if err != nil {
+		t.Fatalf("GetProviderPolicy nil scopes: %v", err)
+	}
+	if len(got.RequestedScopes) != 0 {
+		t.Fatalf("requested scopes = %#v, want empty", got.RequestedScopes)
+	}
+}
+
 func TestUserAllowedFallsBackToProviderDefault(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()
