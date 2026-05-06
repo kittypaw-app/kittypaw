@@ -289,6 +289,10 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/complete", map[string]any{
 		"actor": "alice",
 	}, http.StatusBadRequest, nil)
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/fail", map[string]any{
+		"actor": "alice",
+	}, http.StatusBadRequest, nil)
 }
 
 func TestKanbanAPIClaimExplicitWorkDirUsesManualProvider(t *testing.T) {
@@ -311,6 +315,47 @@ func TestKanbanAPIClaimExplicitWorkDirUsesManualProvider(t *testing.T) {
 	}
 }
 
+func TestKanbanAPITaskFailRecordsFailedRun(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	taskID := kanbanAPICreateTask(t, srv, "kitty", "Failing command")
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/claim", map[string]any{
+		"actor": "alice",
+	}, http.StatusOK, nil)
+
+	var failed struct {
+		Task struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/fail", map[string]any{
+		"actor":   "alice",
+		"summary": "command failed",
+		"error":   "exit status 7",
+		"metadata": map[string]any{
+			"exit_code": 7,
+		},
+	}, http.StatusOK, &failed)
+	if failed.Task.ID != taskID || failed.Task.Status != "todo" {
+		t.Fatalf("failed task = %+v", failed.Task)
+	}
+
+	var runs struct {
+		Runs []struct {
+			Outcome      string `json:"outcome"`
+			Summary      string `json:"summary"`
+			Error        string `json:"error"`
+			MetadataJSON string `json:"metadata_json"`
+		} `json:"runs"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks/"+taskID+"/runs", nil, http.StatusOK, &runs)
+	if len(runs.Runs) != 1 || runs.Runs[0].Outcome != "failed" || runs.Runs[0].Summary != "command failed" || runs.Runs[0].Error != "exit status 7" || !strings.Contains(runs.Runs[0].MetadataJSON, `"exit_code":7`) {
+		t.Fatalf("runs = %+v", runs.Runs)
+	}
+}
+
 func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
 	srv := newKanbanAPITestServer(t)
 	kanbanAPICreateProject(t, srv, "kitty")
@@ -326,6 +371,7 @@ func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
 		{"show", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID, nil},
 		{"claim", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/claim", map[string]any{"actor": "alice"}},
 		{"complete", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/complete", map[string]any{"summary": "done"}},
+		{"fail", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/fail", map[string]any{"error": "boom"}},
 		{"block", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/block", map[string]any{"reason": "missing"}},
 		{"unblock", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/unblock", map[string]any{}},
 		{"comments list", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID + "/comments", nil},

@@ -346,6 +346,48 @@ func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"task": task})
 }
 
+func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	var body struct {
+		Actor        string          `json:"actor"`
+		Summary      string          `json:"summary"`
+		Error        string          `json:"error"`
+		Metadata     json.RawMessage `json:"metadata"`
+		MetadataJSON string          `json:"metadata_json"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	errorText := strings.TrimSpace(body.Error)
+	if errorText == "" {
+		writeError(w, http.StatusBadRequest, "error is required")
+		return
+	}
+	metadata, ok := kanbanMetadataJSON(w, body.Metadata, body.MetadataJSON)
+	if !ok {
+		return
+	}
+	if err := s.store.FailKanbanTask(taskID, store.FailKanbanTaskRequest{
+		Actor:        strings.TrimSpace(body.Actor),
+		Summary:      strings.TrimSpace(body.Summary),
+		Error:        errorText,
+		MetadataJSON: metadata,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	task, err := s.store.GetKanbanTask(taskID)
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
 func (s *Server) handleKanbanTaskBlock(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
 	if _, err := kanbanResolveTask(s.store, taskID); err != nil {

@@ -167,6 +167,84 @@ func TestKanbanCompleteRequiresRunningRun(t *testing.T) {
 	}
 }
 
+func TestKanbanFailRecordsRunAndReturnsTaskToTodo(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Run tests",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+
+	if err := st.FailKanbanTask(task.ID, FailKanbanTaskRequest{
+		Actor:        "alice",
+		Summary:      "tests failed",
+		Error:        "exit status 1",
+		MetadataJSON: `{"exit_code":1}`,
+	}); err != nil {
+		t.Fatalf("FailKanbanTask: %v", err)
+	}
+
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != KanbanStatusTodo || got.CompletedAt != "" {
+		t.Fatalf("task after fail = %+v", got)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != KanbanRunFailed || runs[0].Summary != "tests failed" || runs[0].Error != "exit status 1" || runs[0].MetadataJSON != `{"exit_code":1}` || runs[0].FinishedAt == "" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanFailRequiresRunningRun(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Run without claim",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+
+	if err := st.FailKanbanTask(task.ID, FailKanbanTaskRequest{Actor: "alice", Error: "boom"}); err == nil {
+		t.Fatal("expected failing an unclaimed task to fail")
+	}
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != KanbanStatusTodo || got.CompletedAt != "" {
+		t.Fatalf("task after rejected fail = %+v", got)
+	}
+}
+
 func TestKanbanTaskRejectsBoardAndMilestoneFromOtherProject(t *testing.T) {
 	st := openTestStore(t)
 	left, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
