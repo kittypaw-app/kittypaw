@@ -16,7 +16,7 @@ import (
 
 func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptest.Server) {
 	t.Helper()
-	fakeGoogle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeOAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/token":
 			if err := r.ParseForm(); err != nil {
@@ -25,20 +25,31 @@ func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptes
 			w.Header().Set("Content-Type", "application/json")
 			switch r.Form.Get("grant_type") {
 			case "authorization_code":
-				fmt.Fprint(w, `{"access_token":"gmail-access","refresh_token":"gmail-refresh","token_type":"Bearer","expires_in":3600,"scope":"`+GmailReadOnlyScope+`"}`)
+				if strings.Contains(r.Form.Get("redirect_uri"), "/connect/x/callback") {
+					fmt.Fprint(w, `{"access_token":"x-access","refresh_token":"x-refresh","token_type":"bearer","expires_in":7200,"scope":"`+XReadOnlyScope+`"}`)
+				} else {
+					fmt.Fprint(w, `{"access_token":"gmail-access","refresh_token":"gmail-refresh","token_type":"Bearer","expires_in":3600,"scope":"`+GmailReadOnlyScope+`"}`)
+				}
 			case "refresh_token":
-				fmt.Fprint(w, `{"access_token":"gmail-access-2","token_type":"Bearer","expires_in":3600,"scope":"`+GmailReadOnlyScope+`"}`)
+				if r.Form.Get("refresh_token") == "x-refresh" {
+					fmt.Fprint(w, `{"access_token":"x-access-2","refresh_token":"x-refresh-2","token_type":"bearer","expires_in":7200,"scope":"`+XReadOnlyScope+`"}`)
+				} else {
+					fmt.Fprint(w, `{"access_token":"gmail-access-2","token_type":"Bearer","expires_in":3600,"scope":"`+GmailReadOnlyScope+`"}`)
+				}
 			default:
 				t.Fatalf("grant_type = %q", r.Form.Get("grant_type"))
 			}
 		case "/userinfo":
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"email":"alice@example.com"}`)
+		case "/users/me":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"id":"123","name":"Jay Park","username":"jaypark"}}`)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	t.Cleanup(fakeGoogle.Close)
+	t.Cleanup(fakeOAuth.Close)
 
 	states := auth.NewStateStore()
 	t.Cleanup(states.Close)
@@ -50,11 +61,19 @@ func testHandler(t *testing.T) (*Handler, *auth.StateStore, *CodeStore, *httptes
 		ClientID:     "connect-client-id",
 		ClientSecret: "connect-secret",
 		BaseURL:      "https://connect.kittypaw.app",
-		AuthURL:      fakeGoogle.URL + "/auth",
-		TokenURL:     fakeGoogle.URL + "/token",
-		UserInfoURL:  fakeGoogle.URL + "/userinfo",
-	}, fakeGoogle.Client())
-	return NewHandler(provider, states, codes), states, codes, fakeGoogle
+		AuthURL:      fakeOAuth.URL + "/auth",
+		TokenURL:     fakeOAuth.URL + "/token",
+		UserInfoURL:  fakeOAuth.URL + "/userinfo",
+	}, fakeOAuth.Client())
+	xProvider := NewXProvider(XConfig{
+		ClientID:     "x-client-id",
+		ClientSecret: "x-secret",
+		BaseURL:      "https://connect.kittypaw.app",
+		AuthURL:      fakeOAuth.URL + "/auth",
+		TokenURL:     fakeOAuth.URL + "/token",
+		UserInfoURL:  fakeOAuth.URL + "/users/me",
+	}, fakeOAuth.Client())
+	return NewHandler(provider, xProvider, states, codes), states, codes, fakeOAuth
 }
 
 func TestHandlerGmailLoginRedirectsToGoogle(t *testing.T) {
@@ -181,6 +200,56 @@ func TestHandlerRefresh(t *testing.T) {
 	}
 	if tokens.AccessToken != "gmail-access-2" || tokens.RefreshToken != "" {
 		t.Fatalf("tokens = %#v", tokens)
+	}
+}
+
+func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
+	h, states, _, fakeOAuth := testHandler(t)
+
+	login := httptest.NewRecorder()
+	h.HandleXLogin()(login, httptest.NewRequest(http.MethodGet, "/connect/x/login?mode=code", nil))
+	if login.Code != http.StatusFound {
+		t.Fatalf("login status = %d; body=%s", login.Code, login.Body.String())
+	}
+	if loc := login.Header().Get("Location"); !strings.HasPrefix(loc, fakeOAuth.URL+"/auth?") {
+		t.Fatalf("login Location = %q", loc)
+	}
+
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code"})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+	callback := httptest.NewRecorder()
+	h.HandleXCallback()(callback, httptest.NewRequest(http.MethodGet, "/connect/x/callback?code=x-code&state="+url.QueryEscape(state), nil))
+	if callback.Code != http.StatusOK {
+		t.Fatalf("callback status = %d; body=%s", callback.Code, callback.Body.String())
+	}
+	displayCode := extractDisplayCode(t, callback.Body.String())
+
+	exchange := httptest.NewRecorder()
+	h.HandleCLIExchange()(exchange, httptest.NewRequest(http.MethodPost, "/connect/cli/exchange", strings.NewReader(fmt.Sprintf(`{"code":%q}`, displayCode))))
+	if exchange.Code != http.StatusOK {
+		t.Fatalf("exchange status = %d; body=%s", exchange.Code, exchange.Body.String())
+	}
+	var tokens TokenSet
+	if err := json.NewDecoder(exchange.Body).Decode(&tokens); err != nil {
+		t.Fatalf("decode exchange: %v", err)
+	}
+	if tokens.Provider != "x" || tokens.AccessToken != "x-access" || tokens.RefreshToken != "x-refresh" || tokens.Username != "jaypark" {
+		t.Fatalf("tokens = %#v", tokens)
+	}
+
+	refresh := httptest.NewRecorder()
+	h.HandleXRefresh()(refresh, httptest.NewRequest(http.MethodPost, "/connect/x/refresh", strings.NewReader(`{"refresh_token":"x-refresh"}`)))
+	if refresh.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d; body=%s", refresh.Code, refresh.Body.String())
+	}
+	tokens = TokenSet{}
+	if err := json.NewDecoder(refresh.Body).Decode(&tokens); err != nil {
+		t.Fatalf("decode refresh: %v", err)
+	}
+	if tokens.Provider != "x" || tokens.AccessToken != "x-access-2" || tokens.RefreshToken != "x-refresh-2" {
+		t.Fatalf("refreshed = %#v", tokens)
 	}
 }
 

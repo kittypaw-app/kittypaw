@@ -100,6 +100,11 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 		"CONNECT_GOOGLE_AUTH_URL":      "http://connect-oauth.local/auth",
 		"CONNECT_GOOGLE_TOKEN_URL":     "http://connect-oauth.local/token",
 		"CONNECT_GOOGLE_USERINFO_URL":  "http://connect-oauth.local/userinfo",
+		"CONNECT_X_CLIENT_ID":          "x-client-id",
+		"CONNECT_X_CLIENT_SECRET":      "x-secret",
+		"CONNECT_X_AUTH_URL":           "http://x-oauth.local/auth",
+		"CONNECT_X_TOKEN_URL":          "http://x-oauth.local/token",
+		"CONNECT_X_USERINFO_URL":       "http://x-oauth.local/users/me",
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -122,6 +127,21 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 	if cfg.ConnectGoogleUserInfoURL != "http://connect-oauth.local/userinfo" {
 		t.Fatalf("ConnectGoogleUserInfoURL = %q", cfg.ConnectGoogleUserInfoURL)
 	}
+	if cfg.ConnectXClientID != "x-client-id" {
+		t.Fatalf("ConnectXClientID = %q", cfg.ConnectXClientID)
+	}
+	if cfg.ConnectXClientSecret != "x-secret" {
+		t.Fatalf("ConnectXClientSecret = %q", cfg.ConnectXClientSecret)
+	}
+	if cfg.ConnectXAuthURL != "http://x-oauth.local/auth" {
+		t.Fatalf("ConnectXAuthURL = %q", cfg.ConnectXAuthURL)
+	}
+	if cfg.ConnectXTokenURL != "http://x-oauth.local/token" {
+		t.Fatalf("ConnectXTokenURL = %q", cfg.ConnectXTokenURL)
+	}
+	if cfg.ConnectXUserInfoURL != "http://x-oauth.local/users/me" {
+		t.Fatalf("ConnectXUserInfoURL = %q", cfg.ConnectXUserInfoURL)
+	}
 }
 
 func TestConfig_LoadForTestConnectBaseURL(t *testing.T) {
@@ -134,6 +154,12 @@ func TestConfig_LoadForTestConnectBaseURL(t *testing.T) {
 	}
 	if cfg.ConnectGoogleClientSecret == "" {
 		t.Fatal("ConnectGoogleClientSecret should default in tests")
+	}
+	if cfg.ConnectXClientID == "" {
+		t.Fatal("ConnectXClientID should default in tests")
+	}
+	if cfg.ConnectXClientSecret == "" {
+		t.Fatal("ConnectXClientSecret should default in tests")
 	}
 }
 

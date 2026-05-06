@@ -153,6 +153,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeDiscord(ctx, call, s)
 	case "Gmail":
 		return executeGmail(ctx, call, s)
+	case "X":
+		return executeX(ctx, call, s)
 	case "Skill":
 		return executeSkillMgmt(ctx, call, s)
 	case "Profile":
@@ -1615,18 +1617,22 @@ func runSkillOrPackageWithParams(ctx context.Context, name string, s *Session, p
 		}
 	}
 	for _, f := range pkg.Config {
-		if f.Key != "access_token" || f.Source != "oauth-gmail/access_token" {
+		if f.Key != "access_token" {
+			continue
+		}
+		provider, ok := oauthAccessTokenProvider(f.Source)
+		if !ok {
 			continue
 		}
 		if s.ServiceTokenMgr == nil {
 			return jsonResult(map[string]any{
-				"error": fmt.Sprintf("skill %q requires Gmail connection — run: kittypaw connect gmail", name),
+				"error": fmt.Sprintf("skill %q requires %s connection — run: kittypaw connect %s", name, oauthProviderLabel(provider), provider),
 			})
 		}
-		tok, err := s.ServiceTokenMgr.LoadAccessToken("gmail")
+		tok, err := s.ServiceTokenMgr.LoadAccessToken(provider)
 		if err != nil || tok == "" {
 			return jsonResult(map[string]any{
-				"error": fmt.Sprintf("skill %q requires Gmail connection — run: kittypaw connect gmail", name),
+				"error": fmt.Sprintf("skill %q requires %s connection — run: kittypaw connect %s", name, oauthProviderLabel(provider), provider),
 			})
 		}
 		config["access_token"] = tok
@@ -1910,6 +1916,31 @@ func executeProfile(ctx context.Context, call core.SkillCall, s *Session) (strin
 func executeTTS(_ context.Context, _ core.SkillCall, _ *Session) (string, error) {
 	// TODO: implement TTS via external API
 	return jsonResult(map[string]any{"error": "TTS not yet implemented"})
+}
+
+func oauthAccessTokenProvider(source string) (string, bool) {
+	ns, key, ok := strings.Cut(source, "/")
+	if !ok || key != "access_token" || !strings.HasPrefix(ns, "oauth-") {
+		return "", false
+	}
+	provider := strings.TrimPrefix(ns, "oauth-")
+	switch provider {
+	case "gmail", "x":
+		return provider, true
+	default:
+		return "", false
+	}
+}
+
+func oauthProviderLabel(provider string) string {
+	switch provider {
+	case "gmail":
+		return "Gmail"
+	case "x":
+		return "X"
+	default:
+		return provider
+	}
 }
 
 // executeImage and executeVision are in vision.go.

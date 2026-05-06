@@ -249,6 +249,39 @@ func TestConnectGmailLoginRouteUsesConnectGoogleClient(t *testing.T) {
 	}
 }
 
+func TestConnectXLoginRouteUsesConnectXClient(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.ConnectXClientID = "x-connect-client-id"
+	cfg.ConnectXAuthURL = "https://x.example/auth"
+	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/connect/x/login?mode=code", nil)
+	req.Host = "connect.kittypaw.app"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body=%s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+	if got := u.Query().Get("client_id"); got != "x-connect-client-id" {
+		t.Fatalf("client_id = %q, want X connect client, Location=%s", got, loc)
+	}
+	if got := u.Query().Get("redirect_uri"); got != "https://connect.kittypaw.app/connect/x/callback" {
+		t.Fatalf("redirect_uri = %q", got)
+	}
+	if got := u.Query().Get("scope"); !strings.Contains(got, "offline.access") {
+		t.Fatalf("scope = %q, want refresh-capable X scope", got)
+	}
+}
+
 func TestConnectHostRootShowsConnectHome(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
