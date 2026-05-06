@@ -26,3 +26,62 @@ func TestKanbanMigrationCreatesTables(t *testing.T) {
 		}
 	}
 }
+
+func TestKanbanCreateProjectCreatesDefaultBoard(t *testing.T) {
+	st := openTestStore(t)
+
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	if project.ID == "" || project.Slug != "kitty" || project.Name != "KittyPaw" || project.RootPath != "/repo/kitty" {
+		t.Fatalf("project = %+v", project)
+	}
+
+	boards, err := st.ListKanbanBoards(project.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanBoards: %v", err)
+	}
+	if len(boards) != 1 {
+		t.Fatalf("boards len = %d, want 1", len(boards))
+	}
+	if !boards[0].IsDefault || boards[0].Slug != "default" || boards[0].ProjectID != project.ID {
+		t.Fatalf("default board = %+v", boards[0])
+	}
+}
+
+func TestKanbanMilestoneBelongsToProject(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+
+	ms, err := st.CreateKanbanMilestone(CreateKanbanMilestoneRequest{
+		ProjectID:  project.ID,
+		Title:      "Kanban MVP",
+		TargetDate: "2026-05-31",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanMilestone: %v", err)
+	}
+	if ms.ID == "" || ms.Slug != "kanban-mvp" || ms.ProjectID != project.ID || ms.Status != "open" {
+		t.Fatalf("milestone = %+v", ms)
+	}
+
+	milestones, err := st.ListKanbanMilestones(project.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanMilestones: %v", err)
+	}
+	if len(milestones) != 1 || milestones[0].ID != ms.ID {
+		t.Fatalf("milestones = %+v", milestones)
+	}
+}
