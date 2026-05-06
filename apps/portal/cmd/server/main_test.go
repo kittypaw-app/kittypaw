@@ -17,7 +17,10 @@ import (
 	"time"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
+	"github.com/kittypaw-app/kittyportal/internal/auth/testfixture"
 	"github.com/kittypaw-app/kittyportal/internal/config"
+	"github.com/kittypaw-app/kittyportal/internal/connectadmin"
+	"github.com/kittypaw-app/kittyportal/internal/model"
 )
 
 func testJWTKey(t *testing.T) (*rsa.PrivateKey, string) {
@@ -29,7 +32,7 @@ func testJWTKey(t *testing.T) (*rsa.PrivateKey, string) {
 func testRouter(t *testing.T) http.Handler {
 	t.Helper()
 	cfg := config.LoadForTest()
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 	return r
 }
@@ -102,7 +105,7 @@ func TestServeHTTPListensOnUnixSocket(t *testing.T) {
 func TestDiscoveryReturnsKakaoRelayURL(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.KakaoRelayURL = "https://kakao.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/discovery", nil)
@@ -147,7 +150,7 @@ func unixSocketTransport(socketPath string) http.RoundTripper {
 func TestDiscoveryReturnsChatRelayURL(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.ChatRelayURL = "https://chat.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/discovery", nil)
@@ -171,7 +174,7 @@ func TestPortalHomeEndpoint(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ChatRelayURL = "https://chat.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -203,7 +206,7 @@ func TestConnectHomeEndpoint(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/connect", nil)
@@ -226,7 +229,7 @@ func TestConnectGmailLoginRouteUsesConnectGoogleClient(t *testing.T) {
 	cfg.GoogleClientID = "identity-client-id"
 	cfg.ConnectGoogleClientID = "connect-client-id"
 	cfg.ConnectGoogleAuthURL = "https://accounts.example/auth"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/connect/gmail/login?mode=code", nil)
@@ -256,7 +259,7 @@ func TestConnectXLoginRouteUsesConnectXClient(t *testing.T) {
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
 	cfg.ConnectXClientID = "x-connect-client-id"
 	cfg.ConnectXAuthURL = "https://x.example/auth"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/connect/x/login?mode=code", nil)
@@ -287,7 +290,7 @@ func TestConnectHostRootShowsConnectHome(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -307,7 +310,7 @@ func TestConnectRoutesOnlyServedOnConnectHost(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/connect", nil)
@@ -324,7 +327,7 @@ func TestConnectRoutesStayHostBoundWhenAPIHostIsCollapsed(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = cfg.BaseURL
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/connect", nil)
@@ -341,7 +344,7 @@ func TestIdentityRoutesNotServedOnConnectHost(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/discovery", nil)
@@ -353,11 +356,94 @@ func TestIdentityRoutesNotServedOnConnectHost(t *testing.T) {
 	}
 }
 
+func TestConnectAdminOnlyServedOnPortalHost(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	r, cleanup := NewRouter(cfg, &fakeRouterUserStore{}, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	req.Host = "connect.kittypaw.app"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("connect host status = %d, want 404", w.Code)
+	}
+}
+
+func TestConnectAdminAllowsConfiguredAdmin(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-admin": {ID: "user-admin", Email: "admin@example.com"},
+	}}
+	r, cleanup := NewRouter(cfg, users, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	req.Host = "portal.kittypaw.app"
+	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", 15*time.Minute))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("portal host status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "KittyPaw Connect Admin") {
+		t.Fatalf("admin page missing title: %s", w.Body.String())
+	}
+}
+
+func TestConnectAdminRejectsAuthenticatedNonAdmin(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-basic": {ID: "user-basic", Email: "user@example.com"},
+	}}
+	r, cleanup := NewRouter(cfg, users, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	req.Host = "portal.kittypaw.app"
+	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-basic", 15*time.Minute))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("portal host status = %d, want 403", w.Code)
+	}
+}
+
+func TestConnectAdminRejectsAnonymous(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	r, cleanup := NewRouter(cfg, &fakeRouterUserStore{}, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	req.Host = "portal.kittypaw.app"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("portal host status = %d, want 401", w.Code)
+	}
+}
+
 func TestDiscoveryReturnsPortalAuthBaseURLAndAPIBaseURL(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app/"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/discovery", nil)
@@ -385,7 +471,7 @@ func TestDiscoveryIncludesConnectBaseURL(t *testing.T) {
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	req := httptest.NewRequest(http.MethodGet, "/discovery", nil)
@@ -409,7 +495,7 @@ func TestSplitHostsRestrictIdentityRoutesToPortalHost(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	t.Cleanup(cleanup)
 
 	for _, tc := range []struct {
@@ -496,7 +582,7 @@ func TestJWKSEndpointCacheControl(t *testing.T) {
 
 func TestNewRouterCleanupReleasesStores(t *testing.T) {
 	cfg := config.LoadForTest()
-	r, cleanup := NewRouter(cfg, nil, nil, nil)
+	r, cleanup := NewRouter(cfg, nil, nil, nil, nil)
 	if r == nil {
 		t.Fatal("expected non-nil router")
 	}
@@ -670,4 +756,73 @@ func TestRouterXRealIPHeaderTrustedForRateLimit(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 on 6th X-Real-IP=%s call, got %d", samePeer, w.Code)
 	}
+}
+
+type fakeRouterUserStore struct {
+	users map[string]*model.User
+}
+
+func (s *fakeRouterUserStore) CreateOrUpdate(context.Context, string, string, string, string, string) (*model.User, error) {
+	return nil, errors.New("CreateOrUpdate not implemented")
+}
+
+func (s *fakeRouterUserStore) FindByID(_ context.Context, id string) (*model.User, error) {
+	if s == nil || s.users == nil {
+		return nil, model.ErrNotFound
+	}
+	user, ok := s.users[id]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	clone := *user
+	return &clone, nil
+}
+
+type fakeConnectAdminStore struct {
+	policies    []connectadmin.ProviderPolicy
+	auditEvents []connectadmin.AuditEvent
+}
+
+func (s *fakeConnectAdminStore) UpsertProviderPolicy(_ context.Context, policy connectadmin.ProviderPolicy) error {
+	s.policies = append(s.policies, policy)
+	return nil
+}
+
+func (s *fakeConnectAdminStore) GetProviderPolicy(_ context.Context, providerID string) (connectadmin.ProviderPolicy, error) {
+	for _, policy := range s.policies {
+		if policy.ProviderID == providerID {
+			return policy, nil
+		}
+	}
+	return connectadmin.ProviderPolicy{}, nil
+}
+
+func (s *fakeConnectAdminStore) ListProviderPolicies(context.Context) ([]connectadmin.ProviderPolicy, error) {
+	return append([]connectadmin.ProviderPolicy(nil), s.policies...), nil
+}
+
+func (s *fakeConnectAdminStore) UpsertUserEntitlement(context.Context, connectadmin.UserEntitlement) error {
+	return nil
+}
+
+func (s *fakeConnectAdminStore) UpdateUserEntitlementWithAudit(_ context.Context, _ connectadmin.UserEntitlement, event connectadmin.AuditEvent) error {
+	s.auditEvents = append(s.auditEvents, event)
+	return nil
+}
+
+func (s *fakeConnectAdminStore) UserAllowed(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (s *fakeConnectAdminStore) AppendAuditEvent(_ context.Context, event connectadmin.AuditEvent) error {
+	s.auditEvents = append(s.auditEvents, event)
+	return nil
+}
+
+func (s *fakeConnectAdminStore) ListAuditEvents(context.Context, int) ([]connectadmin.AuditEvent, error) {
+	return append([]connectadmin.AuditEvent(nil), s.auditEvents...), nil
+}
+
+func (s *fakeConnectAdminStore) EnsureDefaultPolicies(context.Context, connectadmin.ProviderRegistry) error {
+	return nil
 }

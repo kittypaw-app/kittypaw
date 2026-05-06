@@ -20,9 +20,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/kittypaw-app/kittyportal/internal/admin"
 	"github.com/kittypaw-app/kittyportal/internal/auth"
 	"github.com/kittypaw-app/kittyportal/internal/config"
 	"github.com/kittypaw-app/kittyportal/internal/connect"
+	"github.com/kittypaw-app/kittyportal/internal/connectadmin"
 	"github.com/kittypaw-app/kittyportal/internal/janitor"
 	"github.com/kittypaw-app/kittyportal/internal/model"
 	"github.com/kittypaw-app/kittyportal/internal/ratelimit"
@@ -83,8 +85,16 @@ func run() error {
 	userStore := model.NewUserStore(pool)
 	refreshStore := model.NewRefreshTokenStore(pool)
 	deviceStore := model.NewDeviceStore(pool)
+	connectAdminStore := connectadmin.NewStore(pool)
+	connectRegistry := connectadmin.DefaultProviderRegistry(connectadmin.ProviderRegistryConfig{
+		GmailConfigured: cfg.ConnectGoogleClientID != "" && cfg.ConnectGoogleClientSecret != "",
+		XConfigured:     cfg.ConnectXClientID != "" && cfg.ConnectXClientSecret != "",
+	})
+	if err := connectAdminStore.EnsureDefaultPolicies(ctx, connectRegistry); err != nil {
+		return fmt.Errorf("seed connect policies: %w", err)
+	}
 
-	router, cleanup := NewRouter(cfg, userStore, refreshStore, deviceStore)
+	router, cleanup := NewRouter(cfg, userStore, refreshStore, deviceStore, connectAdminStore)
 	defer cleanup()
 
 	go janitor.New(deviceStore, refreshStore, janitor.DefaultPolicy, nil).Run(ctx)
@@ -158,7 +168,7 @@ func serveHTTP(srv *http.Server, unixSocket string) error {
 
 // NewRouter builds the portal router and returns it with a cleanup hook
 // for the in-memory state stores and rate limiter.
-func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model.RefreshTokenStore, deviceStore model.DeviceStore) (*chi.Mux, func()) {
+func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model.RefreshTokenStore, deviceStore model.DeviceStore, connectAdminStore connectadmin.Store) (*chi.Mux, func()) {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -223,6 +233,10 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 
 	identityOnly := hostBoundaryMiddleware(cfg.BaseURL, cfg.APIBaseURL, cfg.BaseURL)
 	connectOnly := hostOnlyMiddleware(cfg.ConnectBaseURL)
+	connectRegistry := connectadmin.DefaultProviderRegistry(connectadmin.ProviderRegistryConfig{
+		GmailConfigured: cfg.ConnectGoogleClientID != "" && cfg.ConnectGoogleClientSecret != "",
+		XConfigured:     cfg.ConnectXClientID != "" && cfg.ConnectXClientSecret != "",
+	})
 
 	r.Get("/health", handleHealth)
 
@@ -260,6 +274,20 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.Post("/connect/cli/exchange", connectHandler.HandleCLIExchange())
 			r.Post("/connect/gmail/refresh", connectHandler.HandleGmailRefresh())
 			r.Post("/connect/x/refresh", connectHandler.HandleXRefresh())
+		})
+	}
+
+	if connectAdminStore != nil {
+		connectAdminHandler := connectadmin.NewHandler(connectadmin.HandlerOptions{
+			Registry: connectRegistry,
+			Store:    connectAdminStore,
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(identityOnly)
+			r.Use(authMW)
+			r.Use(admin.Middleware(cfg.PortalAdminEmails))
+			r.Get("/admin/connect", connectAdminHandler.HandleHome())
+			r.Get("/admin/connect/", connectAdminHandler.HandleHome())
 		})
 	}
 
