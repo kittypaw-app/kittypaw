@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -141,6 +142,23 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 	}
 	if cfg.ConnectXUserInfoURL != "http://x-oauth.local/users/me" {
 		t.Fatalf("ConnectXUserInfoURL = %q", cfg.ConnectXUserInfoURL)
+	}
+}
+
+func TestLoadParsesPortalAdminEmails(t *testing.T) {
+	pemStr := generatePEM(t, 2048)
+	b64 := base64.StdEncoding.EncodeToString([]byte(pemStr))
+
+	cfg, err := loadWithEnv(t, map[string]string{
+		"JWT_PRIVATE_KEY_PEM_B64": b64,
+		"PORTAL_ADMIN_EMAILS":     " alice@example.com,BOB@example.com ,, ",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"alice@example.com", "bob@example.com"}
+	if !reflect.DeepEqual(cfg.PortalAdminEmails, want) {
+		t.Fatalf("PortalAdminEmails = %#v, want %#v", cfg.PortalAdminEmails, want)
 	}
 }
 
