@@ -365,7 +365,7 @@ func TestNewProviderMistralAPIKeyFromEnv(t *testing.T) {
 }
 
 // TestNewProviderMistral_NoOPENAIKeyContamination: MISTRAL_API_KEY 비어
-// 있고 OPENAI_API_KEY가 박혀있어도 mistral provider는 OPENAI 키를
+// 있고 OPENAI_API_KEY가 설정되어 있어도 mistral provider는 OPENAI 키를
 // 가져오면 안 됨 (provider identity 분리 — 각 vendor 키는 별도 source).
 func TestNewProviderMistral_NoOPENAIKeyContamination(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "openai-env-key")

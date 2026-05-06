@@ -7,7 +7,7 @@
 | Config dir | `/tmp/kittypaw-dev-models/` (`KITTYPAW_CONFIG_DIR`) | `~/.kittypaw/` |
 | Bind | `127.0.0.1:3001` (loopback) | 평소 그대로 |
 | Account | `default` (throwaway password) | 실 계정 |
-| API key 저장 | env var only (파일 박제 X) | `secrets.json` |
+| API key 저장 | env var only (파일 저장 X) | `secrets.json` |
 
 ---
 
@@ -67,7 +67,7 @@ API 키 revoke 권장 (시연 후):
 
 ## 등록된 7 모델
 
-`scripts/dev-models.sh setup`이 `KITTYPAW_CONFIG_DIR/accounts/default/config.toml`에 박는 기본 7 모델 (cloud OpenAI 호환 wire 5 + Gemini Generative Language API wire 1 + self-hosted LM Studio MLX 1 — multi-wire 검증 + provider routing 다양화 의도):
+`scripts/dev-models.sh setup`이 `KITTYPAW_CONFIG_DIR/accounts/default/config.toml`에 추가하는 기본 7 모델 (cloud OpenAI 호환 wire 5 + Gemini Generative Language API wire 1 + self-hosted LM Studio MLX 1 — multi-wire 검증 + provider routing 다양화 의도):
 
 | ID | provider | model | thinking adapter |
 |---|---|---|---|
@@ -129,7 +129,7 @@ KITTYPAW_DEV_PORT=3010 scripts/dev-models.sh go
 | `daemon failed to bind :3001` | log 확인: `tail /tmp/kittypaw-dev-models.log` |
 | 채팅 첫 응답 latency 길거나 cold | provider별 cold start. 두 번째 turn부터 warm |
 | `/model groq-qwen` 후 응답에 `<think>` 노출 | KittyPaw 어댑터의 `reasoning_format=parsed` 미적용 — 본 commit 이전 binary일 가능성. `make build` 후 재시도 |
-| Groq llama 응답에 일본어/태국어 mixin | § 4 매트릭스 박제 fact — Llama 3.3의 한국어 어색. **개선 X** (모델 자체 한계) |
+| Groq llama 응답에 일본어/태국어 mixin | § 4 매트릭스 기록 fact — Llama 3.3의 한국어 어색. **개선 X** (모델 자체 한계) |
 | `/model magistral-...` 추가했는데 응답이 비어있음 | magistral은 list-of-blocks content. KittyPaw extractContent가 unwrap (§ 6.7). non-empty 응답이면 정상 |
 
 ---
@@ -148,15 +148,15 @@ KITTYPAW_CONFIG_DIR=/tmp/kittypaw-dev-models
     └── secrets.json         # wizard 자동 생성
 ```
 
-setup wizard가 `--password-stdin --no-chat --no-service --force`로 비interactive 호출되어 `account.toml` + `secrets.json`을 박는다. (`auth.json`은 server-wide Web UI credentials이고 별도 — chat WS handshake는 server.toml의 `master_api_key`로 인증되므로 dev harness엔 불필요.) `config.toml`은 wizard 후 dev-models가 5 모델 template으로 overwrite.
+setup wizard가 `--password-stdin --no-chat --no-service --force`로 비interactive 호출되어 `account.toml` + `secrets.json`을 작성한다. (`auth.json`은 server-wide Web UI credentials이고 별도 — chat WS handshake는 server.toml의 `master_api_key`로 인증되므로 dev harness엔 불필요.) `config.toml`은 wizard 후 dev-models가 5 모델 template으로 overwrite.
 
-`server.toml`에 `bind = "127.0.0.1:3001"` + 무작위 `master_api_key` 박음. chat client (`client/daemon.go:Connect`)가 이 둘을 읽어 BaseURL + APIKey 결정 — 박지 않으면 WS 401 또는 health-check 10초 timeout.
+`server.toml`에 `bind = "127.0.0.1:3001"` + 무작위 `master_api_key` 작성. chat client (`client/daemon.go:Connect`)가 이 둘을 읽어 BaseURL + APIKey 결정 — 작성하지 않으면 WS 401 또는 health-check 10초 timeout.
 
-> **격리 메커니즘 fact**: `KITTYPAW_CONFIG_DIR` 만 코드가 읽음 (verified `core/config.go:482`). CLAUDE.md "Testing Isolation" 섹션도 동일 환경변수 박은 후 일관 (Plan A T3, 2026-05-06).
+> **격리 메커니즘 fact**: `KITTYPAW_CONFIG_DIR` 만 코드가 읽음 (verified `core/config.go:482`). CLAUDE.md "Testing Isolation" 섹션도 동일 환경변수 정한 후 일관 (Plan A T3, 2026-05-06).
 
 ---
 
-## 비판적 함정 박제
+## 비판적 함정 기록
 
 1. **`HOME=/tmp/...` redirection 시도는 우회 — `KITTYPAW_CONFIG_DIR`이 정답**. KittyPaw는 `os.UserHomeDir()` 외에 `KITTYPAW_CONFIG_DIR` env var를 우선 lookup. HOME만 바꾸면 `~/.kittypaw/` 하위 layer 한 번 더 필요해 path mismatch.
 2. **`--remote http://localhost:3001`는 chat에서 401**. `--remote`는 production server attach용 (auth token 요구). loopback dev daemon은 KITTYPAW_CONFIG_DIR + local discovery로 가야 master_api_key로 인증 통과.
@@ -228,23 +228,23 @@ make dev-models-tunnel-lms-stop      # 끝
 
 ### 자동 측정 — Plan B 별도 phase
 
-raw 측정 자동화 (LLM judge + use case별 추천 + drift baseline) 는 **별도 phase**로 박힘 — `eval/secretary_smoke` + `eval/user_vision_flows` framework rebuild + `eval/models.toml` source-of-truth (사용자 박은 `a` 결정). 본 dev-models harness는 chat REPL `/model` 명령으로 *수동* 측정 + provider/model swap 박는 entry로 keep — automation은 eval framework로.
+raw 측정 자동화 (LLM judge + use case별 추천 + drift baseline) 는 **별도 phase**로 처리 — `eval/secretary_smoke` + `eval/user_vision_flows` framework rebuild + `eval/models.toml` source-of-truth (사용자 정한 `a` 결정). 본 dev-models harness는 chat REPL `/model` 명령으로 *수동* 측정 + provider/model swap 추가 entry로 keep — automation은 eval framework로.
 
-**load-bearing fact**: KittyPaw `core.ChatPayload` (core/types.go:97) 에 model 필드 없음 + `handleChat` (server/api.go:472)이 `nil` RunOptions로 Run 호출 → `POST /api/v1/chat`은 항상 `[llm].default` 사용. 측정 모델 swap 유일한 방법 = config 임시 변경 + `/api/v1/reload` (eval framework 가 박음).
+**load-bearing fact**: KittyPaw `core.ChatPayload` (core/types.go:97) 에 model 필드 없음 + `handleChat` (server/api.go:472)이 `nil` RunOptions로 Run 호출 → `POST /api/v1/chat`은 항상 `[llm].default` 사용. 측정 모델 swap 유일한 방법 = config 임시 변경 + `/api/v1/reload` (eval framework 가 처리).
 
-### 박제 가이드 — 수동 측정 후 사용자 직접 기록
+### 기록 가이드 — 수동 측정 후 사용자 직접 기록
 
 수동 측정 (chat REPL `/model` swap + 직접 prompt) 후 `apps/kittypaw/docs/MODEL_GUIDE.md` 표 직접 채우기:
 
 - **ollama**: § 2.4 raw 측정 fact 표
 - **lmstudio**: § 3.6 raw 측정 fact 표
 
-박제 항목:
+기록 항목:
 - **quality**: 1=fail / 2=어색 / 3=OK / 4=좋음 / 5=완벽 (한국어 자연스러움 + 코드 정확도 종합)
 - **latency**: warm chat (cold load는 부수적 — 띄워두고 쓰는 가정)
 - **context_window**: 응답 길이 + 모델 spec 비교 (Q4 양자화 시 줄어들 수 있음. MLX 4bit는 thinking 없는 instruct variant 우세 — § 3.3)
 
-자동 eval (LLM judge + drift baseline) 은 Plan B에서 박힘 — 본 박제 가이드는 수동 측정 entry로 keep.
+자동 eval (LLM judge + drift baseline) 은 Plan B에서 처리 — 본 기록 가이드는 수동 측정 entry로 keep.
 
 ### tunnel fail mode
 
@@ -261,13 +261,13 @@ raw 측정 자동화 (LLM judge + use case별 추천 + drift baseline) 는 **별
 
 ### 보안
 
-- SSH tunnel = OpenSSH `ControlMaster=auto` + `ControlPath=/tmp/kittypaw-tunnel-{ollama|lms}.sock` (사용자 `~/.ssh/config` 무영향, `-o` inline 옵션만). 단일-host scope (emac 한정) — multi-host 확장 시 host 접미사 박음 (Plan B).
+- SSH tunnel = OpenSSH `ControlMaster=auto` + `ControlPath=/tmp/kittypaw-tunnel-{ollama|lms}.sock` (사용자 `~/.ssh/config` 무영향, `-o` inline 옵션만). 단일-host scope (emac 한정) — multi-host 확장 시 host 접미사 추가 (Plan B).
 - `pkill -f` ❌ — `ssh -O exit`로 해당 tunnel만 정확히 종료 (다른 ssh process 영향 X)
 - LAN bind (`OLLAMA_HOST=0.0.0.0` / LM Studio Server "Network Visible") 회피 — LAN의 다른 기기 노출 risk. SSH tunnel은 SSH 인증으로 가려져 안전.
 - SSH keepalive (`ServerAliveInterval=10 ServerAliveCountMax=3`) — emac sleep 시 hang 회피
 - LM Studio HTTP API는 인증 없음 — emac에서 `lsof -i :1234`로 LISTEN 주소 확인 (`127.0.0.1:1234`만 OK; `*:1234` 공개 시 LAN 차단 필요)
 
-### Race 박제 — 단일 사용자 가정
+### Race 기록 — 단일 사용자 가정
 
 dev-models harness는 **단일 사용자 가정** (사용자 본인). 측정 중 다른 chat 요청 동시 발생 시:
 - config swap 진행 중 → 이전 default 호출
@@ -286,6 +286,6 @@ dev-models harness는 **단일 사용자 가정** (사용자 본인). 측정 중
 
 ## 관련 문서
 
-- `apps/kittypaw/docs/MODEL_GUIDE.md` — 측정 fact 박제 (각 모델의 한국어 응답, latency, 함정)
+- `apps/kittypaw/docs/MODEL_GUIDE.md` — 측정 fact 기록 (각 모델의 한국어 응답, latency, 함정)
 - `apps/kittypaw/CLAUDE.md` — KittyPaw architecture ("Testing Isolation" 섹션은 `KITTYPAW_CONFIG_DIR` load-bearing fact 박힘, Plan A T3에서 정정)
 - `scripts/dev-models.sh help` — 짧은 CLI help
