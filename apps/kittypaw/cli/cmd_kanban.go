@@ -40,6 +40,29 @@ type kanbanListFlags struct {
 	status    string
 }
 
+type kanbanEditFlags struct {
+	shared         *kanbanSharedFlags
+	actor          string
+	title          string
+	titleSet       bool
+	body           string
+	bodySet        bool
+	status         string
+	statusSet      bool
+	priority       int
+	prioritySet    bool
+	assignee       string
+	assigneeSet    bool
+	milestone      string
+	milestoneSet   bool
+	clearMilestone bool
+}
+
+type kanbanArchiveFlags struct {
+	shared *kanbanSharedFlags
+	actor  string
+}
+
 type kanbanClaimFlags struct {
 	shared  *kanbanSharedFlags
 	actor   string
@@ -87,6 +110,8 @@ func newKanbanCmd() *cobra.Command {
 		newKanbanCreateCmd(flags),
 		newKanbanListCmd(flags),
 		newKanbanShowCmd(flags),
+		newKanbanEditCmd(flags),
+		newKanbanArchiveCmd(flags),
 		newKanbanExecCmd(flags),
 		newKanbanClaimCmd(flags),
 		newKanbanCompleteCmd(flags),
@@ -145,6 +170,47 @@ func newKanbanShowCmd(shared *kanbanSharedFlags) *cobra.Command {
 			return runKanbanShow(args[0], shared)
 		},
 	}
+	return cmd
+}
+
+func newKanbanEditCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanEditFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "edit <task>",
+		Short: "Edit a Kanban task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			flags.titleSet = cmd.Flags().Changed("title")
+			flags.bodySet = cmd.Flags().Changed("body")
+			flags.statusSet = cmd.Flags().Changed("status")
+			flags.prioritySet = cmd.Flags().Changed("priority")
+			flags.assigneeSet = cmd.Flags().Changed("assignee")
+			flags.milestoneSet = cmd.Flags().Changed("milestone")
+			return runKanbanEdit(args[0], flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
+	cmd.Flags().StringVar(&flags.title, "title", "", "task title")
+	cmd.Flags().StringVar(&flags.body, "body", "", "task body")
+	cmd.Flags().StringVar(&flags.status, "status", "", "task status")
+	cmd.Flags().IntVar(&flags.priority, "priority", 0, "task priority")
+	cmd.Flags().StringVar(&flags.assignee, "assignee", "", "assignee profile or name")
+	cmd.Flags().StringVar(&flags.milestone, "milestone", "", "milestone id or slug")
+	cmd.Flags().BoolVar(&flags.clearMilestone, "clear-milestone", false, "clear task milestone")
+	return cmd
+}
+
+func newKanbanArchiveCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanArchiveFlags{shared: shared}
+	cmd := &cobra.Command{
+		Use:   "archive <task>",
+		Short: "Archive a Kanban task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanArchive(args[0], flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
 	return cmd
 }
 
@@ -382,6 +448,110 @@ func runKanbanShow(taskID string, flags *kanbanSharedFlags) error {
 	if task.Body != "" {
 		fmt.Printf("Body: %s\n", task.Body)
 	}
+	return nil
+}
+
+func runKanbanEdit(taskID string, flags *kanbanEditFlags) error {
+	if flags == nil {
+		flags = &kanbanEditFlags{shared: &kanbanSharedFlags{}}
+	}
+	if !flags.titleSet &&
+		!flags.bodySet &&
+		!flags.statusSet &&
+		!flags.prioritySet &&
+		!flags.assigneeSet &&
+		!flags.milestoneSet &&
+		!flags.clearMilestone {
+		return fmt.Errorf("at least one edit flag is required")
+	}
+	if flags.milestoneSet && flags.clearMilestone {
+		return fmt.Errorf("--milestone and --clear-milestone are mutually exclusive")
+	}
+
+	var status *string
+	if flags.statusSet {
+		normalized, err := normalizeKanbanStatus(flags.status, false)
+		if err != nil {
+			return err
+		}
+		status = &normalized
+	}
+
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	task, err := st.GetKanbanTask(strings.TrimSpace(taskID))
+	if err != nil {
+		return err
+	}
+	req := store.UpdateKanbanTaskRequest{
+		Actor:          strings.TrimSpace(flags.actor),
+		Status:         status,
+		ClearMilestone: flags.clearMilestone,
+	}
+	if flags.titleSet {
+		title := strings.TrimSpace(flags.title)
+		req.Title = &title
+	}
+	if flags.bodySet {
+		body := flags.body
+		req.Body = &body
+	}
+	if flags.prioritySet {
+		priority := flags.priority
+		req.Priority = &priority
+	}
+	if flags.assigneeSet {
+		assignee := strings.TrimSpace(flags.assignee)
+		req.Assignee = &assignee
+	}
+	if flags.milestoneSet {
+		milestoneArg := strings.TrimSpace(flags.milestone)
+		if milestoneArg == "" {
+			return fmt.Errorf("--milestone is required when supplied")
+		}
+		milestoneID, err := resolveKanbanMilestoneID(st, task.ProjectID, milestoneArg)
+		if err != nil {
+			return err
+		}
+		req.MilestoneID = &milestoneID
+	}
+
+	updated, err := st.UpdateKanbanTask(task.ID, req)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Updated task: %s\n", updated.ID)
+	fmt.Printf("Status: %s\n", updated.Status)
+	fmt.Printf("Title: %s\n", updated.Title)
+	fmt.Printf("Priority: %d\n", updated.Priority)
+	if updated.Assignee != "" {
+		fmt.Printf("Assignee: %s\n", updated.Assignee)
+	}
+	if updated.MilestoneID != "" {
+		fmt.Printf("Milestone ID: %s\n", updated.MilestoneID)
+	}
+	return nil
+}
+
+func runKanbanArchive(taskID string, flags *kanbanArchiveFlags) error {
+	if flags == nil {
+		flags = &kanbanArchiveFlags{shared: &kanbanSharedFlags{}}
+	}
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	task, err := st.ArchiveKanbanTask(strings.TrimSpace(taskID), strings.TrimSpace(flags.actor))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Archived task: %s\n", task.ID)
 	return nil
 }
 

@@ -17,6 +17,8 @@ func TestKanbanCommandExposesTaskWorkflow(t *testing.T) {
 		{"kanban", "create"},
 		{"kanban", "list"},
 		{"kanban", "show"},
+		{"kanban", "edit"},
+		{"kanban", "archive"},
 		{"kanban", "exec"},
 		{"kanban", "claim"},
 		{"kanban", "complete"},
@@ -54,11 +56,197 @@ func TestKanbanCommandFlags(t *testing.T) {
 		}
 	}
 
+	edit := mustFindCommand(t, root, []string{"kanban", "edit"})
+	for _, flag := range []string{"actor", "title", "body", "status", "priority", "assignee", "milestone", "clear-milestone", "account"} {
+		if edit.Flag(flag) == nil {
+			t.Fatalf("kanban edit missing --%s", flag)
+		}
+	}
+
+	archive := mustFindCommand(t, root, []string{"kanban", "archive"})
+	for _, flag := range []string{"actor", "account"} {
+		if archive.Flag(flag) == nil {
+			t.Fatalf("kanban archive missing --%s", flag)
+		}
+	}
+
 	complete := mustFindCommand(t, root, []string{"kanban", "complete"})
 	for _, flag := range []string{"summary", "metadata", "actor", "account"} {
 		if complete.Flag(flag) == nil {
 			t.Fatalf("kanban complete missing --%s", flag)
 		}
+	}
+}
+
+func TestKanbanEditUpdatesTaskFields(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	ms, err := st.CreateKanbanMilestone(store.CreateKanbanMilestoneRequest{
+		ProjectID: project.ID,
+		Title:     "Release One",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanMilestone: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Old title",
+		Status:    store.KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	priority := 8
+	err = runKanbanEdit(task.ID, &kanbanEditFlags{
+		shared:       &kanbanSharedFlags{accountID: "alice"},
+		actor:        "alice",
+		title:        "New title",
+		titleSet:     true,
+		status:       store.KanbanStatusReady,
+		statusSet:    true,
+		priority:     priority,
+		prioritySet:  true,
+		assignee:     "bob",
+		assigneeSet:  true,
+		milestone:    ms.Slug,
+		milestoneSet: true,
+	})
+	if err != nil {
+		t.Fatalf("runKanbanEdit: %v", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Title != "New title" || got.Status != store.KanbanStatusReady || got.Priority != priority || got.Assignee != "bob" || got.MilestoneID != ms.ID {
+		t.Fatalf("task = %+v", got)
+	}
+}
+
+func TestKanbanEditClearsMilestone(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	ms, err := st.CreateKanbanMilestone(store.CreateKanbanMilestoneRequest{
+		ProjectID: project.ID,
+		Title:     "Release One",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanMilestone: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{
+		ProjectID:   project.ID,
+		MilestoneID: ms.ID,
+		Title:       "Milestoned",
+		Status:      store.KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	err = runKanbanEdit(task.ID, &kanbanEditFlags{
+		shared:         &kanbanSharedFlags{accountID: "alice"},
+		clearMilestone: true,
+	})
+	if err != nil {
+		t.Fatalf("runKanbanEdit: %v", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.MilestoneID != "" {
+		t.Fatalf("milestone id = %q, want cleared", got.MilestoneID)
+	}
+}
+
+func TestKanbanArchiveArchivesTask(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Archive",
+		Status:    store.KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	if err := runKanbanArchive(task.ID, &kanbanArchiveFlags{shared: &kanbanSharedFlags{accountID: "alice"}, actor: "alice"}); err != nil {
+		t.Fatalf("runKanbanArchive: %v", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusArchived {
+		t.Fatalf("status = %q", got.Status)
 	}
 }
 
