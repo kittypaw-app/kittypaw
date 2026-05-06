@@ -1203,6 +1203,27 @@ th {
   margin-top: 14px;
 }
 
+.kanban-edit-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #E2E8F0;
+}
+
+.kanban-edit-form .kanban-form-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.kanban-edit-form .kanban-form-row--wide {
+  grid-template-columns: 1fr;
+}
+
+.kanban-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .kanban-list {
   display: flex;
   flex-direction: column;

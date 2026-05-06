@@ -236,6 +236,7 @@ const Kanban = {
       esc(task.assignee || 'Unassigned') + '</span></div>' +
       '<p class="kanban-task-body">' + esc(task.body || '') + '</p>' +
       this._actionRowHTML() +
+      this._editFormHTML(task) +
       this._commentsHTML() +
       this._runsHTML() +
       '</aside>';
@@ -248,6 +249,40 @@ const Kanban = {
       '<button class="btn btn--ghost btn--sm" id="kanban-block-task" type="button">Block</button>' +
       '<button class="btn btn--ghost btn--sm" id="kanban-unblock-task" type="button">Unblock</button>' +
       '</div>';
+  },
+
+  _editFormHTML(task) {
+    let html = '<form class="kanban-form kanban-edit-form" id="kanban-edit-form">';
+    html += '<div class="kanban-form-row kanban-form-row--wide">';
+    html += '<label>Title<input class="input" name="title" required value="' + esc(task.title || '') + '"></label>';
+    html += '</div>';
+    html += '<div class="kanban-form-row">';
+    html += '<label>Status<select class="input" name="status">';
+    for (const status of this._statuses) {
+      html += '<option value="' + esc(status.key) + '"' + (status.key === task.status ? ' selected' : '') + '>' +
+        esc(status.label) + '</option>';
+    }
+    html += '</select></label>';
+    html += '<label>Milestone<select class="input" name="milestone">';
+    html += '<option value=""' + (!task.milestone_id ? ' selected' : '') + '>None</option>';
+    for (const milestone of this._milestones) {
+      const key = milestone.slug || milestone.id;
+      const selected = task.milestone_id === milestone.id || task.milestone_id === key ? ' selected' : '';
+      html += '<option value="' + esc(key) + '"' + selected + '>' + esc(milestone.title || milestone.slug || milestone.id) + '</option>';
+    }
+    html += '</select></label>';
+    html += '</div>';
+    html += '<div class="kanban-form-row">';
+    html += '<label>Priority<input class="input" name="priority" type="number" value="' + esc(String(task.priority || 0)) + '"></label>';
+    html += '<label>Assignee<input class="input" name="assignee" value="' + esc(task.assignee || '') + '"></label>';
+    html += '</div>';
+    html += '<textarea class="input kanban-task-body-input" name="body" rows="3">' + esc(task.body || '') + '</textarea>';
+    html += '<div class="kanban-edit-actions">';
+    html += '<button class="btn btn--primary btn--sm" type="submit">Save</button>';
+    html += '<button class="btn btn--ghost btn--sm" id="kanban-archive-task" type="button">Archive</button>';
+    html += '</div>';
+    html += '</form>';
+    return html;
   },
 
   _commentsHTML() {
@@ -353,6 +388,17 @@ const Kanban = {
     const unblock = document.getElementById('kanban-unblock-task');
     if (unblock) unblock.addEventListener('click', () => this._unblockTask());
 
+    const editForm = document.getElementById('kanban-edit-form');
+    if (editForm) {
+      editForm.addEventListener('submit', event => {
+        event.preventDefault();
+        this._updateTask(editForm);
+      });
+    }
+
+    const archive = document.getElementById('kanban-archive-task');
+    if (archive) archive.addEventListener('click', () => this._archiveTask());
+
     const commentForm = document.getElementById('kanban-comment-form');
     if (commentForm) {
       commentForm.addEventListener('submit', event => {
@@ -439,6 +485,52 @@ const Kanban = {
     await this._taskAction('/unblock', { actor: 'web', comment: comment });
   },
 
+  async _updateTask(form) {
+    if (!this._selectedTaskID) return;
+    const title = this._field(form, 'title');
+    if (!title) return;
+    const milestone = this._field(form, 'milestone');
+    const body = {
+      actor: 'web',
+      title: title,
+      body: this._field(form, 'body'),
+      status: this._field(form, 'status'),
+      priority: parseInt(this._field(form, 'priority') || '0', 10) || 0,
+      assignee: this._field(form, 'assignee'),
+    };
+    if (milestone) {
+      body.milestone = milestone;
+    } else {
+      body.clear_milestone = true;
+    }
+    this._error = '';
+    try {
+      await this._requestJSON('/api/v1/kanban/tasks/' + encodeURIComponent(this._selectedTaskID), 'PATCH', body);
+      await this._loadProjectData();
+      this._detail = await api('/api/v1/kanban/tasks/' + encodeURIComponent(this._selectedTaskID));
+    } catch (e) {
+      this._setError(e);
+    }
+    this._render();
+  },
+
+  async _archiveTask() {
+    if (!this._selectedTaskID) return;
+    if (!confirm('Archive this task?')) return;
+    this._error = '';
+    try {
+      await this._postJSON('/api/v1/kanban/tasks/' + encodeURIComponent(this._selectedTaskID) + '/archive', {
+        actor: 'web',
+      });
+      this._selectedTaskID = '';
+      this._detail = null;
+      await this._loadProjectData();
+    } catch (e) {
+      this._setError(e);
+    }
+    this._render();
+  },
+
   async _addComment(form) {
     if (!this._selectedTaskID) return;
     const body = this._field(form, 'body');
@@ -469,8 +561,12 @@ const Kanban = {
   },
 
   async _postJSON(url, body) {
+    return this._requestJSON(url, 'POST', body);
+  },
+
+  async _requestJSON(url, method, body) {
     return api(url, {
-      method: 'POST',
+      method: method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });

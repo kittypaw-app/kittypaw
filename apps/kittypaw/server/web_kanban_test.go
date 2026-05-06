@@ -58,7 +58,7 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 	for _, token := range []string{
 		"id=\"kanban-project-form\"",
 		"id=\"kanban-task-form\"",
-		"method: 'POST'",
+		"_requestJSON(url, 'POST', body)",
 		"root_path",
 		"/api/v1/kanban/tasks'",
 		"/claim'",
@@ -68,6 +68,13 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 		"/comments'",
 		"kanban-runs",
 		"kanban-comments",
+		"id=\"kanban-edit-form\"",
+		"id=\"kanban-archive-task\"",
+		"method: method",
+		"'/api/v1/kanban/tasks/' + encodeURIComponent(this._selectedTaskID)",
+		"'/archive'",
+		"_updateTask",
+		"_archiveTask",
 	} {
 		if !strings.Contains(src, token) {
 			t.Fatalf("kanban module missing token %s", token)
