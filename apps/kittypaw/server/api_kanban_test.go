@@ -275,6 +275,10 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks", nil, http.StatusBadRequest, nil)
 
 	kanbanAPICreateProject(t, srv, "kitty")
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/projects/kitty/milestones", map[string]any{
+		"title": " ",
+	}, http.StatusBadRequest, nil)
+
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks", map[string]any{
 		"project": "kitty",
 		"title":   "Bad status",
@@ -285,6 +289,55 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/complete", map[string]any{
 		"actor": "alice",
 	}, http.StatusBadRequest, nil)
+}
+
+func TestKanbanAPIClaimExplicitWorkDirUsesManualProvider(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	taskID := kanbanAPICreateTask(t, srv, "kitty", "Manual run dir")
+
+	var claimed struct {
+		Run struct {
+			WorkDir         string `json:"work_dir"`
+			WorkDirProvider string `json:"work_dir_provider"`
+		} `json:"run"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/claim", map[string]any{
+		"actor":    "alice",
+		"work_dir": "/tmp/kitty-run",
+	}, http.StatusOK, &claimed)
+	if claimed.Run.WorkDir != "/tmp/kitty-run" || claimed.Run.WorkDirProvider != "manual" {
+		t.Fatalf("claimed run = %+v, want explicit manual work_dir", claimed.Run)
+	}
+}
+
+func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	existingTaskID := kanbanAPICreateTask(t, srv, "kitty", "Existing parent")
+	missingTaskID := "tsk_missing"
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{"show", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID, nil},
+		{"claim", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/claim", map[string]any{"actor": "alice"}},
+		{"complete", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/complete", map[string]any{"summary": "done"}},
+		{"block", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/block", map[string]any{"reason": "missing"}},
+		{"unblock", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/unblock", map[string]any{}},
+		{"comments list", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID + "/comments", nil},
+		{"comments create", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/comments", map[string]any{"body": "note"}},
+		{"runs list", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID + "/runs", nil},
+		{"links missing parent", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/links", map[string]any{"child_id": existingTaskID}},
+		{"links missing child", http.MethodPost, "/api/v1/kanban/tasks/" + existingTaskID + "/links", map[string]any{"child_id": missingTaskID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kanbanAPIRequest(t, srv, tc.method, tc.path, tc.body, http.StatusNotFound, nil)
+		})
+	}
 }
 
 func newKanbanAPITestServer(t *testing.T) *Server {
