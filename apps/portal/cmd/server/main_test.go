@@ -374,6 +374,24 @@ func TestConnectAdminOnlyServedOnPortalHost(t *testing.T) {
 	}
 }
 
+func TestConnectAdminOnlyServedOnPortalHostWhenAPIHostIsCollapsed(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = cfg.BaseURL
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	r, cleanup := NewRouter(cfg, &fakeRouterUserStore{}, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	req.Host = "connect.kittypaw.app"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("connect host status = %d, want 404", w.Code)
+	}
+}
+
 func TestConnectAdminAllowsConfiguredAdmin(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"

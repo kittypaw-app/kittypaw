@@ -232,6 +232,7 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 	}
 
 	identityOnly := hostBoundaryMiddleware(cfg.BaseURL, cfg.APIBaseURL, cfg.BaseURL)
+	portalOnly := hostOnlyMiddleware(cfg.BaseURL)
 	connectOnly := hostOnlyMiddleware(cfg.ConnectBaseURL)
 	connectRegistry := connectadmin.DefaultProviderRegistry(connectadmin.ProviderRegistryConfig{
 		GmailConfigured: cfg.ConnectGoogleClientID != "" && cfg.ConnectGoogleClientSecret != "",
@@ -283,7 +284,7 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			Store:    connectAdminStore,
 		})
 		r.Group(func(r chi.Router) {
-			r.Use(identityOnly)
+			r.Use(portalOnly)
 			r.Use(authMW)
 			r.Use(admin.Middleware(cfg.PortalAdminEmails))
 			r.Get("/admin/connect", connectAdminHandler.HandleHome())
