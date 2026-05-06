@@ -1,7 +1,7 @@
 {
   "channel": "stable",
-  "version": "0.5.1",
-  "tag": "kittypaw/v0.5.1",
-  "commit": "1794f8c14ca1b0123bf3b39f3659ae170dbee87f",
-  "promoted_at": "2026-05-06T23:26:00+09:00"
+  "version": "0.5.2",
+  "tag": "kittypaw/v0.5.2",
+  "commit": "de8bbc104f1716c60303504cdbcba9a0bbd93e3f",
+  "promoted_at": "2026-05-07T01:15:44+09:00"
 }
