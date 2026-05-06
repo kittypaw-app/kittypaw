@@ -1,6 +1,7 @@
 {
   "api_base_url": "https://api.kittypaw.app",
   "auth_base_url": "https://portal.kittypaw.app/auth",
+  "home_base_url": "https://home.kittypaw.app",
   "chat_relay_url": "https://chat.kittypaw.app",
   "kakao_relay_url": "https://kakao.kittypaw.app",
   "skills_registry_url": "https://github.com/kittypaw-app/skills"

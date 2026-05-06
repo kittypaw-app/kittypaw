@@ -1,7 +1,7 @@
 {
   "iss": "https://portal.kittypaw.app/auth",
   "sub": "user_123",
-  "aud": ["https://api.kittypaw.app", "https://chat.kittypaw.app"],
+  "aud": ["https://api.kittypaw.app", "https://chat.kittypaw.app", "https://home.kittypaw.app"],
   "scope": ["chat:relay", "models:read"],
   "v": 2,
   "iat": 1777670400,
