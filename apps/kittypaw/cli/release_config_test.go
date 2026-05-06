@@ -21,7 +21,7 @@ func TestReleaseConfigTargetsKittypawOrg(t *testing.T) {
 			`REPO="${KITTYPAW_INSTALL_REPO:-kittypaw-app/kitty}"`,
 		},
 		filepath.Join(repoRoot, "install-kittypaw.sh"): {
-			"https://github.com/${REPO}/raw/refs/heads/main/apps/kittypaw/install-kittypaw.sh",
+			"https://raw.githubusercontent.com/${REPO}/main/apps/kittypaw/install-kittypaw.sh",
 		},
 	}
 	legacyPaths := []string{
