@@ -4,22 +4,47 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KittyPaw Home Chat</title>
-  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/style.css?v=20260507-1">
 </head>
 <body>
-  <main id="home-chat-root" class="home-chat-shell">
-    <section class="chat-panel">
-      <header>
-        <p>KittyPaw Home</p>
+  <main id="home-chat-root" class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">KittyPaw Home</p>
         <h1>Chat</h1>
-      </header>
-      <div id="chat-log" aria-live="polite"></div>
-      <form id="chat-form">
-        <textarea id="chat-input" name="message" rows="3"></textarea>
-        <button type="submit">Send</button>
+      </div>
+      <button id="logoutButton" class="secondary-action" type="button">Log out</button>
+    </header>
+    <section class="panel">
+      <p id="appStatus" class="status-text">Loading</p>
+      <div class="field-grid">
+        <label class="field">
+          <span>Device</span>
+          <select id="deviceSelect"></select>
+        </label>
+        <label class="field">
+          <span>Account</span>
+          <select id="accountSelect"></select>
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <select id="modelSelect"></select>
+        </label>
+      </div>
+      <div class="entry-actions">
+        <button id="reloadRoutesButton" class="secondary-action" type="button">Reload routes</button>
+        <button id="loadModelsButton" class="secondary-action" type="button">Models</button>
+      </div>
+    </section>
+    <section class="chat-surface" aria-label="Chat">
+      <div id="messages" class="messages"></div>
+      <form id="composer" class="composer">
+        <textarea id="messageInput" rows="3" placeholder="Message"></textarea>
+        <button id="sendButton" class="primary-action" type="submit">Send</button>
       </form>
     </section>
   </main>
-  <script src="/assets/chat.js"></script>
+  <script src="/assets/shared.js?v=20260507-1"></script>
+  <script src="/assets/chat.js?v=20260507-1"></script>
 </body>
 </html>

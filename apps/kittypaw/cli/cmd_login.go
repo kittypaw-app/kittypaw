@@ -102,7 +102,11 @@ func maybePairChatRelayDevice(apiURL string, mgr *core.APITokenManager, accessTo
 	if _, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok {
 		return false
 	}
-	if relayURL, ok := mgr.LoadChatRelayURL(apiURL); !ok || relayURL == "" {
+	relayURL, ok := mgr.LoadHomeBaseURL(apiURL)
+	if !ok || relayURL == "" {
+		relayURL, ok = mgr.LoadChatRelayURL(apiURL)
+	}
+	if !ok || relayURL == "" {
 		return false
 	}
 	if out == nil {

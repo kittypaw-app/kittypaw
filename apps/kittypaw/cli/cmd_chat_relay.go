@@ -80,7 +80,10 @@ func runChatRelayStatus(flags *chatRelayFlags) error {
 	if err != nil {
 		return err
 	}
-	relayURL, relayOK := mgr.LoadChatRelayURL(apiURL)
+	relayURL, relayOK := mgr.LoadHomeBaseURL(apiURL)
+	if !relayOK || relayURL == "" {
+		relayURL, relayOK = mgr.LoadChatRelayURL(apiURL)
+	}
 	_, tokenOK := mgr.LoadChatRelayDeviceTokens(apiURL)
 
 	fmt.Printf("account: %s\n", accountID)

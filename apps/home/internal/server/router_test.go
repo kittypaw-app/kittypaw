@@ -42,6 +42,11 @@ func TestChatRouteServesHomeChatHTML(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "home-chat-root") {
 		t.Fatalf("home chat marker missing from body:\n%s", w.Body.String())
 	}
+	for _, want := range []string{`id="deviceSelect"`, `id="composer"`, `/assets/shared.js`, `/assets/chat.js`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("home chat app HTML missing %q:\n%s", want, w.Body.String())
+		}
+	}
 }
 
 func TestChatRouteRedirectsToSlash(t *testing.T) {
@@ -76,5 +81,24 @@ func TestRouterMountsChatBFFRoutesBeforeStaticRoutes(t *testing.T) {
 
 	if w.Code != http.StatusTeapot {
 		t.Fatalf("status = %d, want 418", w.Code)
+	}
+}
+
+func TestChatScriptUsesChatBFFRoutes(t *testing.T) {
+	r := NewRouter(Config{})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/chat.js", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "/chat/api/routes") {
+		t.Fatalf("chat.js does not call Home chat BFF routes:\n%s", body)
+	}
+	if strings.Contains(body, "/app/api/") {
+		t.Fatalf("chat.js still references legacy app API path:\n%s", body)
 	}
 }

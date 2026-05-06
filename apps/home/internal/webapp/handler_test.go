@@ -32,7 +32,7 @@ func TestLoginGoogleRedirectsToAPIWithPKCE(t *testing.T) {
 		t.Fatalf("redirect base = %q, want API web google", got)
 	}
 	q := u.Query()
-	if got := q.Get("redirect_uri"); got != "https://chat.test/auth/callback" {
+	if got := q.Get("redirect_uri"); got != "https://home.test/auth/callback" {
 		t.Fatalf("redirect_uri = %q", got)
 	}
 	if q.Get("state") == "" {
@@ -48,7 +48,7 @@ func TestLoginGoogleRedirectsToAPIWithPKCE(t *testing.T) {
 
 func TestNewDefaultsToPortalAuthBase(t *testing.T) {
 	handler, err := New(Config{
-		PublicBaseURL: "https://chat.test",
+		PublicBaseURL: "https://home.test",
 		Verifier:      testVerifier{},
 		OpenAIHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
@@ -76,7 +76,7 @@ func TestCallbackExchangesCodeAndSetsHttpOnlySessionCookie(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode exchange body: %v", err)
 		}
-		if body.Code != "oauth-code" || body.CodeVerifier == "" || body.RedirectURI != "https://chat.test/auth/callback" {
+		if body.Code != "oauth-code" || body.CodeVerifier == "" || body.RedirectURI != "https://home.test/auth/callback" {
 			t.Fatalf("bad exchange body: %+v", body)
 		}
 		exchangeCalled = true
@@ -283,7 +283,7 @@ func newTestHandler(t *testing.T, apiHandler http.HandlerFunc, openAI http.Handl
 		"fresh-token": true,
 	}}
 	handler, err := New(Config{
-		PublicBaseURL:  "https://chat.test",
+		PublicBaseURL:  "https://home.test",
 		APIAuthBaseURL: strings.TrimSuffix(apiServer.URL, "/") + "/auth",
 		Verifier:       verifier,
 		OpenAIHandler:  openAI,

@@ -120,6 +120,32 @@ func TestRunChatRelayStatusDoesNotPrintDeviceInternals(t *testing.T) {
 	}
 }
 
+func TestRunChatRelayStatusRecognizesHomeDiscovery(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	secrets, err := core.LoadAccountSecrets("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := core.NewAPITokenManager("", secrets)
+	if err := mgr.SaveHomeBaseURL(core.DefaultAPIServerURL, "https://home.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runChatRelayStatus(&chatRelayFlags{account: "alice", apiURL: core.DefaultAPIServerURL})
+	})
+	if runErr != nil {
+		t.Fatalf("runChatRelayStatus: %v", runErr)
+	}
+	if !strings.Contains(out, "hosted_chat: login needed") {
+		t.Fatalf("stdout = %q, want login needed for Home discovery", out)
+	}
+}
+
 func TestNewChatRelayCmdIsHiddenAndDoesNotExposeDisconnect(t *testing.T) {
 	cmd := newChatRelayCmd()
 	if !cmd.Hidden {
