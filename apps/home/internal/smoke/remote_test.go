@@ -67,6 +67,23 @@ func TestRemoteConfigRejectsInvalidTimeout(t *testing.T) {
 	}
 }
 
+func TestRemoteConfigRejectsNonPositiveTimeout(t *testing.T) {
+	t.Setenv("HOME_BASE_URL", "https://home.kittypaw.app")
+	t.Setenv("HOME_USER_TOKEN", "user-token")
+	t.Setenv("HOME_DEVICE_TOKEN", "device-token")
+	t.Setenv("HOME_DEVICE_ID", "dev_1")
+	t.Setenv("HOME_LOCAL_ACCOUNT_ID", "alice")
+	t.Setenv("HOME_SMOKE_TIMEOUT", "0s")
+
+	_, err := LoadRemoteConfig()
+	if err == nil {
+		t.Fatal("LoadRemoteConfig() error = nil, want non-positive timeout")
+	}
+	if !strings.Contains(err.Error(), "greater than 0") {
+		t.Fatalf("LoadRemoteConfig() error = %v, want greater than 0", err)
+	}
+}
+
 func TestRemoteWebSocketURLDerivation(t *testing.T) {
 	tests := []struct {
 		base string

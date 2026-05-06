@@ -116,6 +116,9 @@ func LoadRemoteConfig() (RemoteConfig, error) {
 		if err != nil {
 			return RemoteConfig{}, fmt.Errorf("HOME_SMOKE_TIMEOUT: %w", err)
 		}
+		if timeout <= 0 {
+			return RemoteConfig{}, fmt.Errorf("HOME_SMOKE_TIMEOUT must be greater than 0")
+		}
 		cfg.Timeout = timeout
 	}
 	if _, err := remoteWebSocketURL(cfg.BaseURL); err != nil {
