@@ -233,6 +233,17 @@ func matchInstalledSkill(text string, sess *Session) *core.SkillPackage {
 	return &best.pkg
 }
 
+func installedPackageByID(id string, sess *Session) *core.SkillPackage {
+	if sess == nil || sess.PackageManager == nil {
+		return nil
+	}
+	pkg, _, err := sess.PackageManager.LoadPackage(id)
+	if err != nil {
+		return nil
+	}
+	return pkg
+}
+
 func installedSkillMatchScore(loweredQuery string, pkg core.SkillPackage) int {
 	if !pkgKeywordMatches(loweredQuery, pkg) {
 		return 0
@@ -492,7 +503,7 @@ func exchangeRateRegistryEntry() core.RegistryEntry {
 func weatherNowRegistryEntry() core.RegistryEntry {
 	return core.RegistryEntry{
 		ID:          "weather-now",
-		Name:        "현재 날씨",
+		Name:        "날씨 조회",
 		Version:     "1.0.0",
 		Description: "wttr.in으로 현재 날씨와 비 여부를 즉답합니다.",
 		Author:      "KittyPaw Team",
@@ -590,6 +601,9 @@ func isBrowse(text string) bool {
 		return false
 	}
 	lowered := strings.ToLower(text)
+	if isSkillRemovalRequest(lowered) {
+		return false
+	}
 	patterns := []string{
 		"어떤 스킬", "무슨 스킬", "사용 가능한 스킬",
 		"스킬 목록", "스킬 뭐", "스킬은 뭐", "스킬들",
@@ -606,6 +620,16 @@ func isBrowse(text string) bool {
 		}
 	}
 	return false
+}
+
+func isSkillRemovalRequest(lowered string) bool {
+	if !containsAny(lowered, "스킬", "skill", "package", "패키지") {
+		return false
+	}
+	return containsAny(lowered,
+		"지워", "지우", "삭제", "제거", "없애", "날려", "버려",
+		"uninstall", "remove", "delete",
+	)
 }
 
 // isChitchat detects short reactive utterances that don't carry a new
@@ -822,7 +846,7 @@ func (b *WeatherNowLookupBranch) Execute(ctx context.Context, sess *Session, eve
 	if sess == nil || sess.Pipeline == nil {
 		return "", errBranchFallback
 	}
-	if pkg := matchInstalledSkill("현재 날씨", sess); pkg != nil {
+	if pkg := installedPackageByID("weather-now", sess); pkg != nil {
 		userText := FormatEvent(&event)
 		params, msg := weatherNowParamsForIntentOrText(ctx, sess, intent, userText)
 		if msg != "" {
@@ -851,7 +875,7 @@ func (b *WeatherNowLookupBranch) Execute(ctx context.Context, sess *Session, eve
 	} else if len(params) > 0 {
 		sess.Pipeline.RecordPendingSkillRun(entry.ID, params)
 	}
-	return "현재 날씨 스킬을 설치하면 방금 말한 위치의 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 실행할까요?", nil
+	return "날씨 조회 스킬을 설치하면 방금 말한 위치의 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 실행할까요?", nil
 }
 
 func weatherNowParamsForIntentOrText(ctx context.Context, sess *Session, intent Intent, userText string) (map[string]any, string) {
@@ -1232,7 +1256,7 @@ func (b *ConfirmClarificationBranch) Execute(ctx context.Context, sess *Session,
 		sess.Pipeline.RecordSkillSearch([]core.RegistryEntry{entry})
 		return "환율 조회 스킬을 설치하면 키 없이 현재 환율표를 바로 가져올 수 있어요. 설치해서 지금 조회할까요?", nil
 	case "weather_now":
-		if pkg := matchInstalledSkill(pending.Query+" 현재 날씨", sess); pkg != nil {
+		if pkg := installedPackageByID("weather-now", sess); pkg != nil {
 			params, msg := weatherNowParamsForText(ctx, sess, pending.Query)
 			if msg != "" {
 				return msg, nil
@@ -1252,14 +1276,13 @@ func (b *ConfirmClarificationBranch) Execute(ctx context.Context, sess *Session,
 		} else if len(params) > 0 {
 			sess.Pipeline.RecordPendingSkillRun(entry.ID, params)
 		}
-		return "현재 날씨 스킬을 설치하면 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 조회할까요?", nil
+		return "날씨 조회 스킬을 설치하면 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 조회할까요?", nil
 	case "weather_now_location":
 		replyText := ""
 		if p, err := event.ParsePayload(); err == nil {
 			replyText = strings.TrimSpace(p.Text)
 		}
-		query := firstNonEmpty(replyText, pending.Query)
-		if pkg := matchInstalledSkill(query+" 현재 날씨", sess); pkg != nil {
+		if pkg := installedPackageByID("weather-now", sess); pkg != nil {
 			params, msg := weatherNowParamsForLocationClarification(ctx, sess, replyText, pending.Query)
 			if msg != "" {
 				sess.Pipeline.RecordPendingClarification(pending)
@@ -1285,7 +1308,7 @@ func (b *ConfirmClarificationBranch) Execute(ctx context.Context, sess *Session,
 		} else if len(params) > 0 {
 			sess.Pipeline.RecordPendingSkillRun(entry.ID, params)
 		}
-		return "현재 날씨 스킬을 설치하면 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 조회할까요?", nil
+		return "날씨 조회 스킬을 설치하면 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 조회할까요?", nil
 	default:
 		return "", errBranchFallback
 	}

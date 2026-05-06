@@ -192,6 +192,7 @@ type PermissionPolicy struct {
 // their config.toml [permissions] require_approval list.
 var DefaultRequireApproval = []string{
 	"Shell.exec", "Git.add", "Git.commit", "Git.push", "Git.pull", "File.delete",
+	"Skill.uninstall",
 	"Browser.open", "Browser.navigate", "Browser.click", "Browser.type", "Browser.evaluate", "Browser.close",
 }
 

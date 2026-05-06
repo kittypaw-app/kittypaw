@@ -102,6 +102,7 @@ var SkillRegistry = []SkillMeta{
 		{Name: "run", Signature: "Skill.run(name[, params]) — execute an installed skill/package. Pass structured params declared by package.toml, e.g. Skill.run(\"weather-now\", {location:{label,lat,lon}})."},
 		{Name: "create", Signature: "Skill.create(name, desc, code, triggerType, schedule)"},
 		{Name: "disable", Signature: "Skill.disable(name)"},
+		{Name: "uninstall", Signature: "Skill.uninstall(name) — remove an installed package or user-created skill by exact id/name. Destructive; call only when the user explicitly asks to remove/uninstall/delete it."},
 		{Name: "rollback", Signature: "Skill.rollback(name)"},
 		{Name: "search", Signature: "Skill.search(query) — search the public registry. Pass a keyword (e.g. \"환율\") to narrow to top 5 matches; pass \"\" to BROWSE (returns up to 30 — use when the user asks \"어떤 스킬들이 있나요?\"/\"what skills are available?\"/recommendations). Returns {results: [{id, name, version, description, author}], error?}."},
 		{Name: "installFromRegistry", Signature: "Skill.installFromRegistry(id) — install a skill from the registry by id. CALL ONLY AFTER the user has explicitly agreed in chat (e.g. answered 네/yes/설치 to your suffix offer). Do NOT call this without prior consent."},

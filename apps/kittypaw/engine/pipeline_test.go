@@ -792,6 +792,20 @@ func TestClassifyIntent_ExplicitSkillBrowseStillBrowses(t *testing.T) {
 	}
 }
 
+func TestClassifyIntent_SkillDeletionDoesNotBrowse(t *testing.T) {
+	cases := []string{
+		"너 설치된 날씨 스킬들 다 지워버려요. 일단.",
+		"weather-now 스킬 삭제해줘",
+		"설치된 스킬 제거해줘",
+	}
+	for _, in := range cases {
+		intent := classifyIntent(in, nil, nil)
+		if intent.Kind == IntentBrowse {
+			t.Fatalf("%q routed to browse; deletion requests must reach the LLM/tool path", in)
+		}
+	}
+}
+
 func TestClassifyIntent_AffirmativeConfirmsPendingClarification(t *testing.T) {
 	state := NewPipelineState()
 	state.RecordPendingClarification(PendingClarification{
@@ -913,6 +927,75 @@ func TestWeatherNowLookupBranchCachesOnlyCurrentWeatherOffer(t *testing.T) {
 	}
 	if got := state.RecentSkillSearch(); len(got) != 1 || got[0].ID != "weather-now" {
 		t.Fatalf("expected weather-now candidate cached, got %+v", got)
+	}
+}
+
+func TestWeatherNowRegistryEntryUsesPublicDisplayName(t *testing.T) {
+	entry := weatherNowRegistryEntry()
+
+	if entry.ID != "weather-now" {
+		t.Fatalf("ID = %q, want weather-now", entry.ID)
+	}
+	if entry.Name != "날씨 조회" {
+		t.Fatalf("Name = %q, want 날씨 조회", entry.Name)
+	}
+}
+
+func TestWeatherNowLookupBranchRunsInstalledPackageByID(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	geo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"lat":37.4979,"lon":127.0276,"name_matched":"강남역"}`))
+	}))
+	defer geo.Close()
+	oldBaseURL := kittypawAPIBaseURL
+	kittypawAPIBaseURL = geo.URL
+	t.Cleanup(func() { kittypawAPIBaseURL = oldBaseURL })
+
+	baseDir := t.TempDir()
+	pm := installTestPackage(t, baseDir, `
+[meta]
+id = "weather-now"
+name = "기상 조회"
+version = "1.0.0"
+description = "강수 상태를 즉답합니다."
+
+[permissions]
+primitives = []
+context = ["location"]
+`, `
+const ctx = JSON.parse(__context__);
+return JSON.stringify(ctx.user && ctx.user.location);
+`)
+
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
+		Sandbox:        sandbox.New(cfg.Sandbox),
+		Config:         &cfg,
+		PackageManager: pm,
+		BaseDir:        baseDir,
+		Pipeline:       NewPipelineState(),
+	}
+
+	out, err := (&WeatherNowLookupBranch{}).Execute(context.Background(), sess, webChatEvent("강남역에 비오나? 지금?"), Intent{
+		Kind: IntentWeatherNowLookup,
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	var loc struct {
+		City string  `json:"city"`
+		Lat  float64 `json:"lat"`
+		Lon  float64 `json:"lon"`
+	}
+	if err := json.Unmarshal([]byte(out), &loc); err != nil {
+		t.Fatalf("expected installed weather-now package output, got %q: %v", out, err)
+	}
+	if loc.City != "강남역" || loc.Lat != 37.4979 || loc.Lon != 127.0276 {
+		t.Fatalf("location = %+v, want structured 강남역", loc)
 	}
 }
 

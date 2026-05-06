@@ -1369,6 +1369,35 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (str
 		}
 		return jsonResult(map[string]any{"success": true})
 
+	case "uninstall":
+		if len(call.Args) == 0 {
+			return jsonResult(map[string]any{"error": "name required"})
+		}
+		var name string
+		_ = json.Unmarshal(call.Args[0], &name)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return jsonResult(map[string]any{"error": "name required"})
+		}
+		if s.PackageManager != nil {
+			if err := s.PackageManager.Uninstall(name); err == nil {
+				return jsonResult(map[string]any{"success": true, "name": name, "kind": "package"})
+			} else if !strings.Contains(err.Error(), "not installed") && !strings.Contains(err.Error(), "package ID contains invalid") {
+				return jsonResult(map[string]any{"error": err.Error()})
+			}
+		}
+		skill, _, err := core.LoadSkillFrom(s.BaseDir, name)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if skill == nil {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("skill or package %q not installed", name)})
+		}
+		if err := core.DeleteSkillFrom(s.BaseDir, name); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"success": true, "name": name, "kind": "skill"})
+
 	case "rollback":
 		if len(call.Args) == 0 {
 			return jsonResult(map[string]any{"error": "name required"})

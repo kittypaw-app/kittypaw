@@ -374,6 +374,7 @@ func TestPermissionPolicyDefaults(t *testing.T) {
 		"Browser.type",
 		"Browser.evaluate",
 		"Browser.close",
+		"Skill.uninstall",
 	} {
 		if !slices.Contains(DefaultRequireApproval, want) {
 			t.Fatalf("DefaultRequireApproval missing %s: %v", want, DefaultRequireApproval)

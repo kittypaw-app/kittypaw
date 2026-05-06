@@ -453,6 +453,7 @@ func TestNeedsPermission(t *testing.T) {
 		{"supervised_file_delete", "File", "delete", core.AutonomySupervised, nil, true},
 		{"supervised_browser_open", "Browser", "open", core.AutonomySupervised, nil, true},
 		{"supervised_browser_evaluate", "Browser", "evaluate", core.AutonomySupervised, nil, true},
+		{"supervised_skill_uninstall", "Skill", "uninstall", core.AutonomySupervised, nil, true},
 
 		// Non-destructive ops not in default list
 		{"supervised_git_status", "Git", "status", core.AutonomySupervised, nil, false},
@@ -481,6 +482,34 @@ func TestNeedsPermission(t *testing.T) {
 				t.Errorf("needsPermission(%q, %q) = %v, want %v", tt.skill, tt.method, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveSkillCallPackageUninstall(t *testing.T) {
+	baseDir := t.TempDir()
+	pkgDir := filepath.Join(baseDir, "packages", "weather-now")
+	if err := os.MkdirAll(pkgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{
+		BaseDir:        baseDir,
+		Config:         &core.Config{AutonomyLevel: core.AutonomyFull},
+		PackageManager: core.NewPackageManagerFrom(baseDir, nil),
+	}
+	name := json.RawMessage(`"weather-now"`)
+	got, err := resolveSkillCall(context.Background(), core.SkillCall{
+		SkillName: "Skill",
+		Method:    "uninstall",
+		Args:      []json.RawMessage{name},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) || !strings.Contains(got, `"kind":"package"`) {
+		t.Fatalf("unexpected uninstall result: %s", got)
+	}
+	if _, err := os.Stat(pkgDir); !os.IsNotExist(err) {
+		t.Fatalf("package dir still exists or stat failed unexpectedly: %v", err)
 	}
 }
 
