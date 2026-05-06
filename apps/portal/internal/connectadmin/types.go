@@ -46,6 +46,35 @@ type UserEntitlement struct {
 	RevokedAt  *time.Time
 }
 
+type UserEntitlementRow struct {
+	ID         string
+	UserID     string
+	UserEmail  string
+	UserName   string
+	ProviderID string
+	Status     string
+	QuotaJSON  map[string]any
+	Reason     string
+	GrantedBy  string
+	GrantedAt  time.Time
+	RevokedAt  *time.Time
+}
+
+type UserEntitlementListOptions struct {
+	Page       int
+	PerPage    int
+	ProviderID string
+	Status     string
+	EmailQuery string
+}
+
+type UserEntitlementListResult struct {
+	Items   []UserEntitlementRow
+	Page    int
+	PerPage int
+	Total   int
+}
+
 type AuditEvent struct {
 	ID           string
 	ActorUserID  string

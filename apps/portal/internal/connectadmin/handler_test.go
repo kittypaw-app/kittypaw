@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
 	"github.com/kittypaw-app/kittyportal/internal/connect"
@@ -117,6 +118,59 @@ func TestHandlerGrantEntitlementWritesAudit(t *testing.T) {
 	}
 	if event.After["status"] != EntitlementAllowed || event.After["reason"] != "internal beta" {
 		t.Fatalf("audit after = %#v", event.After)
+	}
+}
+
+func TestHandlerUsersShowsEntitlementsWithPaginationAndInlineEdit(t *testing.T) {
+	grantedAt := time.Date(2026, 5, 7, 9, 30, 0, 0, time.UTC)
+	store := &fakeStore{
+		listResult: UserEntitlementListResult{
+			Items: []UserEntitlementRow{
+				{
+					ID:         "ent-1",
+					UserID:     "user-1",
+					UserEmail:  "jaypark@gmail.com",
+					UserName:   "Jay Park",
+					ProviderID: connect.XProviderID,
+					Status:     EntitlementAllowed,
+					QuotaJSON:  map[string]any{"monthly_post_reads": float64(100)},
+					Reason:     "internal beta",
+					GrantedAt:  grantedAt,
+				},
+			},
+			Page:    2,
+			PerPage: 1,
+			Total:   3,
+		},
+	}
+	handler := NewHandler(HandlerOptions{
+		Registry: DefaultProviderRegistry(ProviderRegistryConfig{GmailConfigured: true, XConfigured: true}),
+		Store:    store,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect/users?page=2&per_page=1&provider=x&status=allowed&email=jay", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleUsers()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if store.listOpts.Page != 2 || store.listOpts.PerPage != 1 || store.listOpts.ProviderID != connect.XProviderID || store.listOpts.Status != EntitlementAllowed || store.listOpts.EmailQuery != "jay" {
+		t.Fatalf("list opts = %#v", store.listOpts)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"jaypark@gmail.com",
+		"Jay Park",
+		"internal beta",
+		`action="/admin/connect/users/user-1/providers/x"`,
+		`name="monthly_post_reads" inputmode="numeric" value="100"`,
+		`href="/admin/connect/users?page=1&amp;per_page=1&amp;provider=x&amp;status=allowed&amp;email=jay"`,
+		`href="/admin/connect/users?page=3&amp;per_page=1&amp;provider=x&amp;status=allowed&amp;email=jay"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -273,6 +327,8 @@ type fakeStore struct {
 	entitlements []UserEntitlement
 	auditEvents  []AuditEvent
 	atomicErr    error
+	listResult   UserEntitlementListResult
+	listOpts     UserEntitlementListOptions
 }
 
 func (s *fakeStore) UpsertProviderPolicy(context.Context, ProviderPolicy) error {
@@ -295,6 +351,11 @@ func (s *fakeStore) ListProviderPolicies(context.Context) ([]ProviderPolicy, err
 func (s *fakeStore) UpsertUserEntitlement(_ context.Context, entitlement UserEntitlement) error {
 	s.entitlements = append(s.entitlements, entitlement)
 	return nil
+}
+
+func (s *fakeStore) ListUserEntitlements(_ context.Context, opts UserEntitlementListOptions) (UserEntitlementListResult, error) {
+	s.listOpts = opts
+	return s.listResult, nil
 }
 
 func (s *fakeStore) UpdateUserEntitlementWithAudit(_ context.Context, entitlement UserEntitlement, event AuditEvent) error {

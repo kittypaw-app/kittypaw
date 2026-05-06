@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -20,6 +21,7 @@ type Store interface {
 	ListProviderPolicies(context.Context) ([]ProviderPolicy, error)
 	UpsertUserEntitlement(context.Context, UserEntitlement) error
 	UpdateUserEntitlementWithAudit(context.Context, UserEntitlement, AuditEvent) error
+	ListUserEntitlements(context.Context, UserEntitlementListOptions) (UserEntitlementListResult, error)
 	UserAllowed(context.Context, string, string) (bool, error)
 	AppendAuditEvent(context.Context, AuditEvent) error
 	ListAuditEvents(context.Context, int) ([]AuditEvent, error)
@@ -152,6 +154,103 @@ func upsertUserEntitlement(ctx context.Context, exec sqlExecutor, e UserEntitlem
 			END
 	`, e.UserID, e.ProviderID, e.Status, string(quota), e.Reason, e.GrantedBy)
 	return err
+}
+
+func (s *PostgresStore) ListUserEntitlements(ctx context.Context, opts UserEntitlementListOptions) (UserEntitlementListResult, error) {
+	opts = normalizeUserEntitlementListOptions(opts)
+	where, args := userEntitlementListWhere(opts)
+
+	var total int
+	countSQL := `
+		SELECT COUNT(*)
+		FROM connect_user_entitlements e
+		JOIN users u ON u.id = e.user_id
+	` + where
+	if err := s.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return UserEntitlementListResult{}, err
+	}
+
+	offset := (opts.Page - 1) * opts.PerPage
+	listArgs := append(append([]any(nil), args...), opts.PerPage, offset)
+	listSQL := `
+		SELECT e.id::text, e.user_id::text, u.email, u.name, e.provider_id, e.status,
+		       e.quota_json, e.reason, COALESCE(e.granted_by::text, ''), e.granted_at, e.revoked_at
+		FROM connect_user_entitlements e
+		JOIN users u ON u.id = e.user_id
+	` + where + `
+		ORDER BY e.granted_at DESC, lower(u.email), e.provider_id
+		LIMIT $` + fmt.Sprint(len(args)+1) + ` OFFSET $` + fmt.Sprint(len(args)+2)
+
+	rows, err := s.pool.Query(ctx, listSQL, listArgs...)
+	if err != nil {
+		return UserEntitlementListResult{}, err
+	}
+	defer rows.Close()
+
+	var items []UserEntitlementRow
+	for rows.Next() {
+		var row UserEntitlementRow
+		var quotaJSON []byte
+		if err := rows.Scan(&row.ID, &row.UserID, &row.UserEmail, &row.UserName, &row.ProviderID, &row.Status, &quotaJSON, &row.Reason, &row.GrantedBy, &row.GrantedAt, &row.RevokedAt); err != nil {
+			return UserEntitlementListResult{}, err
+		}
+		if len(quotaJSON) == 0 {
+			row.QuotaJSON = map[string]any{}
+		} else if err := json.Unmarshal(quotaJSON, &row.QuotaJSON); err != nil {
+			return UserEntitlementListResult{}, fmt.Errorf("decode entitlement quota: %w", err)
+		}
+		if row.QuotaJSON == nil {
+			row.QuotaJSON = map[string]any{}
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return UserEntitlementListResult{}, err
+	}
+
+	return UserEntitlementListResult{
+		Items:   items,
+		Page:    opts.Page,
+		PerPage: opts.PerPage,
+		Total:   total,
+	}, nil
+}
+
+func normalizeUserEntitlementListOptions(opts UserEntitlementListOptions) UserEntitlementListOptions {
+	if opts.Page < 1 {
+		opts.Page = 1
+	}
+	switch {
+	case opts.PerPage < 1:
+		opts.PerPage = 25
+	case opts.PerPage > 100:
+		opts.PerPage = 100
+	}
+	opts.ProviderID = strings.TrimSpace(opts.ProviderID)
+	opts.Status = strings.TrimSpace(opts.Status)
+	opts.EmailQuery = strings.TrimSpace(opts.EmailQuery)
+	return opts
+}
+
+func userEntitlementListWhere(opts UserEntitlementListOptions) (string, []any) {
+	var clauses []string
+	var args []any
+	if opts.ProviderID != "" {
+		args = append(args, opts.ProviderID)
+		clauses = append(clauses, fmt.Sprintf("e.provider_id = $%d", len(args)))
+	}
+	if opts.Status != "" {
+		args = append(args, opts.Status)
+		clauses = append(clauses, fmt.Sprintf("e.status = $%d", len(args)))
+	}
+	if opts.EmailQuery != "" {
+		args = append(args, "%"+opts.EmailQuery+"%")
+		clauses = append(clauses, fmt.Sprintf("u.email ILIKE $%d", len(args)))
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
 func (s *PostgresStore) UserAllowed(ctx context.Context, userID, providerID string) (bool, error) {

@@ -114,6 +114,84 @@ func TestStorePolicyEntitlementAndAudit(t *testing.T) {
 	}
 }
 
+func TestListUserEntitlementsFiltersAndPaginates(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	adminUser, err := users.CreateOrUpdate(ctx, "google", "admin-list", "admin-list@example.com", "Admin", "")
+	if err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	firstUser, err := users.CreateOrUpdate(ctx, "google", "target-list-1", "target-a@example.com", "Target A", "")
+	if err != nil {
+		t.Fatalf("seed first target: %v", err)
+	}
+	secondUser, err := users.CreateOrUpdate(ctx, "google", "target-list-2", "target-b@example.com", "Target B", "")
+	if err != nil {
+		t.Fatalf("seed second target: %v", err)
+	}
+	otherUser, err := users.CreateOrUpdate(ctx, "google", "other-list", "other@example.com", "Other", "")
+	if err != nil {
+		t.Fatalf("seed other target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	for _, entitlement := range []connectadmin.UserEntitlement{
+		{
+			UserID:     firstUser.ID,
+			ProviderID: connect.XProviderID,
+			Status:     connectadmin.EntitlementAllowed,
+			QuotaJSON:  map[string]any{"monthly_post_reads": float64(100)},
+			Reason:     "first",
+			GrantedBy:  adminUser.ID,
+		},
+		{
+			UserID:     secondUser.ID,
+			ProviderID: connect.XProviderID,
+			Status:     connectadmin.EntitlementAllowed,
+			QuotaJSON:  map[string]any{"monthly_post_reads": float64(200)},
+			Reason:     "second",
+			GrantedBy:  adminUser.ID,
+		},
+		{
+			UserID:     otherUser.ID,
+			ProviderID: connect.GmailProviderID,
+			Status:     connectadmin.EntitlementAllowed,
+			QuotaJSON:  map[string]any{},
+			Reason:     "not x",
+			GrantedBy:  adminUser.ID,
+		},
+	} {
+		if err := store.UpsertUserEntitlement(ctx, entitlement); err != nil {
+			t.Fatalf("UpsertUserEntitlement(%s/%s): %v", entitlement.UserID, entitlement.ProviderID, err)
+		}
+	}
+
+	result, err := store.ListUserEntitlements(ctx, connectadmin.UserEntitlementListOptions{
+		Page:       2,
+		PerPage:    1,
+		ProviderID: connect.XProviderID,
+		Status:     connectadmin.EntitlementAllowed,
+		EmailQuery: "target",
+	})
+	if err != nil {
+		t.Fatalf("ListUserEntitlements: %v", err)
+	}
+	if result.Page != 2 || result.PerPage != 1 || result.Total != 2 {
+		t.Fatalf("pagination = page %d per_page %d total %d, want 2/1/2", result.Page, result.PerPage, result.Total)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(result.Items), result.Items)
+	}
+	item := result.Items[0]
+	if item.ProviderID != connect.XProviderID || item.Status != connectadmin.EntitlementAllowed || !strings.Contains(item.UserEmail, "target") {
+		t.Fatalf("item = %#v", item)
+	}
+	if item.QuotaJSON["monthly_post_reads"] == nil {
+		t.Fatalf("item quota = %#v, want monthly_post_reads", item.QuotaJSON)
+	}
+}
+
 func TestNilRequestedScopesStoresEmptyArray(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()

@@ -1163,6 +1163,10 @@ func (s *fakeConnectAdminStore) UpsertUserEntitlement(context.Context, connectad
 	return nil
 }
 
+func (s *fakeConnectAdminStore) ListUserEntitlements(context.Context, connectadmin.UserEntitlementListOptions) (connectadmin.UserEntitlementListResult, error) {
+	return connectadmin.UserEntitlementListResult{Page: 1, PerPage: 25}, nil
+}
+
 func (s *fakeConnectAdminStore) UpdateUserEntitlementWithAudit(_ context.Context, entitlement connectadmin.UserEntitlement, event connectadmin.AuditEvent) error {
 	s.entitlements = append(s.entitlements, entitlement)
 	s.auditEvents = append(s.auditEvents, event)
