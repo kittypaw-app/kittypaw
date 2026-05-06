@@ -169,13 +169,13 @@ const Kanban = {
     html += '<label>Priority<input class="input" name="priority" type="number" value="0"></label>';
     html += '</div>';
     html += '<div class="kanban-form-row">';
-    html += '<label>Status><select class="input" name="status">';
+    html += '<label>Status<select class="input" name="status">';
     for (const status of this._statuses) {
       html += '<option value="' + esc(status.key) + '"' + (status.key === 'todo' ? ' selected' : '') + '>' +
         esc(status.label) + '</option>';
     }
     html += '</select></label>';
-    html += '<label>Milestone><select class="input" name="milestone">';
+    html += '<label>Milestone<select class="input" name="milestone">';
     html += '<option value="">None</option>';
     for (const milestone of this._milestones) {
       const key = milestone.slug || milestone.id;

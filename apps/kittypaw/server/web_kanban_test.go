@@ -75,6 +75,20 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 	}
 }
 
+func TestKanbanWebModuleRendersCleanFormLabels(t *testing.T) {
+	src := readWebAssetForKanbanTest(t, "web/kanban.js")
+	for _, bad := range []string{"Status><select", "Milestone><select"} {
+		if strings.Contains(src, bad) {
+			t.Fatalf("kanban form label contains stray marker %q", bad)
+		}
+	}
+	for _, good := range []string{"<label>Status<select", "<label>Milestone<select"} {
+		if !strings.Contains(src, good) {
+			t.Fatalf("kanban form label missing %q", good)
+		}
+	}
+}
+
 func TestKanbanWebStylesProvideBoardDrawerAndResponsiveRules(t *testing.T) {
 	src := readWebAssetForKanbanTest(t, "web/style.css")
 	for _, token := range []string{
@@ -85,6 +99,7 @@ func TestKanbanWebStylesProvideBoardDrawerAndResponsiveRules(t *testing.T) {
 		".kanban-task",
 		".kanban-drawer",
 		".kanban-status-dot",
+		".kanban-column--triage .kanban-status-dot",
 		".kanban-form",
 		"@media (max-width: 900px)",
 	} {

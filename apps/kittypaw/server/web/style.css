@@ -1059,6 +1059,13 @@ th {
 .kanban-column--blocked { border-top-color: #DC2626; }
 .kanban-column--done { border-top-color: #16A34A; }
 
+.kanban-column--triage .kanban-status-dot { background: #A855F7; }
+.kanban-column--todo .kanban-status-dot { background: #64748B; }
+.kanban-column--ready .kanban-status-dot { background: #0284C7; }
+.kanban-column--running .kanban-status-dot { background: #D97706; }
+.kanban-column--blocked .kanban-status-dot { background: #DC2626; }
+.kanban-column--done .kanban-status-dot { background: #16A34A; }
+
 .kanban-column-header {
   display: flex;
   align-items: center;
@@ -1082,7 +1089,6 @@ th {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: currentColor;
   flex-shrink: 0;
 }
 
