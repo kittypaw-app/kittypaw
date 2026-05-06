@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/kittypaw-app/kittyhome/internal/openai"
 	"github.com/kittypaw-app/kittyhome/internal/protocol"
 	"github.com/kittypaw-app/kittyhome/internal/server"
+	"github.com/kittypaw-app/kittyhome/internal/webapp"
 )
 
 const (
@@ -38,10 +40,11 @@ func RunLocal(ctx context.Context, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	router, err := localRouter()
+	router, cleanup, err := localRouter()
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 	srv, err := newLocalServer(router, net.Listen)
 	if err != nil {
 		return err
@@ -79,6 +82,28 @@ func RunLocal(ctx context.Context, out io.Writer) error {
 		return err
 	}
 
+	sessionCookie, err := runBFFLogin(ctx, srv.URL)
+	if err != nil {
+		return err
+	}
+	if err := writeProgress(out, "ok bff login"); err != nil {
+		return err
+	}
+
+	if err := runBFFRoutes(ctx, srv.URL, sessionCookie); err != nil {
+		return err
+	}
+	if err := writeProgress(out, "ok bff route discovery dev_1/alice"); err != nil {
+		return err
+	}
+
+	if err := runBFFChatCompletion(ctx, srv.URL, sessionCookie); err != nil {
+		return err
+	}
+	if err := writeProgress(out, "ok bff chat completion relayed"); err != nil {
+		return err
+	}
+
 	select {
 	case err := <-daemonDone:
 		return err
@@ -92,7 +117,7 @@ func writeProgress(out io.Writer, message string) error {
 	return err
 }
 
-func localRouter() (http.Handler, error) {
+func localRouter() (http.Handler, func(), error) {
 	verifier := identity.NewMemoryCredentialVerifier()
 	if err := verifier.AddAPIClient(localAPIToken, identity.APIClientClaims{
 		Subject:   localUserID,
@@ -103,7 +128,7 @@ func localRouter() (http.Handler, error) {
 		DeviceID:  localDeviceID,
 		AccountID: localAccountID,
 	}); err != nil {
-		return nil, fmt.Errorf("seed api client: %w", err)
+		return nil, nil, fmt.Errorf("seed api client: %w", err)
 	}
 	if err := verifier.AddDevice(localDeviceToken, identity.DeviceClaims{
 		Subject:         "device:" + localDeviceID,
@@ -114,19 +139,70 @@ func localRouter() (http.Handler, error) {
 		DeviceID:        localDeviceID,
 		LocalAccountIDs: []string{localAccountID},
 	}); err != nil {
-		return nil, fmt.Errorf("seed device: %w", err)
+		return nil, nil, fmt.Errorf("seed device: %w", err)
 	}
 
 	b := broker.New(broker.Config{RequestTimeout: 2 * time.Second})
+	openAIHandler := openai.NewHandler(identity.APIAuthenticator{
+		Verifier: verifier,
+	}, b)
+	portal := newFakePortal()
+	cleanup := portal.Close
+	webHandler, err := webapp.New(webapp.Config{
+		PublicBaseURL:  "https://home.kittypaw.app",
+		APIAuthBaseURL: strings.TrimRight(portal.URL, "/") + "/auth",
+		Verifier:       verifier,
+		OpenAIHandler:  openAIHandler.Routes(),
+		HTTPClient:     portal.Client(),
+	})
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("web app: %w", err)
+	}
 	return server.NewRouter(server.Config{
-		Version: "smoke",
+		Version:    "smoke",
+		WebHandler: webHandler,
 		DaemonHandler: daemonws.NewHandler(identity.DeviceAuthenticator{
 			Verifier: verifier,
 		}, b),
-		OpenAIHandler: openai.NewHandler(identity.APIAuthenticator{
-			Verifier: verifier,
-		}, b),
-	}), nil
+		OpenAIHandler: openAIHandler,
+	}), cleanup, nil
+}
+
+func newFakePortal() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/web/exchange":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var body struct {
+				Code         string `json:"code"`
+				CodeVerifier string `json:"code_verifier"`
+				RedirectURI  string `json:"redirect_uri"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if body.Code != "smoke-oauth-code" || body.CodeVerifier == "" || body.RedirectURI == "" {
+				http.Error(w, "bad exchange", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"smoke-refresh","token_type":"Bearer","expires_in":900}`, localAPIToken)
+		case "/auth/token/refresh":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"smoke-refresh-2","token_type":"Bearer","expires_in":900}`, localAPIToken)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 }
 
 type listenFunc func(network, address string) (net.Listener, error)
@@ -169,31 +245,16 @@ func runFakeDaemon(ctx context.Context, baseURL string, ready chan<- struct{}) e
 	}
 	close(ready)
 
-	var req protocol.Frame
-	if err := wsjson.Read(ctx, conn, &req); err != nil {
-		return fmt.Errorf("read relay request: %w", err)
-	}
-	if err := validateSmokeRequest(req); err != nil {
-		return err
-	}
-
-	for _, frame := range []protocol.Frame{
-		{
-			Type:    protocol.FrameResponseHeaders,
-			ID:      req.ID,
-			Status:  http.StatusOK,
-			Headers: map[string]string{"content-type": "text/event-stream"},
-		},
-		{
-			Type: protocol.FrameResponseChunk,
-			ID:   req.ID,
-			Data: "data: {\"choices\":[{\"delta\":{\"content\":\"hello from fake daemon\"}}]}\n\n",
-		},
-		{Type: protocol.FrameResponseChunk, ID: req.ID, Data: "data: [DONE]\n\n"},
-		{Type: protocol.FrameResponseEnd, ID: req.ID},
-	} {
-		if err := wsjson.Write(ctx, conn, frame); err != nil {
-			return fmt.Errorf("write daemon response: %w", err)
+	for i := 0; i < 2; i++ {
+		var req protocol.Frame
+		if err := wsjson.Read(ctx, conn, &req); err != nil {
+			return fmt.Errorf("read relay request: %w", err)
+		}
+		if err := validateSmokeRequest(req); err != nil {
+			return err
+		}
+		if err := writeSmokeResponse(ctx, conn, req); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -228,6 +289,55 @@ func validateSmokeRequest(frame protocol.Frame) error {
 		}
 	}
 	return fmt.Errorf("request body does not contain smoke user message")
+}
+
+func writeSmokeResponse(ctx context.Context, conn *websocket.Conn, req protocol.Frame) error {
+	var frames []protocol.Frame
+	if requestWantsStream(req) {
+		frames = []protocol.Frame{
+			{
+				Type:    protocol.FrameResponseHeaders,
+				ID:      req.ID,
+				Status:  http.StatusOK,
+				Headers: map[string]string{"content-type": "text/event-stream"},
+			},
+			{
+				Type: protocol.FrameResponseChunk,
+				ID:   req.ID,
+				Data: "data: {\"choices\":[{\"delta\":{\"content\":\"hello from fake daemon\"}}]}\n\n",
+			},
+			{Type: protocol.FrameResponseChunk, ID: req.ID, Data: "data: [DONE]\n\n"},
+			{Type: protocol.FrameResponseEnd, ID: req.ID},
+		}
+	} else {
+		frames = []protocol.Frame{
+			{
+				Type:    protocol.FrameResponseHeaders,
+				ID:      req.ID,
+				Status:  http.StatusOK,
+				Headers: map[string]string{"content-type": "application/json"},
+			},
+			{
+				Type: protocol.FrameResponseChunk,
+				ID:   req.ID,
+				Data: `{"choices":[{"message":{"role":"assistant","content":"hello from fake daemon"}}]}`,
+			},
+			{Type: protocol.FrameResponseEnd, ID: req.ID},
+		}
+	}
+	for _, frame := range frames {
+		if err := wsjson.Write(ctx, conn, frame); err != nil {
+			return fmt.Errorf("write daemon response: %w", err)
+		}
+	}
+	return nil
+}
+
+func requestWantsStream(frame protocol.Frame) bool {
+	var body struct {
+		Stream bool `json:"stream"`
+	}
+	return json.Unmarshal(frame.Body, &body) == nil && body.Stream
 }
 
 func waitForRoute(ctx context.Context, baseURL string) error {
@@ -289,6 +399,127 @@ func routeOnline(ctx context.Context, baseURL string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func runBFFLogin(ctx context.Context, baseURL string) (*http.Cookie, error) {
+	noRedirect := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/auth/login/google", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := noRedirect.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusFound {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("login status = %d; body=%s", resp.StatusCode, raw)
+	}
+	location := resp.Header.Get("Location")
+	u, err := url.Parse(location)
+	if err != nil {
+		return nil, fmt.Errorf("parse login redirect: %w", err)
+	}
+	if !strings.HasSuffix(u.Path, "/auth/web/google") {
+		return nil, fmt.Errorf("login redirect path = %q, want /auth/web/google", u.Path)
+	}
+	state := u.Query().Get("state")
+	if state == "" || u.Query().Get("code_challenge") == "" {
+		return nil, fmt.Errorf("login redirect missing state or code_challenge")
+	}
+
+	callbackURL := baseURL + "/auth/callback?code=smoke-oauth-code&state=" + url.QueryEscape(state)
+	callbackReq, err := http.NewRequestWithContext(ctx, http.MethodGet, callbackURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	callbackResp, err := noRedirect.Do(callbackReq)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = callbackResp.Body.Close() }()
+	if callbackResp.StatusCode != http.StatusFound {
+		raw, _ := io.ReadAll(callbackResp.Body)
+		return nil, fmt.Errorf("callback status = %d; body=%s", callbackResp.StatusCode, raw)
+	}
+	if got := callbackResp.Header.Get("Location"); got != "/chat/" {
+		return nil, fmt.Errorf("callback location = %q, want /chat/", got)
+	}
+	for _, cookie := range callbackResp.Cookies() {
+		if cookie.Name == "kittyhome_session" && cookie.Value != "" {
+			return cookie, nil
+		}
+	}
+	return nil, fmt.Errorf("session cookie missing")
+}
+
+func runBFFRoutes(ctx context.Context, baseURL string, cookie *http.Cookie) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/chat/api/routes", nil)
+	if err != nil {
+		return err
+	}
+	req.AddCookie(cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bff routes status = %d; body=%s", resp.StatusCode, raw)
+	}
+	var body struct {
+		Data []struct {
+			DeviceID      string   `json:"device_id"`
+			LocalAccounts []string `json:"local_accounts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return err
+	}
+	for _, route := range body.Data {
+		if route.DeviceID == localDeviceID && hasString(route.LocalAccounts, localAccountID) {
+			return nil
+		}
+	}
+	return fmt.Errorf("bff route discovery missing %s/%s", localDeviceID, localAccountID)
+}
+
+func runBFFChatCompletion(ctx context.Context, baseURL string, cookie *http.Cookie) error {
+	body := []byte(`{"model":"kittypaw","messages":[{"role":"user","content":"hello from smoke"}]}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/api/nodes/dev_1/accounts/alice/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.AddCookie(cookie)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bff chat status = %d; body=%s", resp.StatusCode, raw)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		return fmt.Errorf("bff chat content-type = %q, want application/json", got)
+	}
+	if !strings.Contains(string(raw), "hello from fake daemon") {
+		return fmt.Errorf("bff chat body = %q, want fake daemon content", raw)
+	}
+	return nil
 }
 
 func runChatCompletion(ctx context.Context, baseURL string) error {
