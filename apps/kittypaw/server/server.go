@@ -475,6 +475,9 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			r.Get("/workspaces", s.handleWorkspacesList)
 			r.Post("/workspaces", s.handleWorkspacesCreate)
 			r.Delete("/workspaces/{id}", s.handleWorkspacesDelete)
+
+			// Kanban
+			r.Get("/projects", s.handleKanbanProjectsList)
 		})
 	})
 
