@@ -10,5 +10,6 @@ type TokenSet struct {
 	ExpiresIn    int       `json:"expires_in,omitempty"`
 	Scope        string    `json:"scope,omitempty"`
 	Email        string    `json:"email,omitempty"`
+	Username     string    `json:"username,omitempty"`
 	IssuedAt     time.Time `json:"issued_at"`
 }

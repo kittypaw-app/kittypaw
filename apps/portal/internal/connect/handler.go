@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -16,15 +17,24 @@ const maxConnectBodyBytes = 1024
 
 type Handler struct {
 	Gmail      *GmailProvider
+	X          *XProvider
 	StateStore *auth.StateStore
 	CodeStore  *CodeStore
 }
 
-func NewHandler(gmail *GmailProvider, states *auth.StateStore, codes *CodeStore) *Handler {
-	return &Handler{Gmail: gmail, StateStore: states, CodeStore: codes}
+func NewHandler(gmail *GmailProvider, x *XProvider, states *auth.StateStore, codes *CodeStore) *Handler {
+	return &Handler{Gmail: gmail, X: x, StateStore: states, CodeStore: codes}
 }
 
 func (h *Handler) HandleGmailLogin() http.HandlerFunc {
+	return h.handleLogin("gmail", h.Gmail.AuthURL)
+}
+
+func (h *Handler) HandleXLogin() http.HandlerFunc {
+	return h.handleLogin("x", h.X.AuthURL)
+}
+
+func (h *Handler) handleLogin(_ string, authURL func(state, verifier string) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mode := r.URL.Query().Get("mode")
 		if mode != "http" && mode != "code" {
@@ -53,11 +63,19 @@ func (h *Handler) HandleGmailLogin() http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, h.Gmail.AuthURL(state, verifier), http.StatusFound)
+		http.Redirect(w, r, authURL(state, verifier), http.StatusFound)
 	}
 }
 
 func (h *Handler) HandleGmailCallback() http.HandlerFunc {
+	return h.handleCallback("gmail", h.Gmail.ExchangeCode)
+}
+
+func (h *Handler) HandleXCallback() http.HandlerFunc {
+	return h.handleCallback("x", h.X.ExchangeCode)
+}
+
+func (h *Handler) handleCallback(provider string, exchange func(context.Context, string, string) (TokenSet, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
@@ -71,9 +89,9 @@ func (h *Handler) HandleGmailCallback() http.HandlerFunc {
 			http.Error(w, "invalid state", http.StatusBadRequest)
 			return
 		}
-		tokens, err := h.Gmail.ExchangeCode(r.Context(), code, verifier)
+		tokens, err := exchange(r.Context(), code, verifier)
 		if err != nil {
-			slog.Error("connect gmail code exchange failed", "err", err)
+			slog.Error("connect code exchange failed", "provider", provider, "err", err)
 			http.Error(w, "authentication failed", http.StatusBadGateway)
 			return
 		}
@@ -123,6 +141,14 @@ func (h *Handler) HandleCLIExchange() http.HandlerFunc {
 }
 
 func (h *Handler) HandleGmailRefresh() http.HandlerFunc {
+	return h.handleRefresh("gmail", h.Gmail.Refresh)
+}
+
+func (h *Handler) HandleXRefresh() http.HandlerFunc {
+	return h.handleRefresh("x", h.X.Refresh)
+}
+
+func (h *Handler) handleRefresh(provider string, refresh func(context.Context, string) (TokenSet, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxConnectBodyBytes)
 		var req struct {
@@ -132,9 +158,9 @@ func (h *Handler) HandleGmailRefresh() http.HandlerFunc {
 			http.Error(w, "refresh_token required", http.StatusBadRequest)
 			return
 		}
-		tokens, err := h.Gmail.Refresh(r.Context(), req.RefreshToken)
+		tokens, err := refresh(r.Context(), req.RefreshToken)
 		if err != nil {
-			slog.Error("connect gmail refresh failed", "err", err)
+			slog.Error("connect refresh failed", "provider", provider, "err", err)
 			http.Error(w, "refresh failed", http.StatusBadGateway)
 			return
 		}

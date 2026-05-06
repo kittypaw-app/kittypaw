@@ -19,6 +19,7 @@ type ServiceTokenSet struct {
 	ExpiresAt      time.Time
 	Scope          string
 	Email          string
+	Username       string
 	ConnectBaseURL string
 }
 
@@ -60,6 +61,7 @@ func (m *ServiceTokenManager) Save(provider string, tokens ServiceTokenSet) erro
 		{"token_type", tokens.TokenType},
 		{"scope", tokens.Scope},
 		{"email", tokens.Email},
+		{"username", tokens.Username},
 		{"connect_base_url", strings.TrimRight(tokens.ConnectBaseURL, "/")},
 	} {
 		if err := m.saveOrDelete(ns, pair.key, pair.value); err != nil {
@@ -104,6 +106,9 @@ func (m *ServiceTokenManager) Refresh(provider string) (ServiceTokenSet, error) 
 	if email, ok := m.secrets.Get(ns, "email"); ok {
 		tokens.Email = email
 	}
+	if username, ok := m.secrets.Get(ns, "username"); ok {
+		tokens.Username = username
+	}
 	if expiresAt, ok := m.loadExpiresAt(ns); ok {
 		tokens.ExpiresAt = expiresAt
 	}
@@ -128,9 +133,13 @@ func (m *ServiceTokenManager) refresh(provider string) (string, error) {
 	if !ok || connectBaseURL == "" {
 		return "", fmt.Errorf("missing %s connect endpoint — run: kittypaw connect %s", provider, provider)
 	}
+	providerPath := strings.TrimSpace(provider)
+	if providerPath == "" || strings.Contains(providerPath, "/") {
+		return "", fmt.Errorf("invalid service provider %q", provider)
+	}
 
 	payload, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
-	resp, err := m.client.Post(strings.TrimRight(connectBaseURL, "/")+"/connect/gmail/refresh", "application/json", bytes.NewReader(payload))
+	resp, err := m.client.Post(strings.TrimRight(connectBaseURL, "/")+"/connect/"+providerPath+"/refresh", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("refresh request: %w", err)
 	}
@@ -146,6 +155,7 @@ func (m *ServiceTokenManager) refresh(provider string) (string, error) {
 		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
 		Email        string `json:"email"`
+		Username     string `json:"username"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode refresh response: %w", err)
@@ -157,6 +167,10 @@ func (m *ServiceTokenManager) refresh(provider string) (string, error) {
 	existingEmail, _ := m.secrets.Get(ns, "email")
 	if result.Email == "" {
 		result.Email = existingEmail
+	}
+	existingUsername, _ := m.secrets.Get(ns, "username")
+	if result.Username == "" {
+		result.Username = existingUsername
 	}
 	if result.RefreshToken == "" {
 		result.RefreshToken = refreshToken
@@ -172,6 +186,7 @@ func (m *ServiceTokenManager) refresh(provider string) (string, error) {
 		ExpiresIn:      result.ExpiresIn,
 		Scope:          result.Scope,
 		Email:          result.Email,
+		Username:       result.Username,
 		ConnectBaseURL: connectBaseURL,
 	}); err != nil {
 		return "", err

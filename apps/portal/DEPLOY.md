@@ -27,6 +27,11 @@ CONNECT_GOOGLE_CLIENT_SECRET=
 # CONNECT_GOOGLE_AUTH_URL=       # unset in prod; local fake OAuth only
 # CONNECT_GOOGLE_TOKEN_URL=      # unset in prod; local fake OAuth only
 # CONNECT_GOOGLE_USERINFO_URL=   # unset in prod; local fake OAuth only
+CONNECT_X_CLIENT_ID=
+CONNECT_X_CLIENT_SECRET=
+# CONNECT_X_AUTH_URL=            # unset in prod; local fake OAuth only
+# CONNECT_X_TOKEN_URL=           # unset in prod; local fake OAuth only
+# CONNECT_X_USERINFO_URL=        # unset in prod; local fake OAuth only
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 WEB_REDIRECT_URI_ALLOWLIST=https://chat.kittypaw.app/auth/callback
@@ -37,6 +42,11 @@ Gmail restricted scopes는 `CONNECT_GOOGLE_CLIENT_ID`/
 `CONNECT_GOOGLE_CLIENT_SECRET`에 별도 OAuth client를 설정합니다.
 Gmail OAuth 배포 전/후 체크리스트는
 `docs/operations/connect-gmail-oauth.md`를 따릅니다.
+
+X Connect는 `CONNECT_X_CLIENT_ID`/`CONNECT_X_CLIENT_SECRET`을 사용합니다.
+X Developer Portal의 OAuth 2.0 callback URL은
+`https://connect.kittypaw.app/connect/x/callback`로 정확히 등록합니다.
+초기 scope는 read-only `tweet.read users.read offline.access`입니다.
 
 nginx의 `server_name`에는 portal과 connect host를 모두 넣습니다:
 

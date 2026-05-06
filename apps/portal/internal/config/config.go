@@ -35,6 +35,11 @@ type Config struct {
 	ConnectGoogleAuthURL      string
 	ConnectGoogleTokenURL     string
 	ConnectGoogleUserInfoURL  string
+	ConnectXClientID          string
+	ConnectXClientSecret      string
+	ConnectXAuthURL           string
+	ConnectXTokenURL          string
+	ConnectXUserInfoURL       string
 	GitHubClientID            string
 	GitHubClientSecret        string
 	BaseURL                   string
@@ -67,6 +72,11 @@ func Load() (*Config, error) {
 		ConnectGoogleAuthURL:      os.Getenv("CONNECT_GOOGLE_AUTH_URL"),
 		ConnectGoogleTokenURL:     os.Getenv("CONNECT_GOOGLE_TOKEN_URL"),
 		ConnectGoogleUserInfoURL:  os.Getenv("CONNECT_GOOGLE_USERINFO_URL"),
+		ConnectXClientID:          os.Getenv("CONNECT_X_CLIENT_ID"),
+		ConnectXClientSecret:      os.Getenv("CONNECT_X_CLIENT_SECRET"),
+		ConnectXAuthURL:           os.Getenv("CONNECT_X_AUTH_URL"),
+		ConnectXTokenURL:          os.Getenv("CONNECT_X_TOKEN_URL"),
+		ConnectXUserInfoURL:       os.Getenv("CONNECT_X_USERINFO_URL"),
 		GitHubClientID:            os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:        os.Getenv("GITHUB_CLIENT_SECRET"),
 		BaseURL:                   env("BASE_URL", "http://localhost:8080"),
@@ -153,6 +163,8 @@ func LoadForTest() *Config {
 		ConnectBaseURL:            "https://connect.kittypaw.app",
 		ConnectGoogleClientID:     "connect-client-id",
 		ConnectGoogleClientSecret: "connect-secret",
+		ConnectXClientID:          "x-connect-client-id",
+		ConnectXClientSecret:      "x-connect-secret",
 		APIBaseURL:                env("BASE_URL", "http://localhost:8080"),
 		AllowedOrigins:            []string{"http://localhost:8080"},
 		JWTPrivateKey:             priv,

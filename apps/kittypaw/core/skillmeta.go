@@ -60,6 +60,11 @@ var SkillRegistry = []SkillMeta{
 		{Name: "search", Signature: "Gmail.search(queryOrOptions[, options]) — read-only Gmail search. Query examples: \"newer_than:1d\", \"from:alice@example.com\", \"subject:invoice\". options: {limit}."},
 		{Name: "read", Signature: "Gmail.read(id) — read one Gmail message by ID and return headers + readable body text."},
 	}},
+	{Name: "X", Methods: []SkillMethodMeta{
+		{Name: "searchRecent", Signature: "X.searchRecent(queryOrOptions[, options]) — read-only recent X posts search. options: {limit}; max 10. Requires `kittypaw connect x`."},
+		{Name: "user", Signature: "X.user(usernameOrOptions) — read one X user profile by @handle."},
+		{Name: "userPosts", Signature: "X.userPosts(usernameOrOptions[, options]) — read recent posts from one X user. options: {limit}; max 10."},
+	}},
 	{Name: "Shell", Methods: []SkillMethodMeta{
 		{Name: "exec", Signature: "Shell.exec(command)"},
 	}},

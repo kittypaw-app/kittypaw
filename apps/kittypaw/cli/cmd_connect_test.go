@@ -19,6 +19,14 @@ func TestRootCommandRegistersConnectGmail(t *testing.T) {
 	}
 }
 
+func TestRootCommandRegistersConnectX(t *testing.T) {
+	root := newRootCmd()
+	cmd, _, err := root.Find([]string{"connect", "x"})
+	if err != nil || cmd == nil || cmd.Name() != "x" {
+		t.Fatalf("Find(connect x) = (%v, %v), want x command", cmd, err)
+	}
+}
+
 func TestConnectGmailUsesSelectedAccount(t *testing.T) {
 	rootDir := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", rootDir)
@@ -43,6 +51,30 @@ func TestConnectGmailUsesSelectedAccount(t *testing.T) {
 	}
 }
 
+func TestConnectXUsesSelectedAccount(t *testing.T) {
+	rootDir := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", rootDir)
+	mustWriteTestConfig(t, filepath.Join(rootDir, "accounts", "alice", "config.toml"))
+	mustWriteTestConfig(t, filepath.Join(rootDir, "accounts", "bob", "config.toml"))
+
+	oldRunner := connectXRunner
+	t.Cleanup(func() { connectXRunner = oldRunner })
+	var gotAccount string
+	connectXRunner = func(apiURL, accountID string, useCode bool) error {
+		gotAccount = accountID
+		return nil
+	}
+
+	root := newRootCmd()
+	root.SetArgs([]string{"connect", "x", "--account", "bob", "--code", "--api-url", "https://portal.example"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotAccount != "bob" {
+		t.Fatalf("connect x account = %q, want bob", gotAccount)
+	}
+}
+
 func TestConnectGmailLoginURLUsesDiscoveredConnectBaseURL(t *testing.T) {
 	secrets := testSecretsStore(t)
 	mgr := core.NewAPITokenManager("", secrets)
@@ -58,6 +90,21 @@ func TestConnectGmailLoginURLUsesDiscoveredConnectBaseURL(t *testing.T) {
 	}
 }
 
+func TestConnectXLoginURLUsesDiscoveredConnectBaseURL(t *testing.T) {
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := "https://portal.kittypaw.app"
+	if err := mgr.SaveConnectBaseURL(apiURL, "https://connect.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := connectXLoginURL(apiURL, mgr, "http", 12345)
+	want := "https://connect.kittypaw.app/connect/x/login?mode=http&port=12345"
+	if got != want {
+		t.Fatalf("connectXLoginURL = %q, want %q", got, want)
+	}
+}
+
 func TestConnectCallbackRejectsTokenQueryParams(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/callback?access_token=AT&refresh_token=RT", nil)
 	_, err := connectCallbackCode(req)
@@ -66,6 +113,36 @@ func TestConnectCallbackRejectsTokenQueryParams(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "one-time code") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConnectExchangeStoresXTokens(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/connect/cli/exchange" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"provider":"x","access_token":"x-access-1","refresh_token":"x-refresh-1","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access","username":"jaypark"}`)
+	}))
+	defer ts.Close()
+
+	secrets := testSecretsStore(t)
+	serviceMgr := core.NewServiceTokenManager(secrets)
+
+	if err := exchangeConnectCode(ts.URL, "code-1", serviceMgr); err != nil {
+		t.Fatalf("exchangeConnectCode: %v", err)
+	}
+	ns := core.ServiceTokenNamespace("x")
+	for key, want := range map[string]string{
+		"access_token":     "x-access-1",
+		"refresh_token":    "x-refresh-1",
+		"connect_base_url": ts.URL,
+		"username":         "jaypark",
+	} {
+		if got, ok := secrets.Get(ns, key); !ok || got != want {
+			t.Fatalf("%s = (%q, %v), want %q", key, got, ok, want)
+		}
 	}
 }
 

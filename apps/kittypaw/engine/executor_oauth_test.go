@@ -46,6 +46,40 @@ func TestRunPackageInjectsGmailOAuthAccessToken(t *testing.T) {
 	}
 }
 
+func TestRunPackageInjectsXOAuthAccessToken(t *testing.T) {
+	baseDir := t.TempDir()
+	secrets := mustTestSecrets(t)
+	pm := installOAuthPackageWithSource(t, baseDir, secrets, "x-oauth-test", "oauth-x/access_token")
+	if err := core.NewServiceTokenManager(secrets).Save("x", core.ServiceTokenSet{
+		Provider:    "x",
+		AccessToken: "x-access-1",
+	}); err != nil {
+		t.Fatalf("Save service token: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Sandbox:         sandbox.New(cfg.Sandbox),
+		Config:          &cfg,
+		BaseDir:         baseDir,
+		PackageManager:  pm,
+		ServiceTokenMgr: core.NewServiceTokenManager(secrets),
+	}
+
+	raw, err := runSkillOrPackageWithParams(context.Background(), "x-oauth-test", sess, nil)
+	if err != nil {
+		t.Fatalf("runSkillOrPackageWithParams: %v", err)
+	}
+	var wrapper struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
+		t.Fatalf("decode wrapper: %v", err)
+	}
+	if wrapper.Output != "x-access-1" {
+		t.Fatalf("output = %q, want X access token", wrapper.Output)
+	}
+}
+
 func TestRunPackageMissingGmailOAuthReturnsActionableError(t *testing.T) {
 	baseDir := t.TempDir()
 	secrets := mustTestSecrets(t)
@@ -69,12 +103,16 @@ func TestRunPackageMissingGmailOAuthReturnsActionableError(t *testing.T) {
 }
 
 func installOAuthPackage(t *testing.T, baseDir string, secrets *core.SecretsStore) *core.PackageManager {
+	return installOAuthPackageWithSource(t, baseDir, secrets, "gmail-oauth-test", "oauth-gmail/access_token")
+}
+
+func installOAuthPackageWithSource(t *testing.T, baseDir string, secrets *core.SecretsStore, id, source string) *core.PackageManager {
 	t.Helper()
 	srcDir := t.TempDir()
 	tomlContent := `
 [meta]
-id = "gmail-oauth-test"
-name = "Gmail OAuth Test"
+id = "` + id + `"
+name = "OAuth Test"
 version = "0.1.0"
 description = "test"
 
@@ -83,7 +121,7 @@ key = "access_token"
 label = "Access Token"
 required = true
 secret = true
-source = "oauth-gmail/access_token"
+source = "` + source + `"
 `
 	jsContent := `
 const ctx = JSON.parse(__context__);

@@ -21,6 +21,7 @@ var (
 	connectOpenBrowser = core.OpenBrowser
 	connectHTTPClient  = http.DefaultClient
 	connectGmailRunner = runConnectGmail
+	connectXRunner     = runConnectX
 )
 
 func newConnectCmd() *cobra.Command {
@@ -30,6 +31,7 @@ func newConnectCmd() *cobra.Command {
 	}
 	addPersistentAccountFlag(cmd)
 	cmd.AddCommand(newConnectGmailCmd())
+	cmd.AddCommand(newConnectXCmd())
 	return cmd
 }
 
@@ -59,7 +61,41 @@ func newConnectGmailCmd() *cobra.Command {
 	return cmd
 }
 
+func newConnectXCmd() *cobra.Command {
+	var (
+		flagCode   bool
+		flagAPIURL string
+	)
+	cmd := &cobra.Command{
+		Use:   "x",
+		Short: "Connect an X account",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			apiURL := strings.TrimRight(flagAPIURL, "/")
+			if apiURL == "" {
+				apiURL = core.DefaultAPIServerURL
+			}
+			accountID, err := resolveCLIAccountWithContext(flagAccount)
+			if err != nil {
+				return err
+			}
+			useCode := flagCode || !term.IsTerminal(int(os.Stdin.Fd()))
+			return connectXRunner(apiURL, accountID, useCode)
+		},
+	}
+	cmd.Flags().BoolVar(&flagCode, "code", false, "use code-paste mode")
+	cmd.Flags().StringVar(&flagAPIURL, "api-url", "", "API server URL (default "+core.DefaultAPIServerURL+")")
+	return cmd
+}
+
 func runConnectGmail(apiURL, accountID string, useCode bool) error {
+	return runConnectService("gmail", "Gmail", apiURL, accountID, useCode)
+}
+
+func runConnectX(apiURL, accountID string, useCode bool) error {
+	return runConnectService("x", "X", apiURL, accountID, useCode)
+}
+
+func runConnectService(provider, label, apiURL, accountID string, useCode bool) error {
 	secrets, err := core.LoadAccountSecrets(accountID)
 	if err != nil {
 		return fmt.Errorf("load secrets: %w", err)
@@ -67,15 +103,19 @@ func runConnectGmail(apiURL, accountID string, useCode bool) error {
 	apiMgr := core.NewAPITokenManager("", secrets)
 	serviceMgr := core.NewServiceTokenManager(secrets)
 	if useCode {
-		return connectGmailCode(apiURL, apiMgr, serviceMgr)
+		return connectServiceCode(provider, apiURL, apiMgr, serviceMgr)
 	}
-	return connectGmailHTTP(apiURL, apiMgr, serviceMgr)
+	return connectServiceHTTP(provider, label, apiURL, apiMgr, serviceMgr)
 }
 
 func connectGmailCode(apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
+	return connectServiceCode("gmail", apiURL, apiMgr, serviceMgr)
+}
+
+func connectServiceCode(provider, apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
 	_ = applyDiscovery(apiURL, apiMgr)
 	connectBaseURL := apiMgr.ResolveConnectBaseURL(apiURL)
-	loginURL := connectGmailLoginURL(apiURL, apiMgr, "code", 0)
+	loginURL := connectServiceLoginURL(provider, apiURL, apiMgr, "code", 0)
 	fmt.Printf("Open this URL in your browser:\n\n  %s\n\n", loginURL)
 	fmt.Printf("Enter the code from the browser: ")
 	var code string
@@ -90,6 +130,10 @@ func connectGmailCode(apiURL string, apiMgr *core.APITokenManager, serviceMgr *c
 }
 
 func connectGmailHTTP(apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
+	return connectServiceHTTP("gmail", "Gmail", apiURL, apiMgr, serviceMgr)
+}
+
+func connectServiceHTTP(provider, label, apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
 	_ = applyDiscovery(apiURL, apiMgr)
 	connectBaseURL := apiMgr.ResolveConnectBaseURL(apiURL)
 
@@ -121,8 +165,8 @@ func connectGmailHTTP(apiURL string, apiMgr *core.APITokenManager, serviceMgr *c
 		_ = srv.Shutdown(ctx)
 	}()
 
-	loginURL := connectGmailLoginURL(apiURL, apiMgr, "http", port)
-	fmt.Printf("Opening browser for Gmail connection...\n")
+	loginURL := connectServiceLoginURL(provider, apiURL, apiMgr, "http", port)
+	fmt.Printf("Opening browser for %s connection...\n", label)
 	fmt.Printf("If the browser doesn't open, visit:\n  %s\n\n", loginURL)
 	if err := connectOpenBrowser(loginURL); err != nil {
 		fmt.Printf("Could not open browser: %v\n", err)
@@ -136,7 +180,7 @@ func connectGmailHTTP(apiURL string, apiMgr *core.APITokenManager, serviceMgr *c
 		}
 		return exchangeConnectCode(connectBaseURL, result.code, serviceMgr)
 	case <-time.After(5 * time.Minute):
-		return fmt.Errorf("gmail connection timed out (5 minutes)")
+		return fmt.Errorf("%s connection timed out (5 minutes)", provider)
 	}
 }
 
@@ -146,12 +190,20 @@ type connectCodeResult struct {
 }
 
 func connectGmailLoginURL(apiURL string, mgr *core.APITokenManager, mode string, port int) string {
+	return connectServiceLoginURL("gmail", apiURL, mgr, mode, port)
+}
+
+func connectXLoginURL(apiURL string, mgr *core.APITokenManager, mode string, port int) string {
+	return connectServiceLoginURL("x", apiURL, mgr, mode, port)
+}
+
+func connectServiceLoginURL(provider, apiURL string, mgr *core.APITokenManager, mode string, port int) string {
 	base := mgr.ResolveConnectBaseURL(apiURL)
 	params := "mode=" + mode
 	if mode == "http" {
 		params += fmt.Sprintf("&port=%d", port)
 	}
-	return strings.TrimRight(base, "/") + "/connect/gmail/login?" + params
+	return strings.TrimRight(base, "/") + "/connect/" + strings.TrimSpace(provider) + "/login?" + params
 }
 
 func connectCallbackCode(r *http.Request) (string, error) {
@@ -185,6 +237,7 @@ func exchangeConnectCode(connectBaseURL, code string, serviceMgr *core.ServiceTo
 		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
 		Email        string `json:"email"`
+		Username     string `json:"username"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return fmt.Errorf("decode response: %w", err)
@@ -200,6 +253,7 @@ func exchangeConnectCode(connectBaseURL, code string, serviceMgr *core.ServiceTo
 		ExpiresIn:      result.ExpiresIn,
 		Scope:          result.Scope,
 		Email:          result.Email,
+		Username:       result.Username,
 		ConnectBaseURL: strings.TrimRight(connectBaseURL, "/"),
 	})
 }

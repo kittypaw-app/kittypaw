@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -170,21 +171,35 @@ func OpenAccountDeps(t *core.Account) (*AccountDeps, error) {
 }
 
 func resolveMCPEnvSource(tokens *core.ServiceTokenManager, source string) (string, error) {
-	switch source {
-	case "oauth-gmail/access_token":
-		if tokens == nil {
-			return "", fmt.Errorf("missing Gmail connection — run: kittypaw connect gmail")
-		}
-		token, err := tokens.LoadAccessToken("gmail")
-		if err != nil {
-			return "", err
-		}
-		if token == "" {
-			return "", fmt.Errorf("missing Gmail connection — run: kittypaw connect gmail")
-		}
-		return token, nil
-	default:
+	ns, key, ok := strings.Cut(source, "/")
+	if !ok || key != "access_token" || !strings.HasPrefix(ns, "oauth-") {
 		return "", fmt.Errorf("unsupported MCP env source %q", source)
+	}
+	provider := strings.TrimPrefix(ns, "oauth-")
+	if provider != "gmail" && provider != "x" {
+		return "", fmt.Errorf("unsupported MCP env source %q", source)
+	}
+	if tokens == nil {
+		return "", fmt.Errorf("missing %s connection — run: kittypaw connect %s", connectProviderLabel(provider), provider)
+	}
+	token, err := tokens.LoadAccessToken(provider)
+	if err != nil {
+		return "", err
+	}
+	if token == "" {
+		return "", fmt.Errorf("missing %s connection — run: kittypaw connect %s", connectProviderLabel(provider), provider)
+	}
+	return token, nil
+}
+
+func connectProviderLabel(provider string) string {
+	switch provider {
+	case "gmail":
+		return "Gmail"
+	case "x":
+		return "X"
+	default:
+		return provider
 	}
 }
 

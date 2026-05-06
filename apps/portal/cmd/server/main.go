@@ -238,6 +238,14 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 				TokenURL:     cfg.ConnectGoogleTokenURL,
 				UserInfoURL:  cfg.ConnectGoogleUserInfoURL,
 			}, &http.Client{Timeout: 10 * time.Second}),
+			connect.NewXProvider(connect.XConfig{
+				ClientID:     cfg.ConnectXClientID,
+				ClientSecret: cfg.ConnectXClientSecret,
+				BaseURL:      cfg.ConnectBaseURL,
+				AuthURL:      cfg.ConnectXAuthURL,
+				TokenURL:     cfg.ConnectXTokenURL,
+				UserInfoURL:  cfg.ConnectXUserInfoURL,
+			}, &http.Client{Timeout: 10 * time.Second}),
 			states,
 			connectCodes,
 		)
@@ -247,8 +255,11 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.Get("/connect/", handleConnectHome(cfg))
 			r.Get("/connect/gmail/login", connectHandler.HandleGmailLogin())
 			r.Get("/connect/gmail/callback", connectHandler.HandleGmailCallback())
+			r.Get("/connect/x/login", connectHandler.HandleXLogin())
+			r.Get("/connect/x/callback", connectHandler.HandleXCallback())
 			r.Post("/connect/cli/exchange", connectHandler.HandleCLIExchange())
 			r.Post("/connect/gmail/refresh", connectHandler.HandleGmailRefresh())
+			r.Post("/connect/x/refresh", connectHandler.HandleXRefresh())
 		})
 	}
 
