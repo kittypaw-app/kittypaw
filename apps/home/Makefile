@@ -4,7 +4,7 @@ VERSION ?= $(shell git -C ../.. describe --tags --always 2>/dev/null || echo dev
 COMMIT  ?= $(shell git -C ../.. rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
-.PHONY: build test lint fmt run smoke smoke-local clean
+.PHONY: build test lint fmt run smoke smoke-local smoke-cutover clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(PKG)
@@ -26,6 +26,9 @@ smoke:
 
 smoke-local:
 	go run ./cmd/kittyhome-smoke
+
+smoke-cutover:
+	go run ./cmd/kittyhome-cutover-smoke
 
 clean:
 	rm -f $(BINARY)

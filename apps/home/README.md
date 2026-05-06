@@ -50,3 +50,18 @@ completion.
 `bash deploy/smoke.sh` is safe against production without credentials. It checks
 health, `/chat/`, chat JS wiring to `/chat/api`, anonymous session rejection, and
 the Google login redirect shape.
+
+`make smoke-cutover` is a manual credentialed smoke for the Home cutover path.
+It requires Portal-issued user and device credentials:
+
+```bash
+HOME_BASE_URL=https://home.kittypaw.app \
+HOME_USER_TOKEN=<user-access-token> \
+HOME_DEVICE_TOKEN=<device-token> \
+HOME_DEVICE_ID=<device-id> \
+HOME_LOCAL_ACCOUNT_ID=<local-account-id> \
+make smoke-cutover
+```
+
+The cutover smoke starts a fake daemon WebSocket client, waits for Home route
+discovery, and verifies a chat completion is relayed through that daemon.

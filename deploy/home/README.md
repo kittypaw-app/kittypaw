@@ -17,3 +17,16 @@ uv run fab rollback
 uv run fab status
 uv run fab logs
 ```
+
+After deploy, run `apps/home`'s credentialed cutover smoke with Portal-issued
+user and device tokens before considering the legacy chat relay removable:
+
+```bash
+cd apps/home
+HOME_BASE_URL=https://home.kittypaw.app \
+HOME_USER_TOKEN=<user-access-token> \
+HOME_DEVICE_TOKEN=<device-token> \
+HOME_DEVICE_ID=<device-id> \
+HOME_LOCAL_ACCOUNT_ID=<local-account-id> \
+make smoke-cutover
+```
