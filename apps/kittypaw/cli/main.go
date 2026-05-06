@@ -131,6 +131,7 @@ func newRootCmd() *cobra.Command {
 		newChannelsCmd(),
 		newLoginCmd(),
 		newConnectCmd(),
+		newGmailCmd(),
 		newChatRelayCmd(),
 		newAccountCmd(),
 	)

@@ -5,11 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	xhtml "golang.org/x/net/html"
 )
 
 type GmailMessageRef struct {
@@ -43,6 +46,10 @@ func NewGmailClient(baseURL string, client *http.Client) *GmailClient {
 }
 
 func (c *GmailClient) ListMessages(ctx context.Context, accessToken string, maxResults int) ([]GmailMessageRef, error) {
+	return c.SearchMessages(ctx, accessToken, maxResults, "")
+}
+
+func (c *GmailClient) SearchMessages(ctx context.Context, accessToken string, maxResults int, query string) ([]GmailMessageRef, error) {
 	if maxResults <= 0 {
 		maxResults = 10
 	}
@@ -53,6 +60,9 @@ func (c *GmailClient) ListMessages(ctx context.Context, accessToken string, maxR
 	q := req.URL.Query()
 	q.Set("maxResults", strconv.Itoa(maxResults))
 	q.Set("fields", "messages(id,threadId)")
+	if strings.TrimSpace(query) != "" {
+		q.Set("q", strings.TrimSpace(query))
+	}
 	req.URL.RawQuery = q.Encode()
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
@@ -151,6 +161,9 @@ func gmailPlainText(part gmailMessagePart) (string, bool) {
 	if text, ok := gmailPlainTextPreferred(part); ok {
 		return text, true
 	}
+	if text, ok := gmailHTMLTextPreferred(part); ok {
+		return text, true
+	}
 	if part.Body.Data != "" {
 		if decoded, err := decodeGmailBody(part.Body.Data); err == nil {
 			return decoded, true
@@ -173,6 +186,20 @@ func gmailPlainTextPreferred(part gmailMessagePart) (string, bool) {
 	return "", false
 }
 
+func gmailHTMLTextPreferred(part gmailMessagePart) (string, bool) {
+	if strings.HasPrefix(strings.ToLower(part.MimeType), "text/html") && part.Body.Data != "" {
+		if decoded, err := decodeGmailBody(part.Body.Data); err == nil {
+			return htmlToReadableText(decoded), true
+		}
+	}
+	for _, child := range part.Parts {
+		if text, ok := gmailHTMLTextPreferred(child); ok {
+			return text, true
+		}
+	}
+	return "", false
+}
+
 func decodeGmailBody(raw string) (string, error) {
 	if b, err := base64.RawURLEncoding.DecodeString(raw); err == nil {
 		return string(b), nil
@@ -184,13 +211,44 @@ func decodeGmailBody(raw string) (string, error) {
 	return string(b), nil
 }
 
+func htmlToReadableText(raw string) string {
+	root, err := xhtml.Parse(strings.NewReader(raw))
+	if err != nil {
+		return normalizeTextWhitespace(html.UnescapeString(raw))
+	}
+	var chunks []string
+	var walk func(*xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if n.Type == xhtml.ElementNode {
+			switch strings.ToLower(n.Data) {
+			case "head", "script", "style", "noscript":
+				return
+			}
+		}
+		if n.Type == xhtml.TextNode {
+			if text := normalizeTextWhitespace(n.Data); text != "" {
+				chunks = append(chunks, text)
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	return strings.Join(chunks, " ")
+}
+
+func normalizeTextWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func gmailStatusError(resp *http.Response) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("gmail authorization failed (%d) — run: kittypaw connect gmail", resp.StatusCode)
+		return fmt.Errorf("gmail authorization failed (%d); run: kittypaw connect gmail", resp.StatusCode)
 	}
 	return fmt.Errorf("gmail response %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 }
