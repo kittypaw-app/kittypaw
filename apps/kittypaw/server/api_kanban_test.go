@@ -263,6 +263,30 @@ func TestKanbanAPITaskActionsCommentsRunsAndLinks(t *testing.T) {
 	}
 }
 
+func TestKanbanAPIValidationAndNotFound(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/projects", map[string]any{
+		"slug":      "bad",
+		"root_path": "relative/path",
+	}, http.StatusBadRequest, nil)
+
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/projects/missing", nil, http.StatusNotFound, nil)
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks", nil, http.StatusBadRequest, nil)
+
+	kanbanAPICreateProject(t, srv, "kitty")
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks", map[string]any{
+		"project": "kitty",
+		"title":   "Bad status",
+		"status":  "bogus",
+	}, http.StatusBadRequest, nil)
+
+	taskID := kanbanAPICreateTask(t, srv, "kitty", "Needs summary")
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/complete", map[string]any{
+		"actor": "alice",
+	}, http.StatusBadRequest, nil)
+}
+
 func newKanbanAPITestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := core.DefaultConfig()

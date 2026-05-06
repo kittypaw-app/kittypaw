@@ -157,6 +157,10 @@ func (s *Server) handleKanbanTasksCreate(w http.ResponseWriter, r *http.Request)
 	if !decodeBody(w, r, &body) {
 		return
 	}
+	if strings.TrimSpace(body.Project) == "" {
+		writeError(w, http.StatusBadRequest, "project is required")
+		return
+	}
 	project, err := kanbanResolveProject(s.store, body.Project)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
@@ -195,6 +199,10 @@ func (s *Server) handleKanbanTasksCreate(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleKanbanTasksList(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.URL.Query().Get("project")) == "" {
+		writeError(w, http.StatusBadRequest, "project is required")
+		return
+	}
 	project, err := kanbanResolveProject(s.store, r.URL.Query().Get("project"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
