@@ -96,29 +96,33 @@ func (s *PostgresStore) UpsertUserEntitlement(ctx context.Context, e UserEntitle
 }
 
 func (s *PostgresStore) UserAllowed(ctx context.Context, userID, providerID string) (bool, error) {
+	var enabled bool
+	var defaultEntitlement string
+	err := s.pool.QueryRow(ctx, `
+		SELECT enabled, default_entitlement
+		FROM connect_provider_policies
+		WHERE provider_id = $1
+	`, providerID).Scan(&enabled, &defaultEntitlement)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	if !enabled {
+		return false, nil
+	}
+
 	var status string
 	var revoked bool
-	err := s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		SELECT status, revoked_at IS NOT NULL
 		FROM connect_user_entitlements
 		WHERE user_id = $1 AND provider_id = $2
 	`, userID, providerID).Scan(&status, &revoked)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			var allowedByDefault bool
-			err := s.pool.QueryRow(ctx, `
-				SELECT EXISTS (
-					SELECT 1
-					FROM connect_provider_policies
-					WHERE provider_id = $1
-						AND enabled = true
-						AND default_entitlement = 'allow'
-				)
-			`, providerID).Scan(&allowedByDefault)
-			if err != nil {
-				return false, err
-			}
-			return allowedByDefault, nil
+			return defaultEntitlement == DefaultEntitlementAllow, nil
 		}
 		return false, err
 	}

@@ -225,6 +225,62 @@ func TestExplicitBlockedEntitlementOverridesDefaultAllow(t *testing.T) {
 	}
 }
 
+func TestExplicitAllowedEntitlementRequiresEnabledProvider(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-kill-switch", "target-kill-switch@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "disabled-provider",
+		Enabled:            false,
+		DefaultEntitlement: connectadmin.DefaultEntitlementAllow,
+		RequestedScopes:    []string{},
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("upsert disabled policy: %v", err)
+	}
+	if err := store.UpsertUserEntitlement(ctx, connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "disabled-provider",
+		Status:     connectadmin.EntitlementAllowed,
+		QuotaJSON:  map[string]any{},
+		Reason:     "explicit allow",
+	}); err != nil {
+		t.Fatalf("upsert disabled provider entitlement: %v", err)
+	}
+	if err := store.UpsertUserEntitlement(ctx, connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "missing-provider",
+		Status:     connectadmin.EntitlementAllowed,
+		QuotaJSON:  map[string]any{},
+		Reason:     "explicit allow",
+	}); err != nil {
+		t.Fatalf("upsert missing provider entitlement: %v", err)
+	}
+
+	allowed, err := store.UserAllowed(ctx, targetUser.ID, "disabled-provider")
+	if err != nil {
+		t.Fatalf("UserAllowed disabled provider: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed disabled provider = true, want false")
+	}
+
+	allowed, err = store.UserAllowed(ctx, targetUser.ID, "missing-provider")
+	if err != nil {
+		t.Fatalf("UserAllowed missing provider: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed missing provider = true, want false")
+	}
+}
+
 func TestNilQuotaStoresEmptyObject(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()
