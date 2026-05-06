@@ -28,6 +28,8 @@ func TestRunLocalCompletesChatRoundTrip(t *testing.T) {
 		"daemon connected",
 		"route discovery",
 		"chat completion",
+		"bff login",
+		"bff chat completion",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output = %q, want progress containing %q", output, want)

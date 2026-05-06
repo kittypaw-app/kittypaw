@@ -12,6 +12,11 @@ Production smoke:
 BASE_URL=https://home.kittypaw.app bash apps/home/deploy/smoke.sh
 ```
 
+This credential-free smoke checks `/health`, `/chat/`, `/assets/chat.js`,
+anonymous `/chat/api/session` rejection, and the Portal Google login redirect.
+Run `make -C apps/home smoke-local` before deploy to verify the full local BFF
+round-trip with fake Portal and fake daemon services.
+
 Portal must include:
 
 ```text
