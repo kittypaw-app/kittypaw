@@ -74,3 +74,22 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestKanbanWebStylesProvideBoardDrawerAndResponsiveRules(t *testing.T) {
+	src := readWebAssetForKanbanTest(t, "web/style.css")
+	for _, token := range []string{
+		".kanban-view",
+		".kanban-toolbar",
+		".kanban-board",
+		".kanban-column",
+		".kanban-task",
+		".kanban-drawer",
+		".kanban-status-dot",
+		".kanban-form",
+		"@media (max-width: 900px)",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("kanban styles missing token %s", token)
+		}
+	}
+}
