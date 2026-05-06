@@ -13,7 +13,7 @@ HOST = os.environ.get("DEPLOY_HOST") or "second"
 DOMAIN = os.environ.get("DEPLOY_DOMAIN") or "home.kittypaw.app"
 REMOTE_DIR = os.environ.get("DEPLOY_REMOTE_DIR") or "/home/jinto/kittyhome"
 SERVICE_USER = os.environ.get("DEPLOY_USER") or "jinto"
-SERVICE_GROUP = os.environ.get("DEPLOY_GROUP", SERVICE_USER)
+SERVICE_GROUP = os.environ.get("DEPLOY_GROUP") or SERVICE_USER
 SERVICE = "kittyhome"
 BINARY = "kittyhome"
 
@@ -137,7 +137,7 @@ def deploy(ctx):
 def smoke(ctx):
     """Run prod smoke against home.kittypaw.app or BASE_URL override."""
     env = {**os.environ}
-    if "BASE_URL" not in env:
+    if not env.get("BASE_URL"):
         env["BASE_URL"] = f"https://{DOMAIN}"
     result = subprocess.run(
         ["bash", str(LOCAL_ROOT / "deploy" / "smoke.sh")],
