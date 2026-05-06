@@ -364,6 +364,16 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/fail", map[string]any{
 		"actor": "alice",
 	}, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/heartbeat", map[string]any{
+		"actor": "alice",
+	}, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/cancel", map[string]any{
+		"actor": "alice",
+	}, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+taskID+"/reclaim", map[string]any{
+		"actor":  "bob",
+		"reason": "stale",
+	}, http.StatusBadRequest, nil)
 
 	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
 		"title": " ",
@@ -374,6 +384,17 @@ func TestKanbanAPIValidationAndNotFound(t *testing.T) {
 	kanbanAPIRequest(t, srv, http.MethodPatch, "/api/v1/kanban/tasks/"+taskID, map[string]any{
 		"milestone":       "release-one",
 		"clear_milestone": true,
+	}, http.StatusBadRequest, nil)
+
+	runningTaskID := kanbanAPICreateTask(t, srv, "kitty", "Running validation")
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+runningTaskID+"/claim", map[string]any{
+		"actor": "alice",
+	}, http.StatusOK, nil)
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+runningTaskID+"/reclaim", map[string]any{
+		"reason": "stale",
+	}, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+runningTaskID+"/reclaim", map[string]any{
+		"actor": "bob",
 	}, http.StatusBadRequest, nil)
 }
 
@@ -438,6 +459,95 @@ func TestKanbanAPITaskFailRecordsFailedRun(t *testing.T) {
 	}
 }
 
+func TestKanbanAPIRunLifecycleHeartbeatCancelReclaim(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	cancelTaskID := kanbanAPICreateTask(t, srv, "kitty", "Cancel task")
+	reclaimTaskID := kanbanAPICreateTask(t, srv, "kitty", "Reclaim task")
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+cancelTaskID+"/claim", map[string]any{
+		"actor": "alice",
+	}, http.StatusOK, nil)
+
+	var heartbeat struct {
+		Run struct {
+			ID          string `json:"id"`
+			Outcome     string `json:"outcome"`
+			HeartbeatAt string `json:"heartbeat_at"`
+		} `json:"run"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+cancelTaskID+"/heartbeat", map[string]any{
+		"actor": "alice",
+	}, http.StatusOK, &heartbeat)
+	if heartbeat.Run.ID == "" || heartbeat.Run.Outcome != "running" || heartbeat.Run.HeartbeatAt == "" {
+		t.Fatalf("heartbeat run = %+v", heartbeat.Run)
+	}
+
+	var canceled struct {
+		Task struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"task"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+cancelTaskID+"/cancel", map[string]any{
+		"actor":  "alice",
+		"reason": "manual stop",
+		"metadata": map[string]any{
+			"source": "api-test",
+		},
+	}, http.StatusOK, &canceled)
+	if canceled.Task.ID != cancelTaskID || canceled.Task.Status != "todo" {
+		t.Fatalf("canceled task = %+v", canceled.Task)
+	}
+
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+reclaimTaskID+"/claim", map[string]any{
+		"actor":    "alice",
+		"work_dir": "/repo/kitty-old",
+	}, http.StatusOK, nil)
+	var reclaimed struct {
+		Run struct {
+			ID              string `json:"id"`
+			Actor           string `json:"actor"`
+			Outcome         string `json:"outcome"`
+			WorkDir         string `json:"work_dir"`
+			WorkDirProvider string `json:"work_dir_provider"`
+		} `json:"run"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+reclaimTaskID+"/reclaim", map[string]any{
+		"actor":         "bob",
+		"reason":        "stale runner",
+		"work_dir":      "/repo/kitty-new",
+		"metadata_json": `{"stale_after_ms":600000}`,
+	}, http.StatusOK, &reclaimed)
+	if reclaimed.Run.ID == "" || reclaimed.Run.Actor != "bob" || reclaimed.Run.Outcome != "running" || reclaimed.Run.WorkDir != "/repo/kitty-new" || reclaimed.Run.WorkDirProvider != "manual" {
+		t.Fatalf("reclaimed run = %+v", reclaimed.Run)
+	}
+
+	var runs struct {
+		Runs []struct {
+			Outcome      string `json:"outcome"`
+			Summary      string `json:"summary"`
+			MetadataJSON string `json:"metadata_json"`
+		} `json:"runs"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks/"+reclaimTaskID+"/runs", nil, http.StatusOK, &runs)
+	var reclaimedRuns, runningRuns int
+	for _, run := range runs.Runs {
+		if run.Outcome == "reclaimed" {
+			reclaimedRuns++
+			if run.Summary != "stale runner" || !strings.Contains(run.MetadataJSON, "stale_after_ms") {
+				t.Fatalf("reclaimed run = %+v", run)
+			}
+		}
+		if run.Outcome == "running" {
+			runningRuns++
+		}
+	}
+	if len(runs.Runs) != 2 || reclaimedRuns != 1 || runningRuns != 1 {
+		t.Fatalf("runs = %+v", runs.Runs)
+	}
+}
+
 func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
 	srv := newKanbanAPITestServer(t)
 	kanbanAPICreateProject(t, srv, "kitty")
@@ -453,8 +563,11 @@ func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {
 		{"show", http.MethodGet, "/api/v1/kanban/tasks/" + missingTaskID, nil},
 		{"update", http.MethodPatch, "/api/v1/kanban/tasks/" + missingTaskID, map[string]any{"title": "x"}},
 		{"claim", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/claim", map[string]any{"actor": "alice"}},
+		{"heartbeat", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/heartbeat", map[string]any{"actor": "alice"}},
 		{"complete", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/complete", map[string]any{"summary": "done"}},
 		{"fail", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/fail", map[string]any{"error": "boom"}},
+		{"cancel", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/cancel", map[string]any{"reason": "stop"}},
+		{"reclaim", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/reclaim", map[string]any{"actor": "bob", "reason": "stale"}},
 		{"archive", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/archive", map[string]any{}},
 		{"block", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/block", map[string]any{"reason": "missing"}},
 		{"unblock", http.MethodPost, "/api/v1/kanban/tasks/" + missingTaskID + "/unblock", map[string]any{}},

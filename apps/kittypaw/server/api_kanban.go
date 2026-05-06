@@ -384,6 +384,30 @@ func (s *Server) handleKanbanTaskClaim(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"run": run})
 }
 
+func (s *Server) handleKanbanTaskHeartbeat(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	var body struct {
+		Actor string `json:"actor"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeBody(w, r, &body) {
+			return
+		}
+	}
+	run, err := s.store.HeartbeatKanbanTask(taskID, store.HeartbeatKanbanTaskRequest{
+		Actor: strings.TrimSpace(body.Actor),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": run})
+}
+
 func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
 	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
@@ -464,6 +488,92 @@ func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTaskCancel(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	var body struct {
+		Actor        string          `json:"actor"`
+		Reason       string          `json:"reason"`
+		Metadata     json.RawMessage `json:"metadata"`
+		MetadataJSON string          `json:"metadata_json"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	metadata, ok := kanbanMetadataJSON(w, body.Metadata, body.MetadataJSON)
+	if !ok {
+		return
+	}
+	task, err := s.store.CancelKanbanTask(taskID, store.CancelKanbanTaskRequest{
+		Actor:        strings.TrimSpace(body.Actor),
+		Reason:       reason,
+		MetadataJSON: metadata,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleKanbanTaskReclaim(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
+	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	var body struct {
+		Actor        string          `json:"actor"`
+		Reason       string          `json:"reason"`
+		WorkDir      string          `json:"work_dir"`
+		Metadata     json.RawMessage `json:"metadata"`
+		MetadataJSON string          `json:"metadata_json"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	actor := strings.TrimSpace(body.Actor)
+	if actor == "" {
+		writeError(w, http.StatusBadRequest, "actor is required")
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+	metadata, ok := kanbanMetadataJSON(w, body.Metadata, body.MetadataJSON)
+	if !ok {
+		return
+	}
+	workDir := strings.TrimSpace(body.WorkDir)
+	workDirProvider := ""
+	if workDir != "" {
+		workDir = filepath.Clean(workDir)
+		workDirProvider = store.KanbanWorkDirManual
+	}
+	run, err := s.store.ReclaimKanbanTask(taskID, store.ReclaimKanbanTaskRequest{
+		Actor:           actor,
+		Reason:          reason,
+		WorkDir:         workDir,
+		WorkDirProvider: workDirProvider,
+		MetadataJSON:    metadata,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": run})
 }
 
 func (s *Server) handleKanbanTaskArchive(w http.ResponseWriter, r *http.Request) {
