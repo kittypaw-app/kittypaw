@@ -245,6 +245,210 @@ func TestKanbanFailRequiresRunningRun(t *testing.T) {
 	}
 }
 
+func TestKanbanHeartbeatUpdatesRunningRun(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Heartbeat",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	run, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"})
+	if err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	const oldHeartbeat = "2000-01-01T00:00:00Z"
+	if _, err := st.db.Exec(`UPDATE kanban_task_runs SET heartbeat_at = ? WHERE id = ?`, oldHeartbeat, run.ID); err != nil {
+		t.Fatalf("set old heartbeat: %v", err)
+	}
+
+	updated, err := st.HeartbeatKanbanTask(task.ID, HeartbeatKanbanTaskRequest{Actor: "alice"})
+	if err != nil {
+		t.Fatalf("HeartbeatKanbanTask: %v", err)
+	}
+	if updated.ID != run.ID || updated.Outcome != KanbanRunRunning || updated.HeartbeatAt == oldHeartbeat || updated.HeartbeatAt == "" {
+		t.Fatalf("updated run = %+v", updated)
+	}
+}
+
+func TestKanbanHeartbeatRequiresRunningRun(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "No run",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+
+	if _, err := st.HeartbeatKanbanTask(task.ID, HeartbeatKanbanTaskRequest{Actor: "alice"}); err == nil {
+		t.Fatal("expected heartbeat without a running run to fail")
+	}
+}
+
+func TestKanbanCancelClosesRunAndReturnsTaskToTodo(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Cancel",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+
+	got, err := st.CancelKanbanTask(task.ID, CancelKanbanTaskRequest{
+		Actor:        "alice",
+		Reason:       "stopping local run",
+		MetadataJSON: `{"source":"test"}`,
+	})
+	if err != nil {
+		t.Fatalf("CancelKanbanTask: %v", err)
+	}
+	if got.Status != KanbanStatusTodo {
+		t.Fatalf("task after cancel = %+v", got)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != KanbanRunCanceled || runs[0].Summary != "stopping local run" || runs[0].MetadataJSON != `{"source":"test"}` || runs[0].FinishedAt == "" {
+		t.Fatalf("runs = %+v", runs)
+	}
+	events, err := st.ListKanbanEvents(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanEvents: %v", err)
+	}
+	if events[len(events)-1].EventType != "canceled" || events[len(events)-1].Actor != "alice" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestKanbanReclaimClosesOldRunAndStartsNewRun(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Reclaim",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	first, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"})
+	if err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+
+	second, err := st.ReclaimKanbanTask(task.ID, ReclaimKanbanTaskRequest{
+		Actor:        "bob",
+		Reason:       "stale runner",
+		MetadataJSON: `{"stale_after_ms":600000}`,
+	})
+	if err != nil {
+		t.Fatalf("ReclaimKanbanTask: %v", err)
+	}
+	if second.ID == first.ID || second.Outcome != KanbanRunRunning || second.Actor != "bob" || second.WorkDir != first.WorkDir || second.WorkDirProvider != first.WorkDirProvider {
+		t.Fatalf("new run = %+v, first = %+v", second, first)
+	}
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != KanbanStatusRunning {
+		t.Fatalf("task status = %q", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	var reclaimed, running int
+	for _, run := range runs {
+		switch run.Outcome {
+		case KanbanRunReclaimed:
+			reclaimed++
+			if run.Summary != "stale runner" || run.MetadataJSON != `{"stale_after_ms":600000}` || run.FinishedAt == "" {
+				t.Fatalf("reclaimed run = %+v", run)
+			}
+		case KanbanRunRunning:
+			running++
+		}
+	}
+	if len(runs) != 2 || reclaimed != 1 || running != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanReclaimRequiresActorReasonAndRunningRun(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Reclaim validation",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+
+	if _, err := st.ReclaimKanbanTask(task.ID, ReclaimKanbanTaskRequest{Actor: "bob", Reason: "stale"}); err == nil {
+		t.Fatal("expected reclaim without running run to fail")
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	if _, err := st.ReclaimKanbanTask(task.ID, ReclaimKanbanTaskRequest{Reason: "stale"}); err == nil {
+		t.Fatal("expected reclaim without actor to fail")
+	}
+	if _, err := st.ReclaimKanbanTask(task.ID, ReclaimKanbanTaskRequest{Actor: "bob"}); err == nil {
+		t.Fatal("expected reclaim without reason to fail")
+	}
+}
+
 func TestKanbanUpdateTaskEditsFieldsAndMilestone(t *testing.T) {
 	st := openTestStore(t)
 	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
