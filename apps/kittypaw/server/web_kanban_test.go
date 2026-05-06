@@ -29,3 +29,26 @@ func TestKanbanWebAssetsAreLoadedAndMounted(t *testing.T) {
 		t.Fatal("switchTab must mount the Kanban module")
 	}
 }
+
+func TestKanbanWebModuleUsesAuthenticatedAPIAndExpectedEndpoints(t *testing.T) {
+	src := readWebAssetForKanbanTest(t, "web/kanban.js")
+	for _, status := range []string{"triage", "todo", "ready", "running", "blocked", "done"} {
+		if !strings.Contains(src, `key: '`+status+`'`) {
+			t.Fatalf("kanban module missing status column %q", status)
+		}
+	}
+	for _, endpoint := range []string{
+		"/api/v1/projects",
+		"/api/v1/kanban/tasks?project=",
+		"/api/v1/projects/' + encodeURIComponent(project) + '/boards",
+		"/api/v1/projects/' + encodeURIComponent(project) + '/milestones",
+		"/api/v1/kanban/tasks/' + encodeURIComponent(taskID)",
+	} {
+		if !strings.Contains(src, endpoint) {
+			t.Fatalf("kanban module missing endpoint %s", endpoint)
+		}
+	}
+	if strings.Contains(src, "apiRaw('/api/v1") || strings.Contains(src, "apiPost('/api/v1") {
+		t.Fatal("kanban module must use api(), not apiRaw/apiPost, for /api/v1 routes")
+	}
+}
