@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -139,6 +140,17 @@ type FailKanbanTaskRequest struct {
 	MetadataJSON string
 }
 
+type UpdateKanbanTaskRequest struct {
+	Actor          string
+	Title          *string
+	Body           *string
+	Status         *string
+	Priority       *int
+	Assignee       *string
+	MilestoneID    *string
+	ClearMilestone bool
+}
+
 type BlockKanbanTaskRequest struct {
 	Actor  string
 	Reason string
@@ -150,10 +162,11 @@ type UnblockKanbanTaskRequest struct {
 }
 
 type KanbanTaskListFilter struct {
-	ProjectID   string
-	BoardID     string
-	MilestoneID string
-	Status      string
+	ProjectID       string
+	BoardID         string
+	MilestoneID     string
+	Status          string
+	IncludeArchived bool
 }
 
 const (
@@ -449,6 +462,9 @@ func (s *Store) ListKanbanTasks(filter KanbanTaskListFilter) ([]KanbanTask, erro
 	if filter.Status != "" {
 		query += ` AND status = ?`
 		args = append(args, filter.Status)
+	} else if !filter.IncludeArchived {
+		query += ` AND status != ?`
+		args = append(args, KanbanStatusArchived)
 	}
 	query += ` ORDER BY priority DESC, created_at`
 	rows, err := s.db.Query(query, args...)
@@ -615,6 +631,198 @@ func (s *Store) FailKanbanTask(taskID string, req FailKanbanTaskRequest) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) UpdateKanbanTask(taskID string, req UpdateKanbanTaskRequest) (*KanbanTask, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	if req.MilestoneID != nil && req.ClearMilestone {
+		return nil, fmt.Errorf("milestone and clear milestone are mutually exclusive")
+	}
+	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
+		return nil, fmt.Errorf("title is required")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	task, err := scanKanbanTask(tx.QueryRow(`
+		SELECT id, project_id, board_id, milestone_id, title, body, status,
+			priority, assignee, created_by, created_at, updated_at, completed_at
+		FROM kanban_tasks WHERE id = ?`, taskID))
+	if err != nil {
+		return nil, err
+	}
+	if task.Status == KanbanStatusRunning {
+		return nil, fmt.Errorf("task %s is running", taskID)
+	}
+	if task.Status == KanbanStatusArchived && req.Status != nil && strings.TrimSpace(*req.Status) != KanbanStatusArchived {
+		return nil, fmt.Errorf("task %s is archived", taskID)
+	}
+
+	nextTitle := task.Title
+	nextBody := task.Body
+	nextStatus := task.Status
+	nextPriority := task.Priority
+	nextAssignee := task.Assignee
+	nextMilestoneID := task.MilestoneID
+	nextCompletedAt := task.CompletedAt
+	var changed []string
+
+	if req.Title != nil {
+		nextTitle = strings.TrimSpace(*req.Title)
+		if nextTitle != task.Title {
+			changed = append(changed, "title")
+		}
+	}
+	if req.Body != nil {
+		nextBody = *req.Body
+		if nextBody != task.Body {
+			changed = append(changed, "body")
+		}
+	}
+	if req.Status != nil {
+		nextStatus = strings.TrimSpace(*req.Status)
+		if err := kanbanValidateTaskStatus(nextStatus); err != nil {
+			return nil, err
+		}
+		if nextStatus == KanbanStatusRunning {
+			return nil, fmt.Errorf("task %s cannot move to running directly", taskID)
+		}
+		if nextStatus == KanbanStatusReady {
+			blocked, err := kanbanTaskHasIncompleteBlockers(tx, taskID)
+			if err != nil {
+				return nil, err
+			}
+			if blocked {
+				return nil, fmt.Errorf("task %s has incomplete blockers", taskID)
+			}
+		}
+		if nextStatus != task.Status {
+			changed = append(changed, "status")
+		}
+	}
+	if req.Priority != nil {
+		nextPriority = *req.Priority
+		if nextPriority != task.Priority {
+			changed = append(changed, "priority")
+		}
+	}
+	if req.Assignee != nil {
+		nextAssignee = strings.TrimSpace(*req.Assignee)
+		if nextAssignee != task.Assignee {
+			changed = append(changed, "assignee")
+		}
+	}
+	if req.MilestoneID != nil {
+		milestoneArg := strings.TrimSpace(*req.MilestoneID)
+		if milestoneArg == "" {
+			nextMilestoneID = ""
+		} else {
+			var milestoneID string
+			if err := tx.QueryRow(`
+				SELECT id FROM kanban_milestones
+				WHERE project_id = ? AND (id = ? OR slug = ?)`,
+				task.ProjectID, milestoneArg, milestoneArg).Scan(&milestoneID); err != nil {
+				return nil, fmt.Errorf("resolve milestone: %w", err)
+			}
+			nextMilestoneID = milestoneID
+		}
+		if nextMilestoneID != task.MilestoneID {
+			changed = append(changed, "milestone")
+		}
+	}
+	if req.ClearMilestone {
+		nextMilestoneID = ""
+		if task.MilestoneID != "" {
+			changed = append(changed, "milestone")
+		}
+	}
+
+	if task.Status != KanbanStatusDone && nextStatus == KanbanStatusDone {
+		nextCompletedAt = kanbanNow()
+	}
+	if task.Status == KanbanStatusDone && nextStatus != KanbanStatusDone {
+		nextCompletedAt = ""
+	}
+
+	if len(changed) == 0 {
+		return task, nil
+	}
+
+	var milestone any
+	if nextMilestoneID != "" {
+		milestone = nextMilestoneID
+	}
+	now := kanbanNow()
+	if _, err := tx.Exec(`
+		UPDATE kanban_tasks
+		SET title = ?, body = ?, status = ?, priority = ?, assignee = ?,
+			milestone_id = ?, completed_at = ?, updated_at = ?
+		WHERE id = ?`,
+		nextTitle, nextBody, nextStatus, nextPriority, nextAssignee,
+		milestone, nextCompletedAt, now, taskID); err != nil {
+		return nil, err
+	}
+	if err := recordKanbanEventTx(tx, taskID, req.Actor, "updated", strings.Join(changed, ","), kanbanUpdateMetadata(changed)); err != nil {
+		return nil, err
+	}
+	if task.Status != KanbanStatusDone && nextStatus == KanbanStatusDone {
+		if err := s.promoteUnblockedChildren(tx, taskID, req.Actor); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetKanbanTask(taskID)
+}
+
+func (s *Store) ArchiveKanbanTask(taskID, actor string) (*KanbanTask, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	task, err := scanKanbanTask(tx.QueryRow(`
+		SELECT id, project_id, board_id, milestone_id, title, body, status,
+			priority, assignee, created_by, created_at, updated_at, completed_at
+		FROM kanban_tasks WHERE id = ?`, taskID))
+	if err != nil {
+		return nil, err
+	}
+	if task.Status == KanbanStatusRunning {
+		return nil, fmt.Errorf("task %s is running", taskID)
+	}
+	if task.Status == KanbanStatusArchived {
+		return task, nil
+	}
+
+	now := kanbanNow()
+	if _, err := tx.Exec(`
+		UPDATE kanban_tasks
+		SET status = ?, updated_at = ?
+		WHERE id = ?`, KanbanStatusArchived, now, taskID); err != nil {
+		return nil, err
+	}
+	if err := recordKanbanEventTx(tx, taskID, actor, "archived", "", "{}"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetKanbanTask(taskID)
 }
 
 func (s *Store) BlockKanbanTask(taskID string, req BlockKanbanTaskRequest) error {
@@ -833,11 +1041,34 @@ func scanKanbanRun(row sqlScanner) (*KanbanRun, error) {
 	return &r, nil
 }
 
+func kanbanValidateTaskStatus(status string) error {
+	switch status {
+	case KanbanStatusTriage,
+		KanbanStatusTodo,
+		KanbanStatusReady,
+		KanbanStatusRunning,
+		KanbanStatusBlocked,
+		KanbanStatusDone,
+		KanbanStatusArchived:
+		return nil
+	default:
+		return fmt.Errorf("unknown kanban status %q", status)
+	}
+}
+
 func normalizeKanbanJSON(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "{}"
 	}
 	return raw
+}
+
+func kanbanUpdateMetadata(fields []string) string {
+	raw, err := json.Marshal(map[string]any{"fields": fields})
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
 }
 
 func recordKanbanEventTx(tx *sql.Tx, taskID, actor, eventType, detail, metadataJSON string) error {
@@ -887,6 +1118,20 @@ func hasKanbanPath(q sqlQueryer, startID, targetID string) (bool, error) {
 		rows.Close()
 	}
 	return false, nil
+}
+
+func kanbanTaskHasIncompleteBlockers(tx *sql.Tx, taskID string) (bool, error) {
+	var blockers int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*)
+		FROM kanban_task_links l
+		JOIN kanban_tasks parent ON parent.id = l.parent_id
+		WHERE l.child_id = ?
+		  AND l.link_type = 'blocks'
+		  AND parent.status != ?`, taskID, KanbanStatusDone).Scan(&blockers); err != nil {
+		return false, err
+	}
+	return blockers > 0, nil
 }
 
 func (s *Store) promoteUnblockedChildren(tx *sql.Tx, parentID, actor string) error {

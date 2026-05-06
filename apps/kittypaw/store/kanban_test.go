@@ -245,6 +245,253 @@ func TestKanbanFailRequiresRunningRun(t *testing.T) {
 	}
 }
 
+func TestKanbanUpdateTaskEditsFieldsAndMilestone(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	ms, err := st.CreateKanbanMilestone(CreateKanbanMilestoneRequest{
+		ProjectID: project.ID,
+		Title:     "Release One",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanMilestone: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Old title",
+		Body:      "old",
+		Status:    KanbanStatusTodo,
+		Priority:  1,
+		Assignee:  "alice",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+
+	title := "New title"
+	body := ""
+	priority := 5
+	assignee := "bob"
+	status := KanbanStatusReady
+	milestoneID := ms.ID
+	updated, err := st.UpdateKanbanTask(task.ID, UpdateKanbanTaskRequest{
+		Actor:       "carol",
+		Title:       &title,
+		Body:        &body,
+		Priority:    &priority,
+		Assignee:    &assignee,
+		Status:      &status,
+		MilestoneID: &milestoneID,
+	})
+	if err != nil {
+		t.Fatalf("UpdateKanbanTask: %v", err)
+	}
+	if updated.Title != title || updated.Body != "" || updated.Priority != priority || updated.Assignee != assignee || updated.Status != KanbanStatusReady || updated.MilestoneID != ms.ID {
+		t.Fatalf("updated task = %+v", updated)
+	}
+	events, err := st.ListKanbanEvents(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanEvents: %v", err)
+	}
+	if len(events) < 2 || events[len(events)-1].EventType != "updated" || events[len(events)-1].Actor != "carol" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestKanbanUpdateTaskClearsMilestoneAndCompletedAt(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	ms, err := st.CreateKanbanMilestone(CreateKanbanMilestoneRequest{
+		ProjectID: project.ID,
+		Title:     "Release One",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanMilestone: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID:   project.ID,
+		MilestoneID: ms.ID,
+		Title:       "Done task",
+		Status:      KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	if err := st.CompleteKanbanTask(task.ID, CompleteKanbanTaskRequest{Actor: "alice", Summary: "done"}); err != nil {
+		t.Fatalf("CompleteKanbanTask: %v", err)
+	}
+
+	status := KanbanStatusTodo
+	updated, err := st.UpdateKanbanTask(task.ID, UpdateKanbanTaskRequest{
+		Actor:          "alice",
+		Status:         &status,
+		ClearMilestone: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateKanbanTask: %v", err)
+	}
+	if updated.Status != KanbanStatusTodo || updated.CompletedAt != "" || updated.MilestoneID != "" {
+		t.Fatalf("updated task = %+v", updated)
+	}
+}
+
+func TestKanbanUpdateTaskRejectsRunningAndBlockedReady(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	parent, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Parent",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("Create parent: %v", err)
+	}
+	child, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Child",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+	if err := st.LinkKanbanTasks(parent.ID, child.ID); err != nil {
+		t.Fatalf("LinkKanbanTasks: %v", err)
+	}
+	ready := KanbanStatusReady
+	if _, err := st.UpdateKanbanTask(child.ID, UpdateKanbanTaskRequest{Status: &ready}); err == nil {
+		t.Fatal("expected ready move with incomplete blocker to fail")
+	}
+	running := KanbanStatusRunning
+	if _, err := st.UpdateKanbanTask(parent.ID, UpdateKanbanTaskRequest{Status: &running}); err == nil {
+		t.Fatal("expected direct running move to fail")
+	}
+	if _, err := st.ClaimKanbanTask(parent.ID, ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	todo := KanbanStatusTodo
+	if _, err := st.UpdateKanbanTask(parent.ID, UpdateKanbanTaskRequest{Status: &todo}); err == nil {
+		t.Fatal("expected update from running to fail")
+	}
+}
+
+func TestKanbanArchiveHidesTaskFromDefaultList(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Archive me",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	archived, err := st.ArchiveKanbanTask(task.ID, "alice")
+	if err != nil {
+		t.Fatalf("ArchiveKanbanTask: %v", err)
+	}
+	if archived.Status != KanbanStatusArchived {
+		t.Fatalf("archived status = %q", archived.Status)
+	}
+	tasks, err := st.ListKanbanTasks(KanbanTaskListFilter{ProjectID: project.ID})
+	if err != nil {
+		t.Fatalf("ListKanbanTasks default: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("default list = %+v, want archived hidden", tasks)
+	}
+	tasks, err = st.ListKanbanTasks(KanbanTaskListFilter{ProjectID: project.ID, Status: KanbanStatusArchived})
+	if err != nil {
+		t.Fatalf("ListKanbanTasks archived: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != task.ID {
+		t.Fatalf("archived list = %+v", tasks)
+	}
+}
+
+func TestKanbanArchiveRejectsRunningTask(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Running",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, ClaimKanbanTaskRequest{Actor: "alice"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	if _, err := st.ArchiveKanbanTask(task.ID, "alice"); err == nil {
+		t.Fatal("expected archiving running task to fail")
+	}
+}
+
+func TestKanbanUpdateTaskRejectsRestoringArchivedTask(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
+		Slug:     "kitty",
+		Name:     "KittyPaw",
+		RootPath: "/repo/kitty",
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(CreateKanbanTaskRequest{
+		ProjectID: project.ID,
+		Title:     "Archived",
+		Status:    KanbanStatusTodo,
+	})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ArchiveKanbanTask(task.ID, "alice"); err != nil {
+		t.Fatalf("ArchiveKanbanTask: %v", err)
+	}
+
+	todo := KanbanStatusTodo
+	if _, err := st.UpdateKanbanTask(task.ID, UpdateKanbanTaskRequest{Status: &todo}); err == nil {
+		t.Fatal("expected restoring archived task through update to fail")
+	}
+}
+
 func TestKanbanTaskRejectsBoardAndMilestoneFromOtherProject(t *testing.T) {
 	st := openTestStore(t)
 	left, err := st.CreateKanbanProject(CreateKanbanProjectRequest{
