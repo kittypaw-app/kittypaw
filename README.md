@@ -62,6 +62,6 @@ make smoke-local
 ```
 
 `make contracts-check` validates JSON contract fixtures. `make smoke-local`
-runs contracts, deploy-script syntax checks, Go/Rust package tests, and the Chat
-in-process e2e smoke without touching production hosts. `make e2e-local` runs
-the Docker-backed local auth/chat E2E.
+runs contracts, deploy-script syntax checks, Go/Rust package tests, and the
+Chat and Space in-process e2e smokes without touching production hosts.
+`make e2e-local` runs the Docker-backed local auth/space E2E.

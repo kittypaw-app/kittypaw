@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Local auth/chat E2E"
+echo "==> Local auth/space E2E"
 echo "DATABASE_URL=$DATABASE_URL"
 
 if [[ "${KITTY_E2E_SKIP_COMPOSE:-}" != "1" ]]; then

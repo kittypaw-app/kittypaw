@@ -54,7 +54,7 @@ type pairResponse struct {
 	ExpiresIn          int    `json:"expires_in"`
 }
 
-func TestPortalChatBrowserSessionRelay(t *testing.T) {
+func TestPortalSpaceBrowserSessionRelay(t *testing.T) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		t.Skip("DATABASE_URL not set")
@@ -71,10 +71,10 @@ func TestPortalChatBrowserSessionRelay(t *testing.T) {
 	defer fakeGoogle.Close()
 
 	portalAddr := reserveAddr(t)
-	chatAddr := reserveAddr(t)
+	spaceAddr := reserveAddr(t)
 	portalURL := "http://" + portalAddr
-	chatURL := "http://" + chatAddr
-	chatCallback := chatURL + "/auth/callback"
+	spaceURL := "http://" + spaceAddr
+	spaceCallback := spaceURL + "/auth/callback"
 
 	portal := startGoRun(ctx, t, "portal", filepath.Join(root, "apps/portal"), []string{"./cmd/server"}, map[string]string{
 		"PORT":                       portOnly(portalAddr),
@@ -82,9 +82,9 @@ func TestPortalChatBrowserSessionRelay(t *testing.T) {
 		"JWT_PRIVATE_KEY_PEM_B64":    generatePrivateKeyB64(t),
 		"BASE_URL":                   portalURL,
 		"API_BASE_URL":               portalURL,
-		"CHAT_RELAY_URL":             chatURL,
-		"CORS_ORIGINS":               chatURL,
-		"WEB_REDIRECT_URI_ALLOWLIST": chatCallback,
+		"SPACE_BASE_URL":             spaceURL,
+		"CORS_ORIGINS":               spaceURL,
+		"WEB_REDIRECT_URI_ALLOWLIST": spaceCallback,
 		"GOOGLE_CLIENT_ID":           "local-e2e-client",
 		"GOOGLE_CLIENT_SECRET":       "local-e2e-secret",
 		"GOOGLE_AUTH_URL":            fakeGoogle.URL + "/o/oauth2/v2/auth",
@@ -93,14 +93,14 @@ func TestPortalChatBrowserSessionRelay(t *testing.T) {
 	})
 	waitForHealth(ctx, t, portalURL+"/health", portal)
 
-	chat := startGoRun(ctx, t, "chat", filepath.Join(root, "apps/chat"), []string{"./cmd/kittychat"}, map[string]string{
-		"KITTYCHAT_BIND_ADDR":         chatAddr,
-		"KITTYCHAT_PUBLIC_BASE_URL":   chatURL,
-		"KITTYCHAT_API_AUTH_BASE_URL": portalURL + "/auth",
-		"KITTYCHAT_JWKS_URL":          portalURL + "/.well-known/jwks.json",
-		"KITTYCHAT_VERSION":           "local-e2e",
+	space := startGoRun(ctx, t, "space", filepath.Join(root, "apps/space"), []string{"./cmd/kittyspace"}, map[string]string{
+		"KITTYSPACE_BIND_ADDR":         spaceAddr,
+		"KITTYSPACE_PUBLIC_BASE_URL":   spaceURL,
+		"KITTYSPACE_API_AUTH_BASE_URL": portalURL + "/auth",
+		"KITTYSPACE_JWKS_URL":          portalURL + "/.well-known/jwks.json",
+		"KITTYSPACE_VERSION":           "local-e2e",
 	})
-	waitForHealth(ctx, t, chatURL+"/health", chat)
+	waitForHealth(ctx, t, spaceURL+"/health", space)
 
 	apiClient := &http.Client{Timeout: 10 * time.Second}
 	userTokens := portalGoogleLogin(t, apiClient, portalURL)
@@ -110,7 +110,7 @@ func TestPortalChatBrowserSessionRelay(t *testing.T) {
 	t.Cleanup(relayCancel)
 	connector := &chatrelay.Connector{
 		Config: chatrelay.ConnectorConfig{
-			RelayURL:      chatURL,
+			RelayURL:      spaceURL,
 			Credential:    device.DeviceAccessToken,
 			DeviceID:      device.DeviceID,
 			LocalAccounts: []string{localAccountID},
@@ -123,18 +123,18 @@ func TestPortalChatBrowserSessionRelay(t *testing.T) {
 		RetryInitialDelay: 100 * time.Millisecond,
 		RetryMaxDelay:     250 * time.Millisecond,
 		Logf: func(format string, args ...any) {
-			t.Logf("chat relay: "+format, args...)
+			t.Logf("space relay: "+format, args...)
 		},
 	})
 
 	browser := newBrowserClient(t)
-	chatBrowserLogin(t, browser, chatURL)
-	assertBrowserSession(t, browser, chatURL)
-	waitForBrowserRoute(ctx, t, browser, chatURL, device.DeviceID)
-	assertBrowserChatCompletion(t, browser, chatURL, device.DeviceID)
+	spaceBrowserLogin(t, browser, spaceURL)
+	assertBrowserSession(t, browser, spaceURL)
+	waitForBrowserRoute(ctx, t, browser, spaceURL, device.DeviceID)
+	assertBrowserChatCompletion(t, browser, spaceURL, device.DeviceID)
 }
 
-func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
+func TestPortalSpaceRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		t.Skip("DATABASE_URL not set")
@@ -157,10 +157,10 @@ func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 	t.Setenv("KITTYPAW_ALLOW_INSECURE_REGISTRY", "1")
 
 	portalAddr := reserveAddr(t)
-	chatAddr := reserveAddr(t)
+	spaceAddr := reserveAddr(t)
 	portalURL := "http://" + portalAddr
-	chatURL := "http://" + chatAddr
-	chatCallback := chatURL + "/auth/callback"
+	spaceURL := "http://" + spaceAddr
+	spaceCallback := spaceURL + "/auth/callback"
 
 	portal := startGoRun(ctx, t, "portal", filepath.Join(root, "apps/portal"), []string{"./cmd/server"}, map[string]string{
 		"PORT":                       portOnly(portalAddr),
@@ -168,9 +168,9 @@ func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 		"JWT_PRIVATE_KEY_PEM_B64":    generatePrivateKeyB64(t),
 		"BASE_URL":                   portalURL,
 		"API_BASE_URL":               portalURL,
-		"CHAT_RELAY_URL":             chatURL,
-		"CORS_ORIGINS":               chatURL,
-		"WEB_REDIRECT_URI_ALLOWLIST": chatCallback,
+		"SPACE_BASE_URL":             spaceURL,
+		"CORS_ORIGINS":               spaceURL,
+		"WEB_REDIRECT_URI_ALLOWLIST": spaceCallback,
 		"GOOGLE_CLIENT_ID":           "local-e2e-client",
 		"GOOGLE_CLIENT_SECRET":       "local-e2e-secret",
 		"GOOGLE_AUTH_URL":            fakeGoogle.URL + "/o/oauth2/v2/auth",
@@ -179,14 +179,14 @@ func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 	})
 	waitForHealth(ctx, t, portalURL+"/health", portal)
 
-	chat := startGoRun(ctx, t, "chat", filepath.Join(root, "apps/chat"), []string{"./cmd/kittychat"}, map[string]string{
-		"KITTYCHAT_BIND_ADDR":         chatAddr,
-		"KITTYCHAT_PUBLIC_BASE_URL":   chatURL,
-		"KITTYCHAT_API_AUTH_BASE_URL": portalURL + "/auth",
-		"KITTYCHAT_JWKS_URL":          portalURL + "/.well-known/jwks.json",
-		"KITTYCHAT_VERSION":           "local-e2e",
+	space := startGoRun(ctx, t, "space", filepath.Join(root, "apps/space"), []string{"./cmd/kittyspace"}, map[string]string{
+		"KITTYSPACE_BIND_ADDR":         spaceAddr,
+		"KITTYSPACE_PUBLIC_BASE_URL":   spaceURL,
+		"KITTYSPACE_API_AUTH_BASE_URL": portalURL + "/auth",
+		"KITTYSPACE_JWKS_URL":          portalURL + "/.well-known/jwks.json",
+		"KITTYSPACE_VERSION":           "local-e2e",
 	})
-	waitForHealth(ctx, t, chatURL+"/health", chat)
+	waitForHealth(ctx, t, spaceURL+"/health", space)
 
 	apiClient := &http.Client{Timeout: 10 * time.Second}
 	userTokens := portalGoogleLogin(t, apiClient, portalURL)
@@ -200,7 +200,7 @@ func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 	t.Cleanup(relayCancel)
 	connector := &chatrelay.Connector{
 		Config: chatrelay.ConnectorConfig{
-			RelayURL:      chatURL,
+			RelayURL:      spaceURL,
 			Credential:    device.DeviceAccessToken,
 			DeviceID:      device.DeviceID,
 			LocalAccounts: []string{localAccountID},
@@ -213,28 +213,28 @@ func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 		RetryInitialDelay: 100 * time.Millisecond,
 		RetryMaxDelay:     250 * time.Millisecond,
 		Logf: func(format string, args ...any) {
-			t.Logf("chat relay: "+format, args...)
+			t.Logf("space relay: "+format, args...)
 		},
 	})
 
 	browser := newBrowserClient(t)
-	chatBrowserLogin(t, browser, chatURL)
-	assertBrowserSession(t, browser, chatURL)
-	waitForBrowserRoute(ctx, t, browser, chatURL, device.DeviceID)
+	spaceBrowserLogin(t, browser, spaceURL)
+	assertBrowserSession(t, browser, spaceURL)
+	waitForBrowserRoute(ctx, t, browser, spaceURL, device.DeviceID)
 
-	offer := browserChatCompletion(t, browser, chatURL, device.DeviceID, "환율 알려줘")
+	offer := browserChatCompletion(t, browser, spaceURL, device.DeviceID, "환율 알려줘")
 	if !strings.Contains(offer, "환율 조회") || !strings.Contains(offer, "설치") {
 		t.Fatalf("first chat response did not offer exchange-rate install:\n%s", offer)
 	}
 
-	installed := browserChatCompletion(t, browser, chatURL, device.DeviceID, "네")
+	installed := browserChatCompletion(t, browser, spaceURL, device.DeviceID, "네")
 	for _, want := range []string{"설치했어요", "환율", "1 USD = 1477 KRW"} {
 		if !strings.Contains(installed, want) {
 			t.Fatalf("install chat response missing %q:\n%s", want, installed)
 		}
 	}
 
-	reused := browserChatCompletion(t, browser, chatURL, device.DeviceID, "원화로 환율 다시 알려줘")
+	reused := browserChatCompletion(t, browser, spaceURL, device.DeviceID, "원화로 환율 다시 알려줘")
 	if strings.Contains(reused, "설치해서") || strings.Contains(reused, "설치하면") {
 		t.Fatalf("installed follow-up should not offer exchange-rate reinstall:\n%s", reused)
 	}
@@ -244,19 +244,19 @@ func TestPortalChatRelayRunsKittypawSkillInstallFlow(t *testing.T) {
 		}
 	}
 
-	weatherOffer := browserChatCompletion(t, browser, chatURL, device.DeviceID, "강남역 날씨 알려줘")
+	weatherOffer := browserChatCompletion(t, browser, spaceURL, device.DeviceID, "강남역 날씨 알려줘")
 	if !strings.Contains(weatherOffer, "현재 날씨") || !strings.Contains(weatherOffer, "설치") {
 		t.Fatalf("weather chat response did not offer weather install:\n%s", weatherOffer)
 	}
 
-	weatherInstalled := browserChatCompletion(t, browser, chatURL, device.DeviceID, "네")
+	weatherInstalled := browserChatCompletion(t, browser, spaceURL, device.DeviceID, "네")
 	for _, want := range []string{"설치했어요", "강남역 현재 날씨", "37.4979", "127.0276"} {
 		if !strings.Contains(weatherInstalled, want) {
 			t.Fatalf("weather install chat response missing %q:\n%s", want, weatherInstalled)
 		}
 	}
 
-	weatherReused := browserChatCompletion(t, browser, chatURL, device.DeviceID, "강남역 날씨 다시")
+	weatherReused := browserChatCompletion(t, browser, spaceURL, device.DeviceID, "강남역 날씨 다시")
 	if strings.Contains(weatherReused, "설치해서") || strings.Contains(weatherReused, "설치하면") {
 		t.Fatalf("installed weather follow-up should not offer reinstall:\n%s", weatherReused)
 	}
@@ -404,31 +404,31 @@ type noBrowserAuthTransport struct {
 }
 
 func (t noBrowserAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if strings.HasPrefix(req.URL.Path, "/app/api/") && req.Header.Get("Authorization") != "" {
-		return nil, fmt.Errorf("browser app API request carried Authorization header")
+	if strings.HasPrefix(req.URL.Path, "/chat/api/") && req.Header.Get("Authorization") != "" {
+		return nil, fmt.Errorf("browser chat API request carried Authorization header")
 	}
 	return t.base.RoundTrip(req)
 }
 
-func chatBrowserLogin(t *testing.T, browser *http.Client, chatURL string) {
+func spaceBrowserLogin(t *testing.T, browser *http.Client, spaceURL string) {
 	t.Helper()
-	resp, err := browser.Get(chatURL + "/auth/login/google")
+	resp, err := browser.Get(spaceURL + "/auth/login/google")
 	if err != nil {
-		t.Fatalf("chat browser login: %v", err)
+		t.Fatalf("space browser login: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("chat browser login final status = %d; url=%s body=%s", resp.StatusCode, resp.Request.URL.String(), raw)
+		t.Fatalf("space browser login final status = %d; url=%s body=%s", resp.StatusCode, resp.Request.URL.String(), raw)
 	}
-	if resp.Request == nil || resp.Request.URL.Path != "/app/" {
-		t.Fatalf("chat browser login final URL = %v, want /app/", resp.Request.URL)
+	if resp.Request == nil || resp.Request.URL.Path != "/chat/" {
+		t.Fatalf("space browser login final URL = %v, want /chat/", resp.Request.URL)
 	}
 }
 
-func assertBrowserSession(t *testing.T, browser *http.Client, chatURL string) {
+func assertBrowserSession(t *testing.T, browser *http.Client, spaceURL string) {
 	t.Helper()
-	resp, err := browser.Get(chatURL + "/app/api/session")
+	resp, err := browser.Get(spaceURL + "/chat/api/session")
 	if err != nil {
 		t.Fatalf("browser session: %v", err)
 	}
@@ -439,7 +439,7 @@ func assertBrowserSession(t *testing.T, browser *http.Client, chatURL string) {
 	}
 }
 
-func waitForBrowserRoute(ctx context.Context, t *testing.T, browser *http.Client, chatURL, deviceID string) {
+func waitForBrowserRoute(ctx context.Context, t *testing.T, browser *http.Client, spaceURL, deviceID string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	var last string
@@ -447,7 +447,7 @@ func waitForBrowserRoute(ctx context.Context, t *testing.T, browser *http.Client
 		if ctx.Err() != nil {
 			t.Fatalf("context ended while waiting for route: %v", ctx.Err())
 		}
-		ok, detail := browserRouteExists(t, browser, chatURL, deviceID)
+		ok, detail := browserRouteExists(t, browser, spaceURL, deviceID)
 		if ok {
 			return
 		}
@@ -457,9 +457,9 @@ func waitForBrowserRoute(ctx context.Context, t *testing.T, browser *http.Client
 	t.Fatalf("route for device %s did not appear; last=%s", deviceID, last)
 }
 
-func browserRouteExists(t *testing.T, browser *http.Client, chatURL, deviceID string) (bool, string) {
+func browserRouteExists(t *testing.T, browser *http.Client, spaceURL, deviceID string) (bool, string) {
 	t.Helper()
-	resp, err := browser.Get(chatURL + "/app/api/routes")
+	resp, err := browser.Get(spaceURL + "/chat/api/routes")
 	if err != nil {
 		return false, err.Error()
 	}
@@ -485,21 +485,21 @@ func browserRouteExists(t *testing.T, browser *http.Client, chatURL, deviceID st
 	return false, string(raw)
 }
 
-func assertBrowserChatCompletion(t *testing.T, browser *http.Client, chatURL, deviceID string) {
+func assertBrowserChatCompletion(t *testing.T, browser *http.Client, spaceURL, deviceID string) {
 	t.Helper()
-	raw := browserChatCompletion(t, browser, chatURL, deviceID, "hello from browser")
+	raw := browserChatCompletion(t, browser, spaceURL, deviceID, "hello from browser")
 	if !bytes.Contains([]byte(raw), []byte("hello from local e2e daemon")) {
 		t.Fatalf("chat completion body = %s, want daemon response", raw)
 	}
 }
 
-func browserChatCompletion(t *testing.T, browser *http.Client, chatURL, deviceID, message string) string {
+func browserChatCompletion(t *testing.T, browser *http.Client, spaceURL, deviceID, message string) string {
 	t.Helper()
 	body := strings.NewReader(fmt.Sprintf(
 		`{"model":"local-e2e","messages":[{"role":"user","content":%q}],"stream":true}`,
 		message,
 	))
-	req, err := http.NewRequest(http.MethodPost, chatURL+"/app/api/nodes/"+deviceID+"/accounts/"+localAccountID+"/v1/chat/completions", body)
+	req, err := http.NewRequest(http.MethodPost, spaceURL+"/chat/api/nodes/"+deviceID+"/accounts/"+localAccountID+"/v1/chat/completions", body)
 	if err != nil {
 		t.Fatalf("new chat completion request: %v", err)
 	}

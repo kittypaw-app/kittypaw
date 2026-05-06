@@ -5,7 +5,7 @@ help:
 	@echo "  list             List skeleton files"
 	@echo "  contracts-check  Validate JSON contract files with jq"
 	@echo "  smoke-local      Run repeatable local cross-service smoke"
-	@echo "  e2e-local        Run Docker-backed local auth/chat E2E"
+	@echo "  e2e-local        Run Docker-backed local auth/space E2E"
 	@echo "  full-local-live  Run smoke, Docker E2E, and live public-data integrations"
 
 list:
