@@ -32,9 +32,13 @@ JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5-20251001}"
 READINESS_TIMEOUT="${READINESS_TIMEOUT:-30}"
 # Per-model wall-clock cap — secretary_smoke retry 폭주 (free tier 429 등) 시
 # 무한 hang 차단. 초과 시 status=fail "timeout".
-PER_MODEL_TIMEOUT="${PER_MODEL_TIMEOUT:-120}"
+PER_MODEL_TIMEOUT="${PER_MODEL_TIMEOUT:-180}"
 # Inter-model spacing — provider rate limit 회복 시간 (free tier 20-30 RPM).
-INTER_MODEL_SLEEP="${INTER_MODEL_SLEEP:-10}"
+# Iteration 2: 10→60s after first 실측 cycle hit 5/7 fail on cloud RPM.
+INTER_MODEL_SLEEP="${INTER_MODEL_SLEEP:-60}"
+# Per-category fixture limit — 5 → 2 cuts cycle time from ~25min → ~10min for
+# iteration 2 first cycle. Set to 0 (or unset) to disable limit.
+KITTYPAW_EVAL_FIXTURE_LIMIT="${KITTYPAW_EVAL_FIXTURE_LIMIT:-2}"
 
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 EVAL_TMP="${EVAL_TMP:-${TMPDIR:-/tmp}/kittypaw-eval-$RUN_ID}"
@@ -195,10 +199,50 @@ record_model() {
     "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
 }
 
+# Iteration 2: per-provider local readiness probes — ollama tunnel + lmstudio
+# loaded model. Run BEFORE daemon start so a missing tunnel/loaded-model fails
+# fast with a user-actionable message instead of a 30s daemon readiness timeout.
+# Auth fail-fast pattern (above) is reused for local providers.
+OLLAMA_PROBE_URL="${OLLAMA_PROBE_URL:-http://localhost:11500/api/tags}"
+LMSTUDIO_HOST="${LMSTUDIO_HOST:-emac}"
+
+probe_ollama_tunnel() {
+  curl -fsS --max-time 3 "$OLLAMA_PROBE_URL" >/dev/null 2>&1
+}
+
+# lmstudio readiness — verify the target model id is loaded on emac via SSH.
+# Graceful fail with manual recovery hint (NO auto-load — sets emac VRAM 상태
+# 무영향 invariant). `lms ps` output format: leading model id followed by
+# whitespace columns; anchor regex with ^ + [[:space:]].
+probe_lmstudio_loaded() {
+  local model="$1"
+  ssh "$LMSTUDIO_HOST" lms ps 2>/dev/null | grep -qE "^${model}[[:space:]]"
+}
+
 # Sequential per-model. Process substitution avoids subshell variable scoping
 # issues that a `jq | while` pipe would introduce.
 while IFS=$'\t' read -r id provider model; do
   echo "[$id] starting daemon..." >&2
+
+  # Provider-specific readiness probe (ollama / lmstudio). Skips daemon start
+  # entirely when local infra is missing — graceful fail with actionable msg.
+  # Matches daemon-fail path: no INTER_MODEL_SLEEP because no provider call
+  # was made (rate limit unaffected).
+  if [[ "$provider" == "ollama" ]]; then
+    if ! probe_ollama_tunnel; then
+      echo "[$id] ollama tunnel not ready ($OLLAMA_PROBE_URL)" >&2
+      record_model "$id" "fail" "ollama tunnel not ready (run: dev-models-tunnel-ollama-start)"
+      continue
+    fi
+  fi
+  if [[ "$provider" == "lmstudio" ]]; then
+    if ! probe_lmstudio_loaded "$model"; then
+      echo "[$id] lmstudio model '$model' not loaded on $LMSTUDIO_HOST" >&2
+      record_model "$id" "fail" "lmstudio model not loaded — run: ssh $LMSTUDIO_HOST lms load $model -y --gpu max"
+      continue
+    fi
+  fi
+
   write_model_cfg "$id" "$provider" "$model"
 
   if ! start_daemon; then
@@ -215,6 +259,7 @@ while IFS=$'\t' read -r id provider model; do
   # reads $RUN_DIR/per-model/<id>/ for raw fixture scores (iteration 2).
   # Wall-clock cap via background watchdog (macOS BSD 환경에 timeout(1) 부재).
   KITTYPAW_CONFIG_DIR="$EVAL_TMP" \
+    KITTYPAW_EVAL_FIXTURE_LIMIT="$KITTYPAW_EVAL_FIXTURE_LIMIT" \
     OUT_DIR="$per_model_dir" \
     LOCK_DIR="$EVAL_TMP/sm-$id.lock" \
     "$SECRETARY_RUN" --model "$id" >/dev/null 2>&1 &

@@ -13,3 +13,6 @@ tmp/
 !.env.example
 apps/chat/kittychat-linux
 apps/portal/kittyportal-linux
+apps/kittypaw/docs/models.md
+apps/kittypaw/eval/runs/
+.state/

@@ -23,13 +23,13 @@ setup_file() {
   echo "$JSON" | jq -e '.' >/dev/null
 }
 
-@test "T1: 7 entries count" {
+@test "T1: 9 entries count" {
   count="$(echo "$JSON" | jq '.model | length')"
-  [ "$count" -eq 7 ]
+  [ "$count" -eq 9 ]
 }
 
 @test "T1: expected ids present" {
-  for id in groq-qwen groq-llama mistral-medium ministral-8b gemini-flash-lite openrouter-llama-3.3 lmstudio-qwen3-30b-mlx; do
+  for id in groq-qwen groq-llama mistral-medium ministral-8b gemini-flash-lite openrouter-llama-3.3 lmstudio-qwen3-30b-mlx ollama-qwen2.5-32b ollama-gemma4; do
     echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | length == 1' >/dev/null
   done
 }
@@ -38,11 +38,20 @@ setup_file() {
   echo "$JSON" | jq -e '.model | all(. | has("id") and has("provider") and has("model"))' >/dev/null
 }
 
-@test "T1: api_key_env set for cloud providers, omitted/empty for lmstudio" {
+@test "T1: api_key_env set for cloud providers, omitted/empty for lmstudio + ollama" {
   for env in GROQ_API_KEY MISTRAL_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY; do
     echo "$JSON" | jq -e --arg env "$env" '.model | map(select(.api_key_env == $env)) | length >= 1' >/dev/null
   done
-  echo "$JSON" | jq -e '.model | map(select(.id == "lmstudio-qwen3-30b-mlx")) | .[0].api_key_env // "" | length == 0' >/dev/null
+  for id in lmstudio-qwen3-30b-mlx ollama-qwen2.5-32b ollama-gemma4; do
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].api_key_env // "" | length == 0' >/dev/null
+  done
+}
+
+@test "T1: ollama entries use provider=ollama + base_url 11434" {
+  for id in ollama-qwen2.5-32b ollama-gemma4; do
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].provider == "ollama"' >/dev/null
+    echo "$JSON" | jq -e --arg id "$id" '.model | map(select(.id == $id)) | .[0].base_url | test("localhost:11434")' >/dev/null
+  done
 }
 
 @test "T1: parse-models.py exits 2 when toml missing" {
@@ -179,11 +188,27 @@ echo "secretary_smoke $*" >> "$T4_LOG"
 exit 0
 MS
   chmod +x "$T4_BIN/secretary_smoke_mock.sh"
+  # Iteration 2: ssh stub for lmstudio readiness probe. Default returns
+  # "lms ps" output WITHOUT the lmstudio model id → graceful fail.
+  cat > "$T4_BIN/ssh" <<'SSH'
+#!/usr/bin/env bash
+# T4 stub: simulate lmstudio model NOT loaded on emac
+echo "LOADED MODELS"
+echo "(none — model not loaded)"
+exit 0
+SSH
+  chmod +x "$T4_BIN/ssh"
+  # Prepend T4_BIN so the ssh stub wins over /usr/bin/ssh.
+  export PATH="$T4_BIN:$PATH"
   export KITTY_BIN="$T4_BIN/kittypaw"
   export SECRETARY_RUN="$T4_BIN/secretary_smoke_mock.sh"
   export EVAL_TMP="$T4_TMP"
   export RUNS_ROOT="$T4_RUNS"
   export READINESS_TIMEOUT=1
+  export INTER_MODEL_SLEEP=0
+  # Force ollama tunnel probe to fail fast (port 1 unused) — bats determinism
+  # regardless of user's actual ssh tunnel state.
+  export OLLAMA_PROBE_URL="http://127.0.0.1:1/api/tags"
   export EVAL_SKIP_JUDGE_CHECK=1
   export GROQ_API_KEY="fake"
   export MISTRAL_API_KEY="fake"
@@ -206,22 +231,22 @@ MS
   [ -f "$T3_CFG.swap_backup" ]
 }
 
-@test "T2: generator stdout has sentinel + 7 [[llm.models]] + [llm] default" {
+@test "T2: generator stdout has sentinel + 9 [[llm.models]] + [llm] default" {
   out="$(bash "$GENERATOR")"
   echo "$out" | head -1 | grep -q "GENERATED FROM eval/models.toml"
   blocks="$(echo "$out" | grep -c '^\[\[llm.models\]\]')"
-  [ "$blocks" -eq 7 ]
+  [ "$blocks" -eq 9 ]
   echo "$out" | grep -q '^\[llm\]'
   echo "$out" | grep -q '^default = "groq-qwen"'
 }
 
-@test "T2: setup with no cfg → generates sentinel + 7 entries" {
+@test "T2: setup with no cfg → generates sentinel + 9 entries" {
   run bash "$DEV_MODELS" setup
   [ "$status" -eq 0 ]
   [ -f "$CFG" ]
   head -1 "$CFG" | grep -q "GENERATED FROM eval/models.toml"
   blocks="$(grep -c '^\[\[llm.models\]\]' "$CFG")"
-  [ "$blocks" -eq 7 ]
+  [ "$blocks" -eq 9 ]
 }
 
 @test "T2: setup with sentinel cfg + no --force → skip (exit 0)" {
@@ -299,7 +324,7 @@ write_manifest() {
   echo "$dir"
 }
 
-@test "T4: daemon readiness timeout → 7 모델 모두 status=fail + 다음 모델 진행 (whole-run abort 금지)" {
+@test "T4: daemon readiness timeout → 9 모델 모두 status=fail + 다음 모델 진행 (whole-run abort 금지)" {
   run bash "$RUN_MODELS"
   [ "$status" -eq 0 ]  # whole-run completes despite per-model failures
   # Single run dir was created.
@@ -307,11 +332,80 @@ write_manifest() {
   manifest="$T4_RUNS/$run_dir/manifest.json"
   [ -f "$manifest" ]
   count=$(jq '.models | length' "$manifest")
-  [ "$count" -eq 7 ]
+  [ "$count" -eq 9 ]
   fail_count=$(jq '[.models[] | select(.status == "fail")] | length' "$manifest")
-  [ "$fail_count" -eq 7 ]
+  [ "$fail_count" -eq 9 ]
   # secretary_smoke never ran (readiness failed before invocation).
   ! grep -q "secretary_smoke" "$T4_LOG"
+}
+
+# ---------- Iteration 2 T2: backoff defaults + fixture limit env ----------
+
+@test "T2: run-models.sh defaults INTER_MODEL_SLEEP=60 + PER_MODEL_TIMEOUT=180" {
+  grep -q 'INTER_MODEL_SLEEP="\${INTER_MODEL_SLEEP:-60}"' "$APP_DIR/eval/run-models.sh"
+  grep -q 'PER_MODEL_TIMEOUT="\${PER_MODEL_TIMEOUT:-180}"' "$APP_DIR/eval/run-models.sh"
+}
+
+@test "T2: run-models.sh exports KITTYPAW_EVAL_FIXTURE_LIMIT to secretary_smoke" {
+  grep -q 'KITTYPAW_EVAL_FIXTURE_LIMIT="\${KITTYPAW_EVAL_FIXTURE_LIMIT:-2}"' "$APP_DIR/eval/run-models.sh"
+  grep -q 'KITTYPAW_EVAL_FIXTURE_LIMIT="\$KITTYPAW_EVAL_FIXTURE_LIMIT"' "$APP_DIR/eval/run-models.sh"
+}
+
+@test "T4: lmstudio model not loaded → graceful fail with manual lms load hint (NO auto-load)" {
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]
+  run_dir="$(ls "$T4_RUNS")"
+  manifest="$T4_RUNS/$run_dir/manifest.json"
+  lmstudio_status=$(jq -r '.models[] | select(.id == "lmstudio-qwen3-30b-mlx") | .status' "$manifest")
+  [ "$lmstudio_status" = "fail" ]
+  lmstudio_detail=$(jq -r '.models[] | select(.id == "lmstudio-qwen3-30b-mlx") | .detail' "$manifest")
+  echo "$lmstudio_detail" | grep -q "lmstudio model not loaded"
+  echo "$lmstudio_detail" | grep -q "lms load qwen3-30b-a3b-instruct-2507"
+  echo "$lmstudio_detail" | grep -q "gpu max"
+  # NO auto-load: ssh stub was called for `lms ps` only (not `lms load`).
+  # ssh stub doesn't track args, but the absence of auto-load is verified by
+  # graceful-fail status (would be "pass" if auto-load attempted + succeeded,
+  # or "daemon readiness timeout" if it tried and the daemon then failed).
+}
+
+@test "T4: ollama tunnel down → ollama 2 entries graceful fail with actionable msg + 다음 모델 진행" {
+  run bash "$RUN_MODELS"
+  [ "$status" -eq 0 ]
+  run_dir="$(ls "$T4_RUNS")"
+  manifest="$T4_RUNS/$run_dir/manifest.json"
+  ollama_fails=$(jq '[.models[] | select(.id | startswith("ollama-")) | select(.status == "fail")] | length' "$manifest")
+  [ "$ollama_fails" -eq 2 ]
+  # Detail message contains actionable hint (NOT generic daemon timeout).
+  ollama_detail=$(jq -r '.models[] | select(.id == "ollama-qwen2.5-32b") | .detail' "$manifest")
+  echo "$ollama_detail" | grep -q "ollama tunnel not ready"
+  echo "$ollama_detail" | grep -q "dev-models-tunnel-ollama-start"
+  # Other 7 entries (6 cloud + 1 lmstudio) should also have status=fail
+  # (daemon readiness fails) — verify whole-run did not abort.
+  total_fail=$(jq '[.models[] | select(.status == "fail")] | length' "$manifest")
+  [ "$total_fail" -eq 9 ]
+}
+
+@test "T2: secretary_smoke fixture_lines respects KITTYPAW_EVAL_FIXTURE_LIMIT" {
+  fixture="$BATS_TEST_TMPDIR/test.jsonl"
+  printf '{"id":"a"}\n{"id":"b"}\n{"id":"c"}\n' > "$fixture"
+  # Extract fixture_lines function from run.sh and source it (avoid running main).
+  func=$(awk '/^fixture_lines\(\) \{/,/^\}/' "$APP_DIR/eval/secretary_smoke/run.sh")
+  eval "$func"
+
+  # Default (LIMIT unset) — full fixture (3 lines).
+  unset KITTYPAW_EVAL_FIXTURE_LIMIT
+  count=$(fixture_lines "$fixture" | wc -l | tr -d ' ')
+  [ "$count" -eq 3 ]
+
+  # LIMIT=2 — first 2 lines only.
+  KITTYPAW_EVAL_FIXTURE_LIMIT=2
+  count=$(fixture_lines "$fixture" | wc -l | tr -d ' ')
+  [ "$count" -eq 2 ]
+
+  # LIMIT=0 — full fixture (regression: explicit 0 = no limit).
+  KITTYPAW_EVAL_FIXTURE_LIMIT=0
+  count=$(fixture_lines "$fixture" | wc -l | tr -d ' ')
+  [ "$count" -eq 3 ]
 }
 
 # ---------- T5: recommend.sh + docs/models.md render ----------

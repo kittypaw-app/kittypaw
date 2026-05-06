@@ -48,3 +48,17 @@
 **User manual gates** (vendor keys + emac SSH 환경 필요):
 - AC #1/#5: `make eval-models` 1회 실행 → `apps/kittypaw/docs/models.md` 자동 생성
 - AC #9b: `make smoke` 사용자 환경 1회
+
+## Plan B: Eval Framework — Iteration 2 ← 현재
+
+> Spec: `.ina/specs/20260506-1630-think-kp-eval-iter2.md` (v2, 3 scope)
+> Plan: `.claude/plans/kp-eval-iter2.md`
+> 진입: HEAD `552bb95` (Iteration 1 완료) — 첫 실측 7/7 fail → framework 자체 검증 ✓
+> 목표: 7→9 entry (ollama×2) + backoff 강화 (60s/180s/fixture 2) + lmstudio readiness graceful fail. **2nd 실측에서 1 local + 1 cloud 각각 status=pass**.
+
+- [x] **T1**: `eval/models.toml` 7→9 (ollama-qwen2.5-32b + ollama-gemma4) + `.gitignore` (docs/models.md, eval/runs/, .state/) + bats T1 entry count 7→9 + ollama provider id 검증
+- [x] **T2**: `run-models.sh` INTER_MODEL_SLEEP 10→60 + PER_MODEL_TIMEOUT 120→180 + `secretary_smoke/run.sh` `KITTYPAW_EVAL_FIXTURE_LIMIT` env (default 0=no limit, set 시 head -N per category) + bats env defaults + fixture_lines 회귀 0
+- [x] **T3**: `run-models.sh` per-model loop 시작 시 ollama tunnel ping (`curl :11500/api/tags`) → fail 시 graceful `record_model fail` + bats `OLLAMA_PROBE_URL` override 케이스
+- [x] **T4**: `run-models.sh` per-model loop 시작 시 lmstudio readiness (`ssh emac lms ps | grep model`) → 미로드 시 graceful `record_model fail` (NO auto-load) + bats ssh PATH stub 케이스
+- [x] **T5a**: 회귀 (bats 32 GREEN — 26 기존 + 6 신규) + AC #9a (`make build && test-unit && lint && go test -race`) 통과
+- [ ] **T5b**: 두 번째 실측 cycle (`make eval-models`) — manual gate (vendor keys + emac state) — AC #2 (1 local + 1 cloud pass) 확인

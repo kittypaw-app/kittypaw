@@ -272,6 +272,19 @@ judge_behavior() {
   esac
 }
 
+# Iteration 2: optional per-category fixture limit. Set to 0 (or unset) for full
+# scoring. Set to N>0 to process only first N entries — used by run-models.sh
+# wrapper (default 2) to cut cycle time for first iteration 2 measurement.
+fixture_lines() {
+  local file="$1"
+  local limit="${KITTYPAW_EVAL_FIXTURE_LIMIT:-0}"
+  if (( limit > 0 )); then
+    head -n "$limit" "$file"
+  else
+    cat "$file"
+  fi
+}
+
 # Score a single fixture file. Echoes an aggregate JSON line.
 score_category() {
   local fixture="$1"
@@ -357,7 +370,7 @@ score_category() {
       --argjson penalty "$antipattern_penalty" \
       --arg score "$score" \
       '{id: $id, input: $input, category: $category, response: $response, behaviors: $behaviors, antipattern_penalty: $penalty, score: ($score | tonumber)}' >> "$out"
-  done < "$fixture"
+  done < <(fixture_lines "$fixture")
 
   jq -n \
     --arg category "$category" \

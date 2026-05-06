@@ -1,8 +1,8 @@
-# Plan B Iteration 1 — measurement source-of-truth (7 모델).
+# Plan B Iteration 2 — measurement source-of-truth (9 모델).
 # Schema: each [[model]] entry has id / provider / model / base_url? / api_key_env?
 # - base_url: optional. Omit to use llm/registry.go default (groqDefaultBaseURL etc.)
-# - api_key_env: optional. Omit (lmstudio) when provider needs no auth (local SSH tunnel).
-# selection rationale: see .claude/plans/kp-eval-rebuild.md "7 모델 선정 근거".
+# - api_key_env: optional. Omit (lmstudio, ollama) when provider needs no auth (local SSH tunnel).
+# selection rationale: see .claude/plans/kp-eval-rebuild.md (Iter 1) + kp-eval-iter2.md (Iter 2).
 # rejected siblings: see apps/kittypaw/docs/MODEL_GUIDE.md § 1.1.
 
 [[model]]
@@ -52,3 +52,17 @@ provider = "lmstudio"
 model = "qwen3-30b-a3b-instruct-2507"
 base_url = "http://localhost:11600/v1/chat/completions"
 # api_key_env omitted — local SSH tunnel, no auth.
+
+[[model]]
+id = "ollama-qwen2.5-32b"
+provider = "ollama"
+model = "qwen2.5:32b-instruct"
+base_url = "http://localhost:11434/v1/chat/completions"
+# api_key_env omitted — local SSH tunnel (:11500 → emac:11434), no auth.
+
+[[model]]
+id = "ollama-gemma4"
+provider = "ollama"
+model = "gemma4:latest"
+base_url = "http://localhost:11434/v1/chat/completions"
+# api_key_env omitted — local SSH tunnel (:11500 → emac:11434), no auth.
