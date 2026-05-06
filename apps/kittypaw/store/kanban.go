@@ -132,6 +132,13 @@ type CompleteKanbanTaskRequest struct {
 	MetadataJSON string
 }
 
+type FailKanbanTaskRequest struct {
+	Actor        string
+	Summary      string
+	Error        string
+	MetadataJSON string
+}
+
 type BlockKanbanTaskRequest struct {
 	Actor  string
 	Reason string
@@ -555,6 +562,56 @@ func (s *Store) CompleteKanbanTask(taskID string, req CompleteKanbanTaskRequest)
 		return err
 	}
 	if err := s.promoteUnblockedChildren(tx, taskID, req.Actor); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) FailKanbanTask(taskID string, req FailKanbanTaskRequest) error {
+	errorText := strings.TrimSpace(req.Error)
+	if errorText == "" {
+		return fmt.Errorf("error is required")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	now := kanbanNow()
+	metadata := normalizeKanbanJSON(req.MetadataJSON)
+	res, err := tx.Exec(`
+		UPDATE kanban_task_runs
+		SET outcome = ?, summary = ?, error = ?, metadata_json = ?, finished_at = ?, heartbeat_at = ?
+		WHERE id = (
+			SELECT id FROM kanban_task_runs
+			WHERE task_id = ? AND outcome = ?
+			ORDER BY started_at DESC
+			LIMIT 1
+		)`,
+		KanbanRunFailed, strings.TrimSpace(req.Summary), errorText, metadata, now, now, taskID, KanbanRunRunning)
+	if err != nil {
+		return err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return fmt.Errorf("task %s has no running run", taskID)
+	}
+	if _, err := tx.Exec(`
+		UPDATE kanban_tasks
+		SET status = ?, updated_at = ?
+		WHERE id = ?`,
+		KanbanStatusTodo, now, taskID); err != nil {
+		return err
+	}
+	detail := strings.TrimSpace(req.Summary)
+	if detail == "" {
+		detail = errorText
+	}
+	if err := recordKanbanEventTx(tx, taskID, req.Actor, "failed", detail, metadata); err != nil {
 		return err
 	}
 	return tx.Commit()
