@@ -478,6 +478,11 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 
 			// Kanban
 			r.Get("/projects", s.handleKanbanProjectsList)
+			r.Post("/projects", s.handleKanbanProjectsCreate)
+			r.Get("/projects/{project}", s.handleKanbanProjectShow)
+			r.Get("/projects/{project}/boards", s.handleKanbanProjectBoardsList)
+			r.Get("/projects/{project}/milestones", s.handleKanbanProjectMilestonesList)
+			r.Post("/projects/{project}/milestones", s.handleKanbanProjectMilestonesCreate)
 		})
 	})
 
