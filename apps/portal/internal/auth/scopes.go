@@ -11,12 +11,14 @@ const (
 	ScopeChatRelay     = "chat:relay"
 	ScopeModelsRead    = "models:read"
 	ScopeDaemonConnect = "daemon:connect"
+	ScopePortalAdmin   = "portal:admin"
 
 	// AudienceAPI / AudienceChat identify the resource servers this token is
 	// valid against. The same token validates against API-resource checks and
 	// kittychat-side verification (multi-aud).
-	AudienceAPI  = "https://api.kittypaw.app"
-	AudienceChat = "https://chat.kittypaw.app"
+	AudienceAPI         = "https://api.kittypaw.app"
+	AudienceChat        = "https://chat.kittypaw.app"
+	AudiencePortalAdmin = "https://portal.kittypaw.app/admin"
 
 	// Issuer identifies the auth authority. Public identity contracts are
 	// canonical under portal.kittypaw.app; api.kittypaw.app remains the

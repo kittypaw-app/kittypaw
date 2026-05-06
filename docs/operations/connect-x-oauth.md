@@ -41,10 +41,11 @@ X is cost-bearing for KittyPaw. Do not open X Connect to all users.
 
 Before a user can run `kittypaw connect x`, an admin must:
 
-1. sign in to `https://portal.kittypaw.app`;
-2. open `/admin/connect`;
-3. grant X entitlement to that user;
-4. record a quota note such as `monthly_post_reads=100`.
+1. open `https://portal.kittypaw.app/admin/login`;
+2. complete Google login with an email listed in `PORTAL_ADMIN_EMAILS`;
+3. open `/admin/connect/users`;
+4. grant X entitlement to the user's email address;
+5. set a small monthly post-read quota, for example `100`, and record the reason.
 
 Phase 0 gates X connection. It does not centrally meter local X API calls after
 the token is stored in the local KittyPaw account. Public X access requires a

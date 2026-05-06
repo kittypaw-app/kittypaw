@@ -42,6 +42,14 @@ func TestCreateOrUpdateAndFindByID(t *testing.T) {
 	if found.Name != "Test User" {
 		t.Fatalf("expected name=Test User, got %q", found.Name)
 	}
+
+	foundByEmail, err := store.FindByEmail(ctx, " TEST@test.com ")
+	if err != nil {
+		t.Fatalf("find by email: %v", err)
+	}
+	if foundByEmail.ID != user.ID {
+		t.Fatalf("FindByEmail ID = %s, want %s", foundByEmail.ID, user.ID)
+	}
 }
 
 func TestCreateOrUpdateUpsert(t *testing.T) {
@@ -81,5 +89,23 @@ func TestFindByIDNotFound(t *testing.T) {
 	_, err := store.FindByID(ctx, "00000000-0000-0000-0000-000000000000")
 	if !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestFindByEmailRejectsAmbiguousEmail(t *testing.T) {
+	pool := setupTestDB(t)
+	store := model.NewUserStore(pool)
+	ctx := context.Background()
+
+	if _, err := store.CreateOrUpdate(ctx, "google", "ambiguous-google", "same@test.com", "Google User", ""); err != nil {
+		t.Fatalf("create google user: %v", err)
+	}
+	if _, err := store.CreateOrUpdate(ctx, "github", "ambiguous-github", "same@test.com", "GitHub User", ""); err != nil {
+		t.Fatalf("create github user: %v", err)
+	}
+
+	_, err := store.FindByEmail(ctx, "same@test.com")
+	if !errors.Is(err, model.ErrAmbiguous) {
+		t.Fatalf("expected ErrAmbiguous, got %v", err)
 	}
 }

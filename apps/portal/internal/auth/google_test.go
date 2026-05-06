@@ -58,6 +58,15 @@ func (m *mockUserStore) FindByID(_ context.Context, id string) (*model.User, err
 	return nil, model.ErrNotFound
 }
 
+func (m *mockUserStore) FindByEmail(_ context.Context, email string) (*model.User, error) {
+	for _, u := range m.users {
+		if strings.EqualFold(strings.TrimSpace(email), u.Email) {
+			return u, nil
+		}
+	}
+	return nil, model.ErrNotFound
+}
+
 type mockRefreshTokenStore struct {
 	tokens                  []model.RefreshToken
 	createForDeviceErr      error  // forced error for pair-atomicity tests (T2)

@@ -2,13 +2,20 @@ package connectadmin
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"errors"
 	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
+	"github.com/kittypaw-app/kittyportal/internal/model"
 )
+
+const csrfCookieName = "kp_connect_admin_csrf"
 
 const connectAdminHomeTemplate = `<!doctype html>
 <html lang="en">
@@ -61,7 +68,8 @@ const connectAdminUsersTemplate = `<!doctype html>
 <h1>Connect User Entitlements</h1>
 <p><a href="/admin/connect">Provider policies</a></p>
 <form method="post" action="/admin/connect/users">
-<label>User ID <input name="user_id" required></label>
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label>User email <input name="user_email" type="email" required></label>
 <label>Provider
 <select name="provider_id">
 {{range .Providers}}
@@ -87,19 +95,25 @@ const connectAdminUsersTemplate = `<!doctype html>
 var connectAdminUsers = template.Must(template.New("connect-admin-users").Parse(connectAdminUsersTemplate))
 
 type HandlerOptions struct {
-	Registry ProviderRegistry
-	Store    Store
+	Registry         ProviderRegistry
+	Store            Store
+	UserStore        model.UserStore
+	CSRFCookieSecure bool
 }
 
 type Handler struct {
-	registry ProviderRegistry
-	store    Store
+	registry         ProviderRegistry
+	store            Store
+	userStore        model.UserStore
+	csrfCookieSecure bool
 }
 
 func NewHandler(opts HandlerOptions) *Handler {
 	return &Handler{
-		registry: opts.Registry,
-		store:    opts.Store,
+		registry:         opts.Registry,
+		store:            opts.Store,
+		userStore:        opts.UserStore,
+		csrfCookieSecure: opts.CSRFCookieSecure,
 	}
 }
 
@@ -171,10 +185,17 @@ func (h *Handler) HandleUsers() http.HandlerFunc {
 			return
 		}
 
+		csrfToken, err := h.setCSRFToken(w)
+		if err != nil {
+			http.Error(w, "generate csrf token", http.StatusInternalServerError)
+			return
+		}
 		data := struct {
 			Providers []ProviderInfo
+			CSRFToken string
 		}{
 			Providers: h.registry.List(),
+			CSRFToken: csrfToken,
 		}
 		var buf bytes.Buffer
 		if err := connectAdminUsers.Execute(&buf, data); err != nil {
@@ -200,13 +221,33 @@ func (h *Handler) HandleUserProviderUpdateFromForm() http.HandlerFunc {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		userID := strings.TrimSpace(r.FormValue("user_id"))
-		providerID := strings.TrimSpace(r.FormValue("provider_id"))
-		if userID == "" || providerID == "" {
-			http.Error(w, "missing user_id or provider_id", http.StatusBadRequest)
+		if !h.validCSRF(r) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
-		h.updateUserProvider(w, r, userID, providerID)
+		userEmail := strings.TrimSpace(r.FormValue("user_email"))
+		providerID := strings.TrimSpace(r.FormValue("provider_id"))
+		if userEmail == "" || providerID == "" {
+			http.Error(w, "missing user_email or provider_id", http.StatusBadRequest)
+			return
+		}
+		if h.userStore == nil {
+			http.Error(w, "user lookup unavailable", http.StatusInternalServerError)
+			return
+		}
+		user, err := h.userStore.FindByEmail(r.Context(), userEmail)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrNotFound):
+				http.Error(w, "user not found", http.StatusNotFound)
+			case errors.Is(err, model.ErrAmbiguous):
+				http.Error(w, "multiple users have this email; use the user-specific update route", http.StatusConflict)
+			default:
+				http.Error(w, "lookup user", http.StatusInternalServerError)
+			}
+			return
+		}
+		h.updateUserProvider(w, r, user.ID, providerID)
 	}
 }
 
@@ -220,6 +261,10 @@ func (h *Handler) HandleUserProviderUpdate(userID, providerID string) http.Handl
 		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !h.validCSRF(r) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 		h.updateUserProvider(w, r, strings.TrimSpace(userID), strings.TrimSpace(providerID))
@@ -292,4 +337,44 @@ func setAdminSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+func (h *Handler) setCSRFToken(w http.ResponseWriter) (string, error) {
+	token, err := randomCSRFToken()
+	if err != nil {
+		return "", err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     "/admin/connect",
+		MaxAge:   3600,
+		HttpOnly: true,
+		Secure:   h.csrfCookieSecure,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return token, nil
+}
+
+func (h *Handler) validCSRF(r *http.Request) bool {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	formToken := strings.TrimSpace(r.FormValue("csrf_token"))
+	if formToken == "" {
+		return false
+	}
+	if len(formToken) != len(cookie.Value) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(formToken), []byte(cookie.Value)) == 1
+}
+
+func randomCSRFToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

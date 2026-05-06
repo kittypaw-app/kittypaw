@@ -32,6 +32,18 @@ func IssueTestJWT(t *testing.T, key *rsa.PrivateKey, kid, userID string, ttl tim
 	return token
 }
 
+func IssueTestJWTForAudience(t *testing.T, key *rsa.PrivateKey, kid, userID, audience string, scopes []string, ttl time.Duration) string {
+	t.Helper()
+	if ttl == 0 {
+		ttl = defaultTTL
+	}
+	token, err := auth.SignForAudiences(userID, []string{audience}, scopes, key, kid, ttl)
+	if err != nil {
+		t.Fatalf("testfixture.IssueTestJWTForAudience: %v", err)
+	}
+	return token
+}
+
 func SeedTestUser(t *testing.T, store model.UserStore) *model.User {
 	t.Helper()
 	providerID := fmt.Sprintf("test-%d", time.Now().UnixNano())

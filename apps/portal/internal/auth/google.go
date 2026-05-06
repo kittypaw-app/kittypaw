@@ -115,11 +115,17 @@ func (h *OAuthHandler) HandleGoogleCallback(cfg GoogleConfig) http.HandlerFunc {
 			return
 		}
 
-		// Plan 25: web flow dispatch. Standard browser flow leaves meta
-		// nil (StateStore.Create) and falls through to issueTokens.
-		if meta != nil && meta[stateMetaKeyMode] == stateMetaModeWeb {
-			h.emitWebCallback(w, r, user, meta)
-			return
+		// Flow-specific dispatch. Standard browser flow leaves meta nil
+		// (StateStore.Create) and falls through to issueTokens.
+		if meta != nil {
+			switch meta[stateMetaKeyMode] {
+			case stateMetaModeWeb:
+				h.emitWebCallback(w, r, user, meta)
+				return
+			case stateMetaModeAdmin:
+				h.emitAdminCallback(w, r, user, meta)
+				return
+			}
 		}
 
 		h.issueTokens(w, r, user)

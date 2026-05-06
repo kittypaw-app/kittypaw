@@ -190,17 +190,18 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 	webCodes := auth.NewWebCodeStore()
 	connectCodes := connect.NewCodeStore(connect.CodeStoreOptions{})
 	oauthHandler := &auth.OAuthHandler{
-		UserStore:         userStore,
-		RefreshTokenStore: refreshStore,
-		DeviceStore:       deviceStore,
-		WebCodeStore:      webCodes,
-		StateStore:        states,
-		JWTPrivateKey:     cfg.JWTPrivateKey,
-		JWTKID:            cfg.JWTKID,
-		HTTPClient:        &http.Client{Timeout: 10 * time.Second},
-		GoogleAuthURL:     cfg.GoogleAuthURL,
-		GoogleTokenURL:    cfg.GoogleTokenURL,
-		GoogleUserInfoURL: cfg.GoogleUserInfoURL,
+		UserStore:                userStore,
+		RefreshTokenStore:        refreshStore,
+		DeviceStore:              deviceStore,
+		WebCodeStore:             webCodes,
+		StateStore:               states,
+		JWTPrivateKey:            cfg.JWTPrivateKey,
+		JWTKID:                   cfg.JWTKID,
+		AdminSessionCookieSecure: isHTTPSURL(cfg.BaseURL),
+		HTTPClient:               &http.Client{Timeout: 10 * time.Second},
+		GoogleAuthURL:            cfg.GoogleAuthURL,
+		GoogleTokenURL:           cfg.GoogleTokenURL,
+		GoogleUserInfoURL:        cfg.GoogleUserInfoURL,
 	}
 
 	cliCodes := auth.NewCLICodeStore()
@@ -283,12 +284,18 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 
 	if connectAdminStore != nil {
 		connectAdminHandler := connectadmin.NewHandler(connectadmin.HandlerOptions{
-			Registry: connectRegistry,
-			Store:    connectAdminStore,
+			Registry:         connectRegistry,
+			Store:            connectAdminStore,
+			UserStore:        userStore,
+			CSRFCookieSecure: isHTTPSURL(cfg.BaseURL),
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(portalOnly)
-			r.Use(authMW)
+			r.Get("/admin/login", oauthHandler.HandleAdminGoogleLogin(googleCfg))
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(portalOnly)
+			r.Use(admin.AuthMiddleware(jwksProvider, userStore))
 			r.Use(admin.Middleware(cfg.PortalAdminEmails))
 			r.Get("/admin/connect", connectAdminHandler.HandleHome())
 			r.Get("/admin/connect/", connectAdminHandler.HandleHome())
@@ -428,6 +435,11 @@ func canonicalHost(hostport string) string {
 		hostport = host
 	}
 	return strings.ToLower(strings.Trim(hostport, "[]"))
+}
+
+func isHTTPSURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	return err == nil && strings.EqualFold(u.Scheme, "https")
 }
 
 func isLocalRequestHost(host string) bool {

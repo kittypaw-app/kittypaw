@@ -139,6 +139,15 @@ func waitForSocket(t *testing.T, socketPath string) {
 	t.Fatalf("socket %s was not created", socketPath)
 }
 
+func firstCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
+}
+
 func unixSocketTransport(socketPath string) http.RoundTripper {
 	return &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
@@ -453,6 +462,123 @@ func TestConnectAdminAllowsConfiguredAdmin(t *testing.T) {
 	}
 }
 
+func TestConnectAdminAllowsConfiguredAdminSessionCookie(t *testing.T) {
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{
+		"user-admin": {ID: "user-admin", Email: "admin@example.com"},
+	}}
+	r, cleanup := NewRouter(cfg, users, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	req.Host = "portal.kittypaw.app"
+	req.AddCookie(&http.Cookie{
+		Name:  auth.AdminSessionCookieName,
+		Value: testfixture.IssueTestJWTForAudience(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", auth.AudiencePortalAdmin, []string{auth.ScopePortalAdmin}, 15*time.Minute),
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("portal host status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "KittyPaw Connect Admin") {
+		t.Fatalf("admin page missing title: %s", w.Body.String())
+	}
+}
+
+func TestConnectAdminLoginCallbackSetsSessionCookie(t *testing.T) {
+	fakeOAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse token form: %v", err)
+			}
+			if got := r.Form.Get("code"); got != "admin-code" {
+				t.Fatalf("token code = %q, want admin-code", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "admin-access-token"})
+		case "/userinfo":
+			if got := r.Header.Get("Authorization"); got != "Bearer admin-access-token" {
+				t.Fatalf("userinfo Authorization = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"id":      "google-admin",
+				"email":   "admin@example.com",
+				"name":    "Admin",
+				"picture": "",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fakeOAuth.Close)
+
+	cfg := config.LoadForTest()
+	cfg.BaseURL = "https://portal.kittypaw.app"
+	cfg.APIBaseURL = "https://api.kittypaw.app"
+	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
+	cfg.GoogleAuthURL = fakeOAuth.URL + "/auth"
+	cfg.GoogleTokenURL = fakeOAuth.URL + "/token"
+	cfg.GoogleUserInfoURL = fakeOAuth.URL + "/userinfo"
+	cfg.PortalAdminEmails = []string{"admin@example.com"}
+	users := &fakeRouterUserStore{users: map[string]*model.User{}}
+	r, cleanup := NewRouter(cfg, users, nil, nil, &fakeConnectAdminStore{})
+	t.Cleanup(cleanup)
+
+	loginReq := httptest.NewRequest(http.MethodGet, "/admin/login?return_to=/admin/connect/users", nil)
+	loginReq.Host = "portal.kittypaw.app"
+	loginW := httptest.NewRecorder()
+	r.ServeHTTP(loginW, loginReq)
+	if loginW.Code != http.StatusFound {
+		t.Fatalf("login status = %d, want 302; body=%s", loginW.Code, loginW.Body.String())
+	}
+	loginURL, err := url.Parse(loginW.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse login Location: %v", err)
+	}
+	if loginURL.Host != strings.TrimPrefix(fakeOAuth.URL, "http://") || loginURL.Path != "/auth" {
+		t.Fatalf("login Location = %q", loginW.Header().Get("Location"))
+	}
+	if got := loginURL.Query().Get("redirect_uri"); got != "https://portal.kittypaw.app/auth/google/callback" {
+		t.Fatalf("redirect_uri = %q", got)
+	}
+	state := loginURL.Query().Get("state")
+	if state == "" {
+		t.Fatal("login Location missing state")
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/auth/google/callback?code=admin-code&state="+url.QueryEscape(state), nil)
+	callbackReq.Host = "portal.kittypaw.app"
+	callbackW := httptest.NewRecorder()
+	r.ServeHTTP(callbackW, callbackReq)
+	if callbackW.Code != http.StatusFound {
+		t.Fatalf("callback status = %d, want 302; body=%s", callbackW.Code, callbackW.Body.String())
+	}
+	if got := callbackW.Header().Get("Location"); got != "/admin/connect/users" {
+		t.Fatalf("callback Location = %q, want /admin/connect/users", got)
+	}
+	sessionCookie := firstCookie(callbackW.Result().Cookies(), auth.AdminSessionCookieName)
+	if sessionCookie == nil || sessionCookie.Value == "" {
+		t.Fatalf("callback should set admin session cookie, got %#v", callbackW.Result().Cookies())
+	}
+	if !sessionCookie.HttpOnly || !sessionCookie.Secure || sessionCookie.Path != "/admin" {
+		t.Fatalf("admin session cookie attrs = %#v", sessionCookie)
+	}
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/admin/connect/users", nil)
+	adminReq.Host = "portal.kittypaw.app"
+	adminReq.AddCookie(sessionCookie)
+	adminW := httptest.NewRecorder()
+	r.ServeHTTP(adminW, adminReq)
+	if adminW.Code != http.StatusOK {
+		t.Fatalf("admin page status = %d, want 200; body=%s", adminW.Code, adminW.Body.String())
+	}
+}
+
 func TestConnectAdminUsersPageAllowsConfiguredAdmin(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
@@ -473,21 +599,25 @@ func TestConnectAdminUsersPageAllowsConfiguredAdmin(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("portal host status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	for _, want := range []string{"Connect User Entitlements", `name="user_id"`, `name="provider_id"`, `monthly_post_reads`} {
+	for _, want := range []string{"Connect User Entitlements", `name="user_email"`, `name="provider_id"`, `monthly_post_reads`, `name="csrf_token"`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("admin users page missing %q: %s", want, w.Body.String())
 		}
 	}
+	if cookie := firstCookie(w.Result().Cookies(), "kp_connect_admin_csrf"); cookie == nil || cookie.Value == "" {
+		t.Fatalf("admin users page should set CSRF cookie, got %#v", w.Result().Cookies())
+	}
 }
 
-func TestConnectAdminEntitlementPostServedOnPortalHost(t *testing.T) {
+func TestConnectAdminEntitlementFormResolvesTargetByEmail(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
 	cfg.ConnectBaseURL = "https://connect.kittypaw.app"
 	cfg.PortalAdminEmails = []string{"admin@example.com"}
 	users := &fakeRouterUserStore{users: map[string]*model.User{
-		"user-admin": {ID: "user-admin", Email: "admin@example.com"},
+		"user-admin":  {ID: "user-admin", Email: "admin@example.com"},
+		"user-target": {ID: "user-target", Email: "target@example.com"},
 	}}
 	store := &fakeConnectAdminStore{}
 	r, cleanup := NewRouter(cfg, users, nil, nil, store)
@@ -497,11 +627,15 @@ func TestConnectAdminEntitlementPostServedOnPortalHost(t *testing.T) {
 		"status":             {"allowed"},
 		"reason":             {"internal beta"},
 		"monthly_post_reads": {"100"},
+		"user_email":         {" target@example.com "},
+		"provider_id":        {"x"},
+		"csrf_token":         {"csrf-token"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-target/providers/x", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users", strings.NewReader(form.Encode()))
 	req.Host = "portal.kittypaw.app"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", 15*time.Minute))
+	req.AddCookie(&http.Cookie{Name: "kp_connect_admin_csrf", Value: "csrf-token"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -540,10 +674,12 @@ func TestConnectAdminEntitlementPostNotServedOnConnectHost(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	form := url.Values{"status": {"allowed"}}
+	form.Set("csrf_token", "csrf-token")
 	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-target/providers/x", strings.NewReader(form.Encode()))
 	req.Host = "connect.kittypaw.app"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer "+testfixture.IssueTestJWT(t, cfg.JWTPrivateKey, cfg.JWTKID, "user-admin", 15*time.Minute))
+	req.AddCookie(&http.Cookie{Name: "kp_connect_admin_csrf", Value: "csrf-token"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -918,8 +1054,34 @@ type fakeRouterUserStore struct {
 	users map[string]*model.User
 }
 
-func (s *fakeRouterUserStore) CreateOrUpdate(context.Context, string, string, string, string, string) (*model.User, error) {
-	return nil, errors.New("CreateOrUpdate not implemented")
+func (s *fakeRouterUserStore) CreateOrUpdate(_ context.Context, provider, providerID, email, name, avatarURL string) (*model.User, error) {
+	if s.users == nil {
+		s.users = make(map[string]*model.User)
+	}
+	for _, user := range s.users {
+		if user.Provider == provider && user.ProviderID == providerID {
+			user.Email = email
+			user.Name = name
+			user.AvatarURL = avatarURL
+			user.UpdatedAt = time.Now()
+			clone := *user
+			return &clone, nil
+		}
+	}
+	id := "user-" + provider + "-" + providerID
+	user := &model.User{
+		ID:         id,
+		Provider:   provider,
+		ProviderID: providerID,
+		Email:      email,
+		Name:       name,
+		AvatarURL:  avatarURL,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	s.users[id] = user
+	clone := *user
+	return &clone, nil
 }
 
 func (s *fakeRouterUserStore) FindByID(_ context.Context, id string) (*model.User, error) {
@@ -932,6 +1094,19 @@ func (s *fakeRouterUserStore) FindByID(_ context.Context, id string) (*model.Use
 	}
 	clone := *user
 	return &clone, nil
+}
+
+func (s *fakeRouterUserStore) FindByEmail(_ context.Context, email string) (*model.User, error) {
+	if s == nil || s.users == nil {
+		return nil, model.ErrNotFound
+	}
+	for _, user := range s.users {
+		if strings.EqualFold(strings.TrimSpace(email), user.Email) {
+			clone := *user
+			return &clone, nil
+		}
+	}
+	return nil, model.ErrNotFound
 }
 
 type fakeConnectAdminStore struct {

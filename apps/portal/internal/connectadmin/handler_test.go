@@ -79,9 +79,11 @@ func TestHandlerGrantEntitlementWritesAudit(t *testing.T) {
 		"status":             {"allowed"},
 		"reason":             {"internal beta"},
 		"monthly_post_reads": {"100"},
+		"csrf_token":         {"csrf-token"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/x", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-token"})
 	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "admin-user"}))
 	rec := httptest.NewRecorder()
 
@@ -125,11 +127,13 @@ func TestHandlerGrantEntitlementAtomicFailureDoesNotRecordPartialState(t *testin
 		Store:    store,
 	})
 	form := url.Values{
-		"status": {"allowed"},
-		"reason": {"internal beta"},
+		"status":     {"allowed"},
+		"reason":     {"internal beta"},
+		"csrf_token": {"csrf-token"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/x", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-token"})
 	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "admin-user"}))
 	rec := httptest.NewRecorder()
 
@@ -190,8 +194,10 @@ func TestHandlerUserProviderUpdateRejectsInvalidStatus(t *testing.T) {
 		Store:    &fakeStore{},
 	})
 	form := url.Values{"status": {"pending"}}
+	form.Set("csrf_token", "csrf-token")
 	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/x", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-token"})
 	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "admin-user"}))
 	rec := httptest.NewRecorder()
 
@@ -209,8 +215,10 @@ func TestHandlerUserProviderUpdateRejectsUnknownProvider(t *testing.T) {
 		Store:    &fakeStore{},
 	})
 	form := url.Values{"status": {"allowed"}}
+	form.Set("csrf_token", "csrf-token")
 	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/unknown", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-token"})
 	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "admin-user"}))
 	rec := httptest.NewRecorder()
 
@@ -227,14 +235,35 @@ func TestHandlerUserProviderUpdateRejectsNilUser(t *testing.T) {
 		Store:    &fakeStore{},
 	})
 	form := url.Values{"status": {"allowed"}}
+	form.Set("csrf_token", "csrf-token")
 	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/x", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "csrf-token"})
 	rec := httptest.NewRecorder()
 
 	handler.HandleUserProviderUpdate("user-1", connect.XProviderID)(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	assertSecurityHeaders(t, rec)
+}
+
+func TestHandlerUserProviderUpdateRejectsMissingCSRF(t *testing.T) {
+	handler := NewHandler(HandlerOptions{
+		Registry: DefaultProviderRegistry(ProviderRegistryConfig{}),
+		Store:    &fakeStore{},
+	})
+	form := url.Values{"status": {"allowed"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/x", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "admin-user"}))
+	rec := httptest.NewRecorder()
+
+	handler.HandleUserProviderUpdate("user-1", connect.XProviderID)(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 	assertSecurityHeaders(t, rec)
 }
