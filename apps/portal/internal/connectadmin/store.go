@@ -76,7 +76,7 @@ func (s *PostgresStore) UpsertUserEntitlement(ctx context.Context, e UserEntitle
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO connect_user_entitlements
 			(user_id, provider_id, status, quota_json, reason, granted_by, granted_at, revoked_at)
-		VALUES ($1, $2, $3, $4::jsonb, $5, nullif($6, '')::uuid, now(), null)
+		VALUES ($1, $2, $3, $4::jsonb, $5, nullif($6, '')::uuid, now(), CASE WHEN $3 = 'revoked' THEN now() ELSE null END)
 		ON CONFLICT (user_id, provider_id)
 		DO UPDATE SET status = excluded.status,
 			quota_json = excluded.quota_json,
@@ -98,7 +98,20 @@ func (s *PostgresStore) UserAllowed(ctx context.Context, userID, providerID stri
 	`, userID, providerID).Scan(&status, &revoked)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return false, nil
+			var allowedByDefault bool
+			err := s.pool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM connect_provider_policies
+					WHERE provider_id = $1
+						AND enabled = true
+						AND default_entitlement = 'allow'
+				)
+			`, providerID).Scan(&allowedByDefault)
+			if err != nil {
+				return false, err
+			}
+			return allowedByDefault, nil
 		}
 		return false, err
 	}

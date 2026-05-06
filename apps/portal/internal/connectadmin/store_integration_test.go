@@ -93,6 +93,111 @@ func TestStorePolicyEntitlementAndAudit(t *testing.T) {
 	}
 }
 
+func TestUserAllowedFallsBackToProviderDefault(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-defaults", "target-defaults@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "default-allow",
+		Enabled:            true,
+		DefaultEntitlement: connectadmin.DefaultEntitlementAllow,
+		RequestedScopes:    []string{},
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("upsert default allow policy: %v", err)
+	}
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "default-deny",
+		Enabled:            true,
+		DefaultEntitlement: connectadmin.DefaultEntitlementDeny,
+		RequestedScopes:    []string{},
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("upsert default deny policy: %v", err)
+	}
+
+	allowed, err := store.UserAllowed(ctx, targetUser.ID, "default-allow")
+	if err != nil {
+		t.Fatalf("UserAllowed default allow: %v", err)
+	}
+	if !allowed {
+		t.Fatal("UserAllowed default allow = false, want true")
+	}
+
+	allowed, err = store.UserAllowed(ctx, targetUser.ID, "default-deny")
+	if err != nil {
+		t.Fatalf("UserAllowed default deny: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed default deny = true, want false")
+	}
+}
+
+func TestRevokedEntitlementStoresRevokedAtOnFirstInsert(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	adminUser, err := users.CreateOrUpdate(ctx, "google", "admin-revoke", "admin-revoke@example.com", "Admin", "")
+	if err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-revoke", "target-revoke@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	if err := store.UpsertProviderPolicy(ctx, connectadmin.ProviderPolicy{
+		ProviderID:         "revoked-provider",
+		Enabled:            true,
+		DefaultEntitlement: connectadmin.DefaultEntitlementAllow,
+		RequestedScopes:    []string{},
+		VerificationStatus: connectadmin.VerificationNotApplicable,
+		CostMode:           connectadmin.CostModeNone,
+	}); err != nil {
+		t.Fatalf("upsert policy: %v", err)
+	}
+	if err := store.UpsertUserEntitlement(ctx, connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "revoked-provider",
+		Status:     connectadmin.EntitlementRevoked,
+		QuotaJSON:  map[string]any{},
+		Reason:     "manual revoke",
+		GrantedBy:  adminUser.ID,
+	}); err != nil {
+		t.Fatalf("UpsertUserEntitlement revoked: %v", err)
+	}
+
+	allowed, err := store.UserAllowed(ctx, targetUser.ID, "revoked-provider")
+	if err != nil {
+		t.Fatalf("UserAllowed revoked: %v", err)
+	}
+	if allowed {
+		t.Fatal("UserAllowed revoked = true, want false")
+	}
+
+	var revokedAtSet bool
+	err = pool.QueryRow(ctx, `
+		SELECT revoked_at IS NOT NULL
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2
+	`, targetUser.ID, "revoked-provider").Scan(&revokedAtSet)
+	if err != nil {
+		t.Fatalf("query revoked_at: %v", err)
+	}
+	if !revokedAtSet {
+		t.Fatal("revoked_at is null, want timestamp")
+	}
+}
+
 func setupTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
