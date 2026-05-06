@@ -14,7 +14,7 @@
       "type": "string",
       "format": "uri"
     },
-    "home_base_url": {
+    "space_base_url": {
       "type": "string",
       "format": "uri"
     },

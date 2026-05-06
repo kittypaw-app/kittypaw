@@ -23,11 +23,11 @@ run bash -n "$ROOT/apps/portal/deploy/smoke.sh"
 run bash -n "$ROOT/apps/portal/deploy/e2e_devices.sh"
 run bash -n "$ROOT/apps/portal/deploy/check-token-shape.sh"
 run bash -n "$ROOT/apps/chat/deploy/smoke.sh"
-run bash -n "$ROOT/apps/home/deploy/smoke.sh"
+run bash -n "$ROOT/apps/space/deploy/smoke.sh"
 run bash -n "$ROOT/apps/kakao/deploy/smoke.sh"
 
 section "deploy python syntax"
-run python3 -m py_compile "$ROOT/apps/kittyapi/fabfile.py" "$ROOT/apps/portal/fabfile.py" "$ROOT/apps/chat/fabfile.py" "$ROOT/apps/home/fabfile.py" "$ROOT/apps/kakao/fabfile.py"
+run python3 -m py_compile "$ROOT/apps/kittyapi/fabfile.py" "$ROOT/apps/portal/fabfile.py" "$ROOT/apps/chat/fabfile.py" "$ROOT/apps/space/fabfile.py" "$ROOT/apps/kakao/fabfile.py"
 
 section "kittypaw agent/channel critical flows"
 run go test ./apps/kittypaw/engine -run 'Test(InstallConsent|InstalledExchangeRate|SlashPersona|RunAtMention|RunCanCreatePersona|RunReflectionCycle|TriggerEvolution)' -count=1
@@ -37,12 +37,12 @@ section "go tests"
 run go test ./apps/kittyapi/... -count=1
 run go test ./apps/portal/... -count=1
 run go test ./apps/chat/... -count=1
-run go test ./apps/home/... -count=1
+run go test ./apps/space/... -count=1
 run go test ./apps/kakao/... -count=1
 run go test ./apps/kittypaw/... -count=1
 
 section "hosted relay in-process e2e"
 run make -C "$ROOT/apps/chat" smoke-local
-run make -C "$ROOT/apps/home" smoke-local
+run make -C "$ROOT/apps/space" smoke-local
 
 section "done"

@@ -33,7 +33,7 @@ func TestApplyDiscoveryStoresChatRelayURL(t *testing.T) {
 			"api_base_url":"https://api.kittypaw.app",
 			"auth_base_url":"https://portal.kittypaw.app/auth",
 			"connect_base_url":"https://connect.kittypaw.app",
-			"home_base_url":"https://home.kittypaw.app",
+			"space_base_url":"https://space.kittypaw.app",
 			"chat_relay_url":"https://chat.kittypaw.app",
 			"kakao_relay_url":"https://kakao.kittypaw.app",
 			"skills_registry_url":"https://github.com/kittypaw-app/skills"
@@ -64,9 +64,9 @@ func TestApplyDiscoveryStoresChatRelayURL(t *testing.T) {
 	if !ok || gotConnectBase != "https://connect.kittypaw.app" {
 		t.Fatalf("LoadConnectBaseURL = (%q, %v), want connect base URL", gotConnectBase, ok)
 	}
-	gotHomeBase, ok := mgr.LoadHomeBaseURL(ts.URL)
-	if !ok || gotHomeBase != "https://home.kittypaw.app" {
-		t.Fatalf("LoadHomeBaseURL = (%q, %v), want home base URL", gotHomeBase, ok)
+	gotSpaceBase, ok := mgr.LoadSpaceBaseURL(ts.URL)
+	if !ok || gotSpaceBase != "https://space.kittypaw.app" {
+		t.Fatalf("LoadSpaceBaseURL = (%q, %v), want space base URL", gotSpaceBase, ok)
 	}
 }
 
@@ -127,7 +127,7 @@ func TestMaybePairChatRelayDevicePairsWhenRelayDiscovered(t *testing.T) {
 	}
 }
 
-func TestMaybePairChatRelayDevicePairsWhenHomeDiscovered(t *testing.T) {
+func TestMaybePairChatRelayDevicePairsWhenSpaceDiscovered(t *testing.T) {
 	var gotAuth string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/devices/pair" {
@@ -146,13 +146,13 @@ func TestMaybePairChatRelayDevicePairsWhenHomeDiscovered(t *testing.T) {
 	if err := mgr.SaveAuthBaseURL(apiURL, ts.URL+"/auth"); err != nil {
 		t.Fatal(err)
 	}
-	if err := mgr.SaveHomeBaseURL(apiURL, "https://home.kittypaw.app"); err != nil {
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app"); err != nil {
 		t.Fatal(err)
 	}
 
 	var out strings.Builder
 	if paired := maybePairChatRelayDevice(apiURL, mgr, "user-access", &out); !paired {
-		t.Fatal("maybePairChatRelayDevice paired = false, want true with Home discovery")
+		t.Fatal("maybePairChatRelayDevice paired = false, want true with Space discovery")
 	}
 	if gotAuth != "Bearer user-access" {
 		t.Fatalf("Authorization = %q", gotAuth)

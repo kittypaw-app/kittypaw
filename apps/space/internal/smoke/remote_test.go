@@ -9,10 +9,10 @@ import (
 )
 
 func TestRemoteConfigRequiresSpaceBaseURL(t *testing.T) {
-	t.Setenv("HOME_USER_TOKEN", "user-token")
-	t.Setenv("HOME_DEVICE_TOKEN", "device-token")
-	t.Setenv("HOME_DEVICE_ID", "dev_1")
-	t.Setenv("HOME_LOCAL_ACCOUNT_ID", "alice")
+	t.Setenv("SPACE_USER_TOKEN", "user-token")
+	t.Setenv("SPACE_DEVICE_TOKEN", "device-token")
+	t.Setenv("SPACE_DEVICE_ID", "dev_1")
+	t.Setenv("SPACE_LOCAL_ACCOUNT_ID", "alice")
 
 	_, err := LoadRemoteConfig()
 	if err == nil {
@@ -25,12 +25,12 @@ func TestRemoteConfigRequiresSpaceBaseURL(t *testing.T) {
 
 func TestRemoteConfigLoadsRequiredAndOptionalEnv(t *testing.T) {
 	t.Setenv("SPACE_BASE_URL", "https://space.kittypaw.app/")
-	t.Setenv("HOME_USER_TOKEN", "user-token")
-	t.Setenv("HOME_DEVICE_TOKEN", "device-token")
-	t.Setenv("HOME_DEVICE_ID", "dev_1")
-	t.Setenv("HOME_LOCAL_ACCOUNT_ID", "alice")
-	t.Setenv("HOME_SMOKE_USER_ID", "user_1")
-	t.Setenv("HOME_SMOKE_TIMEOUT", "7s")
+	t.Setenv("SPACE_USER_TOKEN", "user-token")
+	t.Setenv("SPACE_DEVICE_TOKEN", "device-token")
+	t.Setenv("SPACE_DEVICE_ID", "dev_1")
+	t.Setenv("SPACE_LOCAL_ACCOUNT_ID", "alice")
+	t.Setenv("SPACE_SMOKE_USER_ID", "user_1")
+	t.Setenv("SPACE_SMOKE_TIMEOUT", "7s")
 
 	cfg, err := LoadRemoteConfig()
 	if err != nil {
@@ -52,28 +52,28 @@ func TestRemoteConfigLoadsRequiredAndOptionalEnv(t *testing.T) {
 
 func TestRemoteConfigRejectsInvalidTimeout(t *testing.T) {
 	t.Setenv("SPACE_BASE_URL", "https://space.kittypaw.app")
-	t.Setenv("HOME_USER_TOKEN", "user-token")
-	t.Setenv("HOME_DEVICE_TOKEN", "device-token")
-	t.Setenv("HOME_DEVICE_ID", "dev_1")
-	t.Setenv("HOME_LOCAL_ACCOUNT_ID", "alice")
-	t.Setenv("HOME_SMOKE_TIMEOUT", "soon")
+	t.Setenv("SPACE_USER_TOKEN", "user-token")
+	t.Setenv("SPACE_DEVICE_TOKEN", "device-token")
+	t.Setenv("SPACE_DEVICE_ID", "dev_1")
+	t.Setenv("SPACE_LOCAL_ACCOUNT_ID", "alice")
+	t.Setenv("SPACE_SMOKE_TIMEOUT", "soon")
 
 	_, err := LoadRemoteConfig()
 	if err == nil {
 		t.Fatal("LoadRemoteConfig() error = nil, want invalid timeout")
 	}
-	if !strings.Contains(err.Error(), "HOME_SMOKE_TIMEOUT") {
-		t.Fatalf("LoadRemoteConfig() error = %v, want HOME_SMOKE_TIMEOUT", err)
+	if !strings.Contains(err.Error(), "SPACE_SMOKE_TIMEOUT") {
+		t.Fatalf("LoadRemoteConfig() error = %v, want SPACE_SMOKE_TIMEOUT", err)
 	}
 }
 
 func TestRemoteConfigRejectsNonPositiveTimeout(t *testing.T) {
 	t.Setenv("SPACE_BASE_URL", "https://space.kittypaw.app")
-	t.Setenv("HOME_USER_TOKEN", "user-token")
-	t.Setenv("HOME_DEVICE_TOKEN", "device-token")
-	t.Setenv("HOME_DEVICE_ID", "dev_1")
-	t.Setenv("HOME_LOCAL_ACCOUNT_ID", "alice")
-	t.Setenv("HOME_SMOKE_TIMEOUT", "0s")
+	t.Setenv("SPACE_USER_TOKEN", "user-token")
+	t.Setenv("SPACE_DEVICE_TOKEN", "device-token")
+	t.Setenv("SPACE_DEVICE_ID", "dev_1")
+	t.Setenv("SPACE_LOCAL_ACCOUNT_ID", "alice")
+	t.Setenv("SPACE_SMOKE_TIMEOUT", "0s")
 
 	_, err := LoadRemoteConfig()
 	if err == nil {

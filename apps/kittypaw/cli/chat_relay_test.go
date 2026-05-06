@@ -63,14 +63,14 @@ func TestChatRelayConnectorConfigsRequiresCompleteAccountSecrets(t *testing.T) {
 	}
 }
 
-func TestChatRelayConnectorConfigsPrefersHomeBaseURL(t *testing.T) {
+func TestChatRelayConnectorConfigsPrefersSpaceBaseURL(t *testing.T) {
 	secrets := testSecretsStore(t)
 	mgr := core.NewAPITokenManager("", secrets)
 	apiURL := core.DefaultAPIServerURL
 	if err := mgr.SaveChatRelayURL(apiURL, "https://chat.kittypaw.app"); err != nil {
 		t.Fatal(err)
 	}
-	if err := mgr.SaveHomeBaseURL(apiURL, "https://home.kittypaw.app"); err != nil {
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app"); err != nil {
 		t.Fatal(err)
 	}
 	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
@@ -92,8 +92,8 @@ func TestChatRelayConnectorConfigsPrefersHomeBaseURL(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("connector configs = %d, want 1", len(got))
 	}
-	if got[0].RelayURL != "https://home.kittypaw.app" {
-		t.Fatalf("RelayURL = %q, want Home base URL", got[0].RelayURL)
+	if got[0].RelayURL != "https://space.kittypaw.app" {
+		t.Fatalf("RelayURL = %q, want Space base URL", got[0].RelayURL)
 	}
 }
 

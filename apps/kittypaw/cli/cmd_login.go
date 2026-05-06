@@ -83,8 +83,8 @@ func applyDiscovery(apiURL string, mgr *core.APITokenManager) string {
 	if err := mgr.SaveChatRelayURL(apiURL, d.ChatRelayURL); err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: save chat_relay_url: %v\n", err)
 	}
-	if err := mgr.SaveHomeBaseURL(apiURL, d.HomeBaseURL); err != nil {
-		fmt.Fprintf(os.Stderr, "discovery: save home_base_url: %v\n", err)
+	if err := mgr.SaveSpaceBaseURL(apiURL, d.SpaceBaseURL); err != nil {
+		fmt.Fprintf(os.Stderr, "discovery: save space_base_url: %v\n", err)
 	}
 	if err := mgr.SaveKakaoRelayBaseURL(apiURL, d.KakaoRelayURL); err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: save kakao_relay_url: %v\n", err)
@@ -102,7 +102,7 @@ func maybePairChatRelayDevice(apiURL string, mgr *core.APITokenManager, accessTo
 	if _, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok {
 		return false
 	}
-	relayURL, ok := mgr.LoadHomeBaseURL(apiURL)
+	relayURL, ok := mgr.LoadSpaceBaseURL(apiURL)
 	if !ok || relayURL == "" {
 		relayURL, ok = mgr.LoadChatRelayURL(apiURL)
 	}

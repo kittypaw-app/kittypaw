@@ -233,9 +233,9 @@ func TestWebExchange_Happy(t *testing.T) {
 	}
 
 	// Pin multi-aud contract — token MUST verify under API, legacy Chat,
-	// and Home during the Home migration.
+	// and Space during the Space migration.
 	provider := auth.NewSingleKeyProvider(&cfg.JWTPrivateKey.PublicKey, cfg.JWTKID)
-	for _, aud := range []string{auth.AudienceAPI, auth.AudienceChat, auth.AudienceHome} {
+	for _, aud := range []string{auth.AudienceAPI, auth.AudienceChat, auth.AudienceSpace} {
 		claims, verr := auth.Verify(resp.AccessToken, provider, aud)
 		if verr != nil {
 			t.Fatalf("Verify(aud=%s): %v", aud, verr)

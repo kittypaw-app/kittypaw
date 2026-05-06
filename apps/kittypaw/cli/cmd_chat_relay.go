@@ -80,7 +80,7 @@ func runChatRelayStatus(flags *chatRelayFlags) error {
 	if err != nil {
 		return err
 	}
-	relayURL, relayOK := mgr.LoadHomeBaseURL(apiURL)
+	relayURL, relayOK := mgr.LoadSpaceBaseURL(apiURL)
 	if !relayOK || relayURL == "" {
 		relayURL, relayOK = mgr.LoadChatRelayURL(apiURL)
 	}

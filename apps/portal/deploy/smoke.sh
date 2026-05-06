@@ -211,13 +211,13 @@ check_discovery_keys() {
         return
     fi
     local missing=()
-    for key in api_base_url auth_base_url skills_registry_url home_base_url kakao_relay_url chat_relay_url; do
+    for key in api_base_url auth_base_url skills_registry_url space_base_url kakao_relay_url chat_relay_url; do
         if ! printf '%s' "$BODY" | jq -e --arg k "$key" 'has($k) and (.[$k] | type == "string") and (.[$k] | length > 0)' >/dev/null 2>&1; then
             missing+=("$key")
         fi
     done
     if [[ ${#missing[@]} -eq 0 ]]; then
-        printf "${G}✓${N} discovery [200 + 6 keys: api_base_url, auth_base_url, skills_registry_url, home_base_url, kakao_relay_url, chat_relay_url]\n"
+        printf "${G}✓${N} discovery [200 + 6 keys: api_base_url, auth_base_url, skills_registry_url, space_base_url, kakao_relay_url, chat_relay_url]\n"
         PASS=$((PASS + 1))
     else
         printf "${R}✗${N} discovery [200 but missing/empty: %s]\n" "${missing[*]}"

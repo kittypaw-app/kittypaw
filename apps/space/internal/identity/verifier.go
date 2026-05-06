@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	AudienceKittyAPI  = "https://api.kittypaw.app"
+	AudienceKittyAPI   = "https://api.kittypaw.app"
 	AudienceKittySpace = "https://space.kittypaw.app"
-	IssuerKittyAPI    = "https://portal.kittypaw.app/auth"
+	IssuerKittyAPI     = "https://portal.kittypaw.app/auth"
 
 	CredentialVersion1 = 1
 	CredentialVersion2 = 2

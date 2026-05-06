@@ -95,7 +95,7 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 		"JWT_PRIVATE_KEY_PEM_B64":      b64,
 		"BASE_URL":                     "https://portal.kittypaw.app",
 		"CONNECT_BASE_URL":             "https://connect.kittypaw.app/",
-		"HOME_BASE_URL":                "https://home.kittypaw.app/",
+		"SPACE_BASE_URL":               "https://space.kittypaw.app/",
 		"CONNECT_GOOGLE_CLIENT_ID":     "connect-client-id",
 		"CONNECT_GOOGLE_CLIENT_SECRET": "connect-secret",
 		"CONNECT_GOOGLE_AUTH_URL":      "http://connect-oauth.local/auth",
@@ -113,8 +113,8 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 	if cfg.ConnectBaseURL != "https://connect.kittypaw.app" {
 		t.Fatalf("ConnectBaseURL = %q", cfg.ConnectBaseURL)
 	}
-	if cfg.HomeBaseURL != "https://home.kittypaw.app" {
-		t.Fatalf("HomeBaseURL = %q", cfg.HomeBaseURL)
+	if cfg.SpaceBaseURL != "https://space.kittypaw.app" {
+		t.Fatalf("SpaceBaseURL = %q", cfg.SpaceBaseURL)
 	}
 	if cfg.ConnectGoogleClientID != "connect-client-id" {
 		t.Fatalf("ConnectGoogleClientID = %q", cfg.ConnectGoogleClientID)
@@ -153,8 +153,8 @@ func TestConfig_LoadForTestConnectBaseURL(t *testing.T) {
 	if cfg.ConnectBaseURL == "" {
 		t.Fatal("ConnectBaseURL should default in tests")
 	}
-	if cfg.HomeBaseURL == "" {
-		t.Fatal("HomeBaseURL should default in tests")
+	if cfg.SpaceBaseURL == "" {
+		t.Fatal("SpaceBaseURL should default in tests")
 	}
 	if cfg.ConnectGoogleClientID == "" {
 		t.Fatal("ConnectGoogleClientID should default in tests")

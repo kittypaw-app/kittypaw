@@ -24,9 +24,9 @@ user and device tokens before considering the legacy chat relay removable:
 ```bash
 cd apps/space
 SPACE_BASE_URL=https://space.kittypaw.app \
-HOME_USER_TOKEN=<user-access-token> \
-HOME_DEVICE_TOKEN=<device-token> \
-HOME_DEVICE_ID=<device-id> \
-HOME_LOCAL_ACCOUNT_ID=<local-account-id> \
+SPACE_USER_TOKEN=<user-access-token> \
+SPACE_DEVICE_TOKEN=<device-token> \
+SPACE_DEVICE_ID=<device-id> \
+SPACE_LOCAL_ACCOUNT_ID=<local-account-id> \
 make smoke-cutover
 ```

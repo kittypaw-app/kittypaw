@@ -158,7 +158,7 @@ func TestHandleMeAnonymous(t *testing.T) {
 }
 
 // TestMiddleware_RejectsCrossAudienceLeak pins the cross-audience leak
-// guard. A device JWT (aud=AudienceChat+AudienceHome, scope=daemon:connect) MUST NOT
+// guard. A device JWT (aud=AudienceChat+AudienceSpace, scope=daemon:connect) MUST NOT
 // authenticate against the user middleware (audience pinned to
 // AudienceAPI). Per spec D8: each resource server enforces its own
 // audience only — this catches typo regressions in main.go that wire the
@@ -177,7 +177,7 @@ func TestMiddleware_RejectsCrossAudienceLeak(t *testing.T) {
 	deviceToken, err := testfixture.IssueDeviceJWT(cfg.JWTPrivateKey, cfg.JWTKID, testfixture.DeviceClaims{
 		DeviceID: "dev-1",
 		UserID:   "user-google-123",
-		Audience: []string{auth.AudienceChat, auth.AudienceHome},
+		Audience: []string{auth.AudienceChat, auth.AudienceSpace},
 		Scope:    []string{auth.ScopeDaemonConnect},
 		Version:  2,
 		IssuedAt: now,

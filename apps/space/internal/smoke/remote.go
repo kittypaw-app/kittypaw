@@ -89,11 +89,11 @@ func RunRemote(ctx context.Context, cfg RemoteConfig, out io.Writer) error {
 func LoadRemoteConfig() (RemoteConfig, error) {
 	cfg := RemoteConfig{
 		BaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("SPACE_BASE_URL")), "/"),
-		UserToken:      strings.TrimSpace(os.Getenv("HOME_USER_TOKEN")),
-		DeviceToken:    strings.TrimSpace(os.Getenv("HOME_DEVICE_TOKEN")),
-		DeviceID:       strings.TrimSpace(os.Getenv("HOME_DEVICE_ID")),
-		LocalAccountID: strings.TrimSpace(os.Getenv("HOME_LOCAL_ACCOUNT_ID")),
-		UserID:         strings.TrimSpace(os.Getenv("HOME_SMOKE_USER_ID")),
+		UserToken:      strings.TrimSpace(os.Getenv("SPACE_USER_TOKEN")),
+		DeviceToken:    strings.TrimSpace(os.Getenv("SPACE_DEVICE_TOKEN")),
+		DeviceID:       strings.TrimSpace(os.Getenv("SPACE_DEVICE_ID")),
+		LocalAccountID: strings.TrimSpace(os.Getenv("SPACE_LOCAL_ACCOUNT_ID")),
+		UserID:         strings.TrimSpace(os.Getenv("SPACE_SMOKE_USER_ID")),
 		Timeout:        defaultRemoteSmokeTimeout,
 	}
 	required := []struct {
@@ -101,23 +101,23 @@ func LoadRemoteConfig() (RemoteConfig, error) {
 		value string
 	}{
 		{name: "SPACE_BASE_URL", value: cfg.BaseURL},
-		{name: "HOME_USER_TOKEN", value: cfg.UserToken},
-		{name: "HOME_DEVICE_TOKEN", value: cfg.DeviceToken},
-		{name: "HOME_DEVICE_ID", value: cfg.DeviceID},
-		{name: "HOME_LOCAL_ACCOUNT_ID", value: cfg.LocalAccountID},
+		{name: "SPACE_USER_TOKEN", value: cfg.UserToken},
+		{name: "SPACE_DEVICE_TOKEN", value: cfg.DeviceToken},
+		{name: "SPACE_DEVICE_ID", value: cfg.DeviceID},
+		{name: "SPACE_LOCAL_ACCOUNT_ID", value: cfg.LocalAccountID},
 	}
 	for _, item := range required {
 		if item.value == "" {
 			return RemoteConfig{}, fmt.Errorf("%s is required", item.name)
 		}
 	}
-	if raw := strings.TrimSpace(os.Getenv("HOME_SMOKE_TIMEOUT")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("SPACE_SMOKE_TIMEOUT")); raw != "" {
 		timeout, err := time.ParseDuration(raw)
 		if err != nil {
-			return RemoteConfig{}, fmt.Errorf("HOME_SMOKE_TIMEOUT: %w", err)
+			return RemoteConfig{}, fmt.Errorf("SPACE_SMOKE_TIMEOUT: %w", err)
 		}
 		if timeout <= 0 {
-			return RemoteConfig{}, fmt.Errorf("HOME_SMOKE_TIMEOUT must be greater than 0")
+			return RemoteConfig{}, fmt.Errorf("SPACE_SMOKE_TIMEOUT must be greater than 0")
 		}
 		cfg.Timeout = timeout
 	}

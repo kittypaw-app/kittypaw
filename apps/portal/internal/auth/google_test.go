@@ -346,8 +346,8 @@ func TestGoogleCallbackSuccess(t *testing.T) {
 		t.Fatalf(`wire-format regression in issueTokenPair: legacy "uid" key must not appear, got: %v`, raw)
 	}
 	auds, _ := raw["aud"].([]any)
-	if len(auds) != 3 || auds[0] != "https://api.kittypaw.app" || auds[1] != "https://chat.kittypaw.app" || auds[2] != "https://home.kittypaw.app" {
-		t.Fatalf(`wire-format regression in issueTokenPair: aud = %v, want ["https://api.kittypaw.app","https://chat.kittypaw.app","https://home.kittypaw.app"]`, raw["aud"])
+	if len(auds) != 3 || auds[0] != "https://api.kittypaw.app" || auds[1] != "https://chat.kittypaw.app" || auds[2] != "https://space.kittypaw.app" {
+		t.Fatalf(`wire-format regression in issueTokenPair: aud = %v, want ["https://api.kittypaw.app","https://chat.kittypaw.app","https://space.kittypaw.app"]`, raw["aud"])
 	}
 	scopes, _ := raw["scope"].([]any)
 	if len(scopes) != 2 || scopes[0] != "chat:relay" || scopes[1] != "models:read" {

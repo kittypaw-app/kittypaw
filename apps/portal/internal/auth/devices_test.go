@@ -105,7 +105,7 @@ func (m *mockDeviceStore) DeleteRevokedOlderThan(_ context.Context, _ time.Time)
 }
 
 // TestSignDeviceJWT_RoundTrip pins the prod-issue path: SignDeviceJWT
-// produces a token that auth.Verify accepts for Chat and Home audiences and
+// produces a token that auth.Verify accepts for Chat and Space audiences and
 // whose claims carry sub=device:<id>, user_id=<userID>, scope=daemon:connect,
 // v=2. A regression in any of those breaks the daemon ↔ kittychat WSS
 // auth contract.
@@ -122,8 +122,8 @@ func TestSignDeviceJWT_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify (AudienceChat): %v", err)
 	}
-	if _, err := auth.Verify(token, provider, auth.AudienceHome); err != nil {
-		t.Fatalf("Verify (AudienceHome): %v", err)
+	if _, err := auth.Verify(token, provider, auth.AudienceSpace); err != nil {
+		t.Fatalf("Verify (AudienceSpace): %v", err)
 	}
 	// claims.UserID is the JWT "sub" — for device JWTs this is "device:<id>",
 	// not the underlying user. The user id rides in a separate "user_id"
@@ -164,8 +164,8 @@ func TestSignDeviceJWT_RoundTrip(t *testing.T) {
 		t.Fatalf("user_id = %v, want user-1", raw["user_id"])
 	}
 	auds, _ := raw["aud"].([]any)
-	if len(auds) != 2 || auds[0] != auth.AudienceChat || auds[1] != auth.AudienceHome {
-		t.Fatalf("aud = %v, want [%q %q]", raw["aud"], auth.AudienceChat, auth.AudienceHome)
+	if len(auds) != 2 || auds[0] != auth.AudienceChat || auds[1] != auth.AudienceSpace {
+		t.Fatalf("aud = %v, want [%q %q]", raw["aud"], auth.AudienceChat, auth.AudienceSpace)
 	}
 	scopes, _ := raw["scope"].([]any)
 	if len(scopes) != 1 || scopes[0] != auth.ScopeDaemonConnect {
@@ -197,7 +197,7 @@ func TestSignDeviceJWT_WireFormatMatchesIssueDeviceJWT(t *testing.T) {
 	fixtureToken, err := testfixture.IssueDeviceJWT(cfg.JWTPrivateKey, cfg.JWTKID, testfixture.DeviceClaims{
 		UserID:   "user-1",
 		DeviceID: "dev-abc",
-		Audience: []string{auth.AudienceChat, auth.AudienceHome},
+		Audience: []string{auth.AudienceChat, auth.AudienceSpace},
 		Scope:    []string{auth.ScopeDaemonConnect},
 		Version:  2,
 		IssuedAt: now,

@@ -115,7 +115,7 @@ const (
 	kakaoRelayWSURLKey      = "kakao_relay_ws_url"
 	authBaseURLKey          = "auth_base_url"
 	connectBaseURLKey       = "connect_base_url"
-	homeBaseURLKey          = "home_base_url"
+	spaceBaseURLKey         = "space_base_url"
 )
 
 // SaveChatRelayURL stores the chat relay server base URL from GET /discovery.
@@ -241,22 +241,22 @@ func (m *APITokenManager) ResolveConnectBaseURL(apiURL string) string {
 	return trimmed
 }
 
-// SaveHomeBaseURL stores the Home surface base URL from GET /discovery.
+// SaveSpaceBaseURL stores the Space surface base URL from GET /discovery.
 // Empty value deletes the key so stale topology does not persist.
-func (m *APITokenManager) SaveHomeBaseURL(apiURL, homeBaseURL string) error {
-	return m.saveOrDelete(NamespaceForURL(apiURL), homeBaseURLKey, strings.TrimRight(homeBaseURL, "/"))
+func (m *APITokenManager) SaveSpaceBaseURL(apiURL, spaceBaseURL string) error {
+	return m.saveOrDelete(NamespaceForURL(apiURL), spaceBaseURLKey, strings.TrimRight(spaceBaseURL, "/"))
 }
 
-// LoadHomeBaseURL returns the stored Home surface base URL.
-func (m *APITokenManager) LoadHomeBaseURL(apiURL string) (string, bool) {
-	return m.secrets.Get(NamespaceForURL(apiURL), homeBaseURLKey)
+// LoadSpaceBaseURL returns the stored Space surface base URL.
+func (m *APITokenManager) LoadSpaceBaseURL(apiURL string) (string, bool) {
+	return m.secrets.Get(NamespaceForURL(apiURL), spaceBaseURLKey)
 }
 
-// ResolveHomeBaseURL returns the discovered Home URL, a conservative
-// portal.* -> home.* production fallback, or the API URL for collapsed
+// ResolveSpaceBaseURL returns the discovered Space URL, a conservative
+// portal.* -> space.* production fallback, or the API URL for collapsed
 // local/dev deployments.
-func (m *APITokenManager) ResolveHomeBaseURL(apiURL string) string {
-	if got, ok := m.LoadHomeBaseURL(apiURL); ok && got != "" {
+func (m *APITokenManager) ResolveSpaceBaseURL(apiURL string) string {
+	if got, ok := m.LoadSpaceBaseURL(apiURL); ok && got != "" {
 		return strings.TrimRight(got, "/")
 	}
 	trimmed := strings.TrimRight(apiURL, "/")
@@ -265,7 +265,7 @@ func (m *APITokenManager) ResolveHomeBaseURL(apiURL string) string {
 		return trimmed
 	}
 	if parsed.Scheme == "https" && strings.HasPrefix(parsed.Host, "portal.") {
-		parsed.Host = "home." + strings.TrimPrefix(parsed.Host, "portal.")
+		parsed.Host = "space." + strings.TrimPrefix(parsed.Host, "portal.")
 		return strings.TrimRight(parsed.String(), "/")
 	}
 	return trimmed

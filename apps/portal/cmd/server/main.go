@@ -214,8 +214,8 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 	if cfg.ConnectBaseURL != "" {
 		discovery["connect_base_url"] = cfg.ConnectBaseURL
 	}
-	if cfg.HomeBaseURL != "" {
-		discovery["home_base_url"] = cfg.HomeBaseURL
+	if cfg.SpaceBaseURL != "" {
+		discovery["space_base_url"] = cfg.SpaceBaseURL
 	}
 	if cfg.KakaoRelayURL != "" {
 		discovery["kakao_relay_url"] = cfg.KakaoRelayURL

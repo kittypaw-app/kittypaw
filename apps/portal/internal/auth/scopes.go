@@ -12,12 +12,12 @@ const (
 	ScopeModelsRead    = "models:read"
 	ScopeDaemonConnect = "daemon:connect"
 
-	// AudienceAPI / AudienceChat / AudienceHome identify the resource servers
-	// this token is valid against. During Home migration, OAuth-issued tokens
-	// validate against API, legacy chat, and Home resource checks.
-	AudienceAPI  = "https://api.kittypaw.app"
-	AudienceChat = "https://chat.kittypaw.app"
-	AudienceHome = "https://home.kittypaw.app"
+	// AudienceAPI / AudienceChat / AudienceSpace identify the resource servers
+	// this token is valid against. During Space migration, OAuth-issued tokens
+	// validate against API, legacy chat, and Space resource checks.
+	AudienceAPI   = "https://api.kittypaw.app"
+	AudienceChat  = "https://chat.kittypaw.app"
+	AudienceSpace = "https://space.kittypaw.app"
 
 	// Issuer identifies the auth authority. Public identity contracts are
 	// canonical under portal.kittypaw.app; api.kittypaw.app remains the
@@ -32,4 +32,4 @@ const (
 var DefaultAPIClientScopes = []string{ScopeChatRelay, ScopeModelsRead}
 
 // DefaultAPIClientAudiences is the audience set for OAuth-issued access tokens.
-var DefaultAPIClientAudiences = []string{AudienceAPI, AudienceChat, AudienceHome}
+var DefaultAPIClientAudiences = []string{AudienceAPI, AudienceChat, AudienceSpace}

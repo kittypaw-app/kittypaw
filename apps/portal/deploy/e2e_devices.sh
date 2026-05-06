@@ -135,7 +135,7 @@ HDR_KID=$(echo "$HEADER" | jq -r '.kid')
 SUB=$(echo "$PAYLOAD" | jq -r '.sub')
 USER_ID=$(echo "$PAYLOAD" | jq -r '.user_id')
 AUD_CHAT=$(echo "$PAYLOAD" | jq -r '(.aud // []) | index("https://chat.kittypaw.app")')
-AUD_HOME=$(echo "$PAYLOAD" | jq -r '(.aud // []) | index("https://home.kittypaw.app")')
+AUD_SPACE=$(echo "$PAYLOAD" | jq -r '(.aud // []) | index("https://space.kittypaw.app")')
 SCOPE=$(echo "$PAYLOAD" | jq -r '.scope[0]')
 V=$(echo "$PAYLOAD" | jq -r '.v')
 ISS=$(echo "$PAYLOAD" | jq -r '.iss')
@@ -146,7 +146,7 @@ ISS=$(echo "$PAYLOAD" | jq -r '.iss')
 [[ "$SUB" == "device:$DEVICE_ID" ]]                && pass "sub = device:<id>"      || fail "sub = $SUB"
 [[ -n "$USER_ID" && "$USER_ID" != "null" ]]        && pass "user_id present"        || fail "user_id missing"
 [[ "$AUD_CHAT" != "null" ]]                        && pass "aud includes chat"      || fail "aud missing chat"
-[[ "$AUD_HOME" != "null" ]]                        && pass "aud includes home"      || fail "aud missing home"
+[[ "$AUD_SPACE" != "null" ]]                       && pass "aud includes space"     || fail "aud missing space"
 [[ "$SCOPE" == "daemon:connect" ]]                 && pass "scope = daemon:connect" || fail "scope = $SCOPE"
 [[ "$V" == "2" ]]                                  && pass "v = 2"                  || fail "v = $V"
 [[ "$ISS" == "https://portal.kittypaw.app/auth" ]] && pass "iss correct"            || fail "iss = $ISS"

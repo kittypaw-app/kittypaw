@@ -40,7 +40,7 @@ type Config struct {
 	ConnectXAuthURL           string
 	ConnectXTokenURL          string
 	ConnectXUserInfoURL       string
-	HomeBaseURL               string
+	SpaceBaseURL              string
 	GitHubClientID            string
 	GitHubClientSecret        string
 	BaseURL                   string
@@ -78,7 +78,7 @@ func Load() (*Config, error) {
 		ConnectXAuthURL:           os.Getenv("CONNECT_X_AUTH_URL"),
 		ConnectXTokenURL:          os.Getenv("CONNECT_X_TOKEN_URL"),
 		ConnectXUserInfoURL:       os.Getenv("CONNECT_X_USERINFO_URL"),
-		HomeBaseURL:               strings.TrimRight(env("HOME_BASE_URL", ""), "/"),
+		SpaceBaseURL:              strings.TrimRight(env("SPACE_BASE_URL", ""), "/"),
 		GitHubClientID:            os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:        os.Getenv("GITHUB_CLIENT_SECRET"),
 		BaseURL:                   env("BASE_URL", "http://localhost:8080"),
@@ -167,7 +167,7 @@ func LoadForTest() *Config {
 		ConnectGoogleClientSecret: "connect-secret",
 		ConnectXClientID:          "x-connect-client-id",
 		ConnectXClientSecret:      "x-connect-secret",
-		HomeBaseURL:               "https://home.kittypaw.app",
+		SpaceBaseURL:              "https://space.kittypaw.app",
 		APIBaseURL:                env("BASE_URL", "http://localhost:8080"),
 		AllowedOrigins:            []string{"http://localhost:8080"},
 		JWTPrivateKey:             priv,

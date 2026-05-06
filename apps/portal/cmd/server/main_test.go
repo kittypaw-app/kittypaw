@@ -166,11 +166,11 @@ func TestDiscoveryReturnsChatRelayURL(t *testing.T) {
 	}
 }
 
-func TestDiscoveryIncludesHomeBaseURL(t *testing.T) {
+func TestDiscoveryIncludesSpaceBaseURL(t *testing.T) {
 	cfg := config.LoadForTest()
 	cfg.BaseURL = "https://portal.kittypaw.app"
 	cfg.APIBaseURL = "https://api.kittypaw.app"
-	cfg.HomeBaseURL = "https://home.kittypaw.app"
+	cfg.SpaceBaseURL = "https://space.kittypaw.app"
 	r, cleanup := NewRouter(cfg, nil, nil, nil)
 	defer cleanup()
 
@@ -186,8 +186,8 @@ func TestDiscoveryIncludesHomeBaseURL(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if got := body["home_base_url"]; got != "https://home.kittypaw.app" {
-		t.Fatalf("home_base_url = %q, want https://home.kittypaw.app", got)
+	if got := body["space_base_url"]; got != "https://space.kittypaw.app" {
+		t.Fatalf("space_base_url = %q, want https://space.kittypaw.app", got)
 	}
 }
 

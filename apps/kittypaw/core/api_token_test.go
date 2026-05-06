@@ -372,7 +372,7 @@ func TestAPITokenManager_ResolveConnectBaseURLFallbacks(t *testing.T) {
 	}
 }
 
-func TestAPITokenManager_SaveLoadAndResolveHomeBaseURL(t *testing.T) {
+func TestAPITokenManager_SaveLoadAndResolveSpaceBaseURL(t *testing.T) {
 	secrets := &SecretsStore{
 		path: t.TempDir() + "/secrets.json",
 		data: make(map[string]map[string]string),
@@ -381,40 +381,40 @@ func TestAPITokenManager_SaveLoadAndResolveHomeBaseURL(t *testing.T) {
 	apiURL := "https://portal.kittypaw.app"
 	ns := NamespaceForURL(apiURL)
 
-	if err := mgr.SaveHomeBaseURL(apiURL, "https://home.kittypaw.app/"); err != nil {
-		t.Fatalf("SaveHomeBaseURL: %v", err)
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app/"); err != nil {
+		t.Fatalf("SaveSpaceBaseURL: %v", err)
 	}
-	got, ok := mgr.LoadHomeBaseURL(apiURL)
-	if !ok || got != "https://home.kittypaw.app" {
-		t.Fatalf("LoadHomeBaseURL = (%q, %v), want home base URL", got, ok)
+	got, ok := mgr.LoadSpaceBaseURL(apiURL)
+	if !ok || got != "https://space.kittypaw.app" {
+		t.Fatalf("LoadSpaceBaseURL = (%q, %v), want space base URL", got, ok)
 	}
-	if stored, ok := secrets.Get(ns, "home_base_url"); !ok || stored != "https://home.kittypaw.app" {
-		t.Fatalf("stored home_base_url = (%q, %v)", stored, ok)
+	if stored, ok := secrets.Get(ns, "space_base_url"); !ok || stored != "https://space.kittypaw.app" {
+		t.Fatalf("stored space_base_url = (%q, %v)", stored, ok)
 	}
-	if resolved := mgr.ResolveHomeBaseURL(apiURL); resolved != "https://home.kittypaw.app" {
-		t.Fatalf("ResolveHomeBaseURL = %q", resolved)
+	if resolved := mgr.ResolveSpaceBaseURL(apiURL); resolved != "https://space.kittypaw.app" {
+		t.Fatalf("ResolveSpaceBaseURL = %q", resolved)
 	}
-	if err := mgr.SaveHomeBaseURL(apiURL, ""); err != nil {
-		t.Fatalf("SaveHomeBaseURL empty: %v", err)
+	if err := mgr.SaveSpaceBaseURL(apiURL, ""); err != nil {
+		t.Fatalf("SaveSpaceBaseURL empty: %v", err)
 	}
-	got, ok = mgr.LoadHomeBaseURL(apiURL)
+	got, ok = mgr.LoadSpaceBaseURL(apiURL)
 	if ok || got != "" {
-		t.Fatalf("after empty save, LoadHomeBaseURL = (%q, %v), want empty false", got, ok)
+		t.Fatalf("after empty save, LoadSpaceBaseURL = (%q, %v), want empty false", got, ok)
 	}
 }
 
-func TestAPITokenManager_ResolveHomeBaseURLFallbacks(t *testing.T) {
+func TestAPITokenManager_ResolveSpaceBaseURLFallbacks(t *testing.T) {
 	secrets := &SecretsStore{
 		path: t.TempDir() + "/secrets.json",
 		data: make(map[string]map[string]string),
 	}
 	mgr := NewAPITokenManager("", secrets)
 
-	if got := mgr.ResolveHomeBaseURL("https://portal.kittypaw.app"); got != "https://home.kittypaw.app" {
-		t.Fatalf("ResolveHomeBaseURL portal fallback = %q", got)
+	if got := mgr.ResolveSpaceBaseURL("https://portal.kittypaw.app"); got != "https://space.kittypaw.app" {
+		t.Fatalf("ResolveSpaceBaseURL portal fallback = %q", got)
 	}
-	if got := mgr.ResolveHomeBaseURL("http://localhost:8080"); got != "http://localhost:8080" {
-		t.Fatalf("ResolveHomeBaseURL localhost fallback = %q", got)
+	if got := mgr.ResolveSpaceBaseURL("http://localhost:8080"); got != "http://localhost:8080" {
+		t.Fatalf("ResolveSpaceBaseURL localhost fallback = %q", got)
 	}
 }
 

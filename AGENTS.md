@@ -19,8 +19,8 @@ This repo is a Go-first monorepo for KittyPaw apps.
 - `apps/kittyapi` owns hosted `/v1/*` public data API and proxy endpoints.
 - `apps/portal` owns OAuth, users, refresh tokens, devices, discovery, JWKS,
   and service bootstrap metadata.
-- `apps/home` owns hosted Home surfaces, beginning with `/chat`, plus the
-  daemon outbound WebSocket relay and Home capability routing.
+- `apps/space` owns hosted Space surfaces, beginning with `/chat`, plus the
+  daemon outbound WebSocket relay and Space capability routing.
 - `apps/chat` owns hosted chat, route discovery, OpenAI-compatible relay
   endpoints, and daemon outbound WebSocket relay.
 - `apps/kakao` owns Kakao OpenBuilder webhook, Kakao callback dispatch, and
@@ -46,6 +46,7 @@ Use namespaced tags:
 - `kittypaw/vX.Y.Z`
 - `kittyapi/vX.Y.Z`
 - `portal/vX.Y.Z`
+- `space/vX.Y.Z`
 - `chat/vX.Y.Z`
 - `kakao/vX.Y.Z`
 

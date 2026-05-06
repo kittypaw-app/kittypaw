@@ -23,33 +23,33 @@
 
 ## Tasks
 
-### Task 1: Move Space App And Module
+### Task 1: Move Home App And Module
 
-- [ ] Move `apps/home` to `apps/space` and update `go.work`.
-- [ ] Replace `kittyhome` with `kittyspace`, `KittyHome` with `KittySpace`, `KITTYHOME` with `KITTYSPACE`, and `github.com/kittypaw-app/kittyhome` with `github.com/kittypaw-app/kittyspace` under `apps/space`.
-- [ ] Replace `home.kittypaw.app` with `space.kittypaw.app` under `apps/space`.
-- [ ] Rename command directories to `cmd/kittyspace`, `cmd/kittyspace-smoke`, and `cmd/kittyspace-cutover-smoke`.
-- [ ] Rename deployment files to `kittyspace.service` and `kittyspace.nginx`.
-- [ ] Run `cd apps/space && go test ./... -count=1`; expect failures only from cross-app references not yet renamed.
-- [ ] Commit with `refactor(space): rename home app`.
+- [x] Move `apps/home` to `apps/space` and update `go.work`.
+- [x] Replace `kittyhome` with `kittyspace`, `KittyHome` with `KittySpace`, `KITTYHOME` with `KITTYSPACE`, and `github.com/kittypaw-app/kittyhome` with `github.com/kittypaw-app/kittyspace` under `apps/space`.
+- [x] Replace `home.kittypaw.app` with `space.kittypaw.app` under `apps/space`.
+- [x] Rename command directories to `cmd/kittyspace`, `cmd/kittyspace-smoke`, and `cmd/kittyspace-cutover-smoke`.
+- [x] Rename deployment files to `kittyspace.service` and `kittyspace.nginx`.
+- [x] Run `cd apps/space && go test ./... -count=1`.
+- [x] Commit with `refactor(space): rename home app`.
 
 ### Task 2: Contracts, Portal, And Kittypaw Rename
 
-- [ ] Replace discovery key `home_base_url` with `space_base_url` in contracts and examples.
-- [ ] Replace Portal `HOME_BASE_URL` config with `SPACE_BASE_URL`.
-- [ ] Rename Portal audience constant `AudienceHome` to `AudienceSpace` and value to `https://space.kittypaw.app`.
-- [ ] Replace Kittypaw stored key and discovery field from Home to Space.
-- [ ] Ensure hosted relay selection prefers `space_base_url`, then falls back to `chat_relay_url`.
-- [ ] Run `make contracts-check`.
-- [ ] Run focused tests for Portal and Kittypaw discovery/relay packages.
+- [x] Replace discovery key `home_base_url` with `space_base_url` in contracts and examples.
+- [x] Replace Portal `HOME_BASE_URL` config with `SPACE_BASE_URL`.
+- [x] Rename Portal audience constant `AudienceHome` to `AudienceSpace` and value to `https://space.kittypaw.app`.
+- [x] Replace Kittypaw stored key and discovery field from Home to Space.
+- [x] Ensure hosted relay selection prefers `space_base_url`, then falls back to `chat_relay_url`.
+- [x] Run `make contracts-check`.
+- [x] Run focused tests for Portal and Kittypaw discovery/relay packages.
 - [ ] Commit with `refactor(space): rename discovery and audience`.
 
 ### Task 3: Docs And Smoke Wiring
 
-- [ ] Move `deploy/home` to `deploy/space` and update root deploy docs.
-- [ ] Update `AGENTS.md` app ownership from Home to Space.
-- [ ] Update `scripts/smoke-local.sh` to use `apps/space` and Space fabfile/smoke paths.
-- [ ] Update all relevant docs under `apps/space`, `deploy/space`, and `docs/superpowers` from Home public naming to Space.
+- [x] Move `deploy/home` to `deploy/space` and update root deploy docs.
+- [x] Update `AGENTS.md` app ownership from Home to Space.
+- [x] Update `scripts/smoke-local.sh` to use `apps/space` and Space fabfile/smoke paths.
+- [x] Update all relevant docs under `apps/space`, `deploy/space`, and `docs/superpowers` from Home public naming to Space.
 - [ ] Run shell/Python syntax checks for Space deploy assets.
 - [ ] Commit with `docs(space): update deployment naming`.
 
@@ -65,4 +65,4 @@
 - [ ] Run `bash -n apps/space/deploy/smoke.sh scripts/smoke-local.sh`.
 - [ ] Run `PYTHONPYCACHEPREFIX=/private/tmp/kitty-pycache-space python3 -m py_compile apps/space/fabfile.py apps/kittyapi/fabfile.py apps/portal/fabfile.py apps/chat/fabfile.py apps/kakao/fabfile.py`.
 - [ ] Run `git diff --check`.
-- [ ] Review `git diff main...HEAD` for remaining `apps/home`, `home_base_url`, `HOME_BASE_URL`, `KITTYHOME`, `kittyhome`, and `home.kittypaw.app` references.
+- [ ] Review `git diff main...HEAD` for remaining `apps/space`, `space_base_url`, `SPACE_BASE_URL`, `KITTYSPACE`, `kittyspace`, and `space.kittypaw.app` references.
