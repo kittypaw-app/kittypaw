@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -242,6 +243,54 @@ func (s *Server) handleKanbanTasksList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
+}
+
+func (s *Server) handleKanbanStaleRunsList(w http.ResponseWriter, r *http.Request) {
+	staleAfterRaw := strings.TrimSpace(r.URL.Query().Get("stale_after"))
+	if staleAfterRaw == "" {
+		writeError(w, http.StatusBadRequest, "stale_after is required")
+		return
+	}
+	staleAfter, err := time.ParseDuration(staleAfterRaw)
+	if err != nil || staleAfter <= 0 {
+		writeError(w, http.StatusBadRequest, "positive stale_after duration is required")
+		return
+	}
+
+	limit := 50
+	if limitRaw := strings.TrimSpace(r.URL.Query().Get("limit")); limitRaw != "" {
+		parsed, err := strconv.Atoi(limitRaw)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "positive limit is required")
+			return
+		}
+		limit = parsed
+	}
+
+	projectID := ""
+	if projectArg := strings.TrimSpace(r.URL.Query().Get("project")); projectArg != "" {
+		project, err := kanbanResolveProject(s.store, projectArg)
+		if err != nil {
+			kanbanWriteStoreError(w, err)
+			return
+		}
+		projectID = project.ID
+	}
+
+	cutoff := time.Now().UTC().Add(-staleAfter).Format("2006-01-02T15:04:05Z")
+	staleRuns, err := s.store.ListStaleKanbanRuns(store.KanbanStaleRunFilter{
+		ProjectID:   projectID,
+		StaleBefore: cutoff,
+		Limit:       limit,
+	})
+	if err != nil {
+		kanbanWriteStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stale_runs":   kanbanSliceOrEmpty(staleRuns),
+		"stale_before": cutoff,
+	})
 }
 
 func (s *Server) handleKanbanTaskShow(w http.ResponseWriter, r *http.Request) {

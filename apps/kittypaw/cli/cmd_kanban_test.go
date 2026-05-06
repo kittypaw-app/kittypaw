@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/store"
 )
@@ -16,6 +17,7 @@ func TestKanbanCommandExposesTaskWorkflow(t *testing.T) {
 		{"kanban"},
 		{"kanban", "create"},
 		{"kanban", "list"},
+		{"kanban", "stale"},
 		{"kanban", "show"},
 		{"kanban", "edit"},
 		{"kanban", "archive"},
@@ -77,6 +79,13 @@ func TestKanbanCommandFlags(t *testing.T) {
 	for _, flag := range []string{"actor", "work-dir", "summary", "account"} {
 		if execCmd.Flag(flag) == nil {
 			t.Fatalf("kanban exec missing --%s", flag)
+		}
+	}
+
+	stale := mustFindCommand(t, root, []string{"kanban", "stale"})
+	for _, flag := range []string{"project", "stale-after", "limit", "account"} {
+		if stale.Flag(flag) == nil {
+			t.Fatalf("kanban stale missing --%s", flag)
 		}
 	}
 
@@ -225,6 +234,60 @@ func TestKanbanReclaimStartsReplacementRun(t *testing.T) {
 	}
 	if len(runs) != 2 || reclaimed != 1 || running != 1 {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanStaleListsStaleRuns(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Investigate stale run", Status: store.KanbanStatusTodo})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	run, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{Actor: "alice"})
+	if err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	_ = st.Close()
+	time.Sleep(2100 * time.Millisecond)
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runKanbanStale(&kanbanStaleFlags{
+			shared:     &kanbanSharedFlags{accountID: "alice"},
+			project:    "kitty",
+			staleAfter: "1s",
+			limit:      10,
+		})
+	})
+	if runErr != nil {
+		t.Fatalf("runKanbanStale: %v", runErr)
+	}
+	for _, want := range []string{task.ID, run.ID, "kitty", "alice", "Investigate stale run"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stale output = %q, missing %q", out, want)
+		}
+	}
+}
+
+func TestKanbanStaleValidatesDuration(t *testing.T) {
+	err := runKanbanStale(&kanbanStaleFlags{
+		shared:     &kanbanSharedFlags{accountID: "alice"},
+		staleAfter: "0s",
+	})
+	if err == nil || !strings.Contains(err.Error(), "positive --stale-after") {
+		t.Fatalf("runKanbanStale error = %v, want positive stale-after validation", err)
 	}
 }
 

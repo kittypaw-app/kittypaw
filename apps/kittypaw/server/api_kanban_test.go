@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
 )
@@ -546,6 +547,57 @@ func TestKanbanAPIRunLifecycleHeartbeatCancelReclaim(t *testing.T) {
 	if len(runs.Runs) != 2 || reclaimedRuns != 1 || runningRuns != 1 {
 		t.Fatalf("runs = %+v", runs.Runs)
 	}
+}
+
+func TestKanbanAPIStaleRunsList(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+	kanbanAPICreateProject(t, srv, "space")
+	oldTaskID := kanbanAPICreateTask(t, srv, "kitty", "Old run")
+	otherTaskID := kanbanAPICreateTask(t, srv, "space", "Other run")
+
+	var oldClaimed, otherClaimed struct {
+		Run struct {
+			ID string `json:"id"`
+		} `json:"run"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+oldTaskID+"/claim", map[string]any{"actor": "alice"}, http.StatusOK, &oldClaimed)
+	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/kanban/tasks/"+otherTaskID+"/claim", map[string]any{"actor": "carol"}, http.StatusOK, &otherClaimed)
+	time.Sleep(2100 * time.Millisecond)
+
+	var listed struct {
+		StaleBefore string `json:"stale_before"`
+		StaleRuns   []struct {
+			Run struct {
+				ID      string `json:"id"`
+				Actor   string `json:"actor"`
+				Outcome string `json:"outcome"`
+			} `json:"run"`
+			Task struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"task"`
+			ProjectSlug string `json:"project_slug"`
+		} `json:"stale_runs"`
+	}
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/runs/stale?project=kitty&stale_after=1s&limit=10", nil, http.StatusOK, &listed)
+	if listed.StaleBefore == "" {
+		t.Fatalf("stale_before is empty: %+v", listed)
+	}
+	if len(listed.StaleRuns) != 1 || listed.StaleRuns[0].Run.ID != oldClaimed.Run.ID || listed.StaleRuns[0].Run.Actor != "alice" || listed.StaleRuns[0].Run.Outcome != "running" || listed.StaleRuns[0].Task.ID != oldTaskID || listed.StaleRuns[0].ProjectSlug != "kitty" {
+		t.Fatalf("stale runs = %+v", listed.StaleRuns)
+	}
+}
+
+func TestKanbanAPIStaleRunsValidation(t *testing.T) {
+	srv := newKanbanAPITestServer(t)
+	kanbanAPICreateProject(t, srv, "kitty")
+
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/runs/stale", nil, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/runs/stale?stale_after=0s", nil, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/runs/stale?stale_after=nope", nil, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/runs/stale?stale_after=1m&limit=0", nil, http.StatusBadRequest, nil)
+	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/runs/stale?stale_after=1m&project=missing", nil, http.StatusNotFound, nil)
 }
 
 func TestKanbanAPIMissingTaskRoutesReturnNotFound(t *testing.T) {

@@ -78,6 +78,13 @@ type KanbanRun struct {
 	FinishedAt      string `json:"finished_at,omitempty"`
 }
 
+type KanbanStaleRun struct {
+	Run         KanbanRun  `json:"run"`
+	Task        KanbanTask `json:"task"`
+	ProjectSlug string     `json:"project_slug"`
+	ProjectName string     `json:"project_name"`
+}
+
 type KanbanComment struct {
 	ID        string `json:"id"`
 	TaskID    string `json:"task_id"`
@@ -185,6 +192,12 @@ type KanbanTaskListFilter struct {
 	MilestoneID     string
 	Status          string
 	IncludeArchived bool
+}
+
+type KanbanStaleRunFilter struct {
+	ProjectID   string
+	StaleBefore string
+	Limit       int
 }
 
 const (
@@ -1101,6 +1114,65 @@ func (s *Store) ListKanbanRuns(taskID string) ([]KanbanRun, error) {
 			return nil, err
 		}
 		out = append(out, *run)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListStaleKanbanRuns(filter KanbanStaleRunFilter) ([]KanbanStaleRun, error) {
+	staleBefore := strings.TrimSpace(filter.StaleBefore)
+	if staleBefore == "" {
+		return nil, fmt.Errorf("stale before is required")
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	query := `
+		SELECT
+			r.id, r.task_id, r.actor, r.work_dir, r.work_dir_provider, r.outcome,
+			r.summary, r.metadata_json, r.error, r.started_at, r.heartbeat_at, r.finished_at,
+			t.id, t.project_id, t.board_id, t.milestone_id, t.title, t.body, t.status,
+			t.priority, t.assignee, t.created_by, t.created_at, t.updated_at, t.completed_at,
+			p.slug, p.name
+		FROM kanban_task_runs r
+		JOIN kanban_tasks t ON t.id = r.task_id
+		JOIN kanban_projects p ON p.id = t.project_id
+		WHERE r.outcome = ? AND t.status = ? AND p.archived = 0 AND r.heartbeat_at < ?`
+	args := []any{KanbanRunRunning, KanbanStatusRunning, staleBefore}
+	if strings.TrimSpace(filter.ProjectID) != "" {
+		query += ` AND t.project_id = ?`
+		args = append(args, strings.TrimSpace(filter.ProjectID))
+	}
+	query += ` ORDER BY r.heartbeat_at ASC, r.started_at ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []KanbanStaleRun
+	for rows.Next() {
+		var item KanbanStaleRun
+		var milestone sql.NullString
+		if err := rows.Scan(
+			&item.Run.ID, &item.Run.TaskID, &item.Run.Actor, &item.Run.WorkDir, &item.Run.WorkDirProvider, &item.Run.Outcome,
+			&item.Run.Summary, &item.Run.MetadataJSON, &item.Run.Error, &item.Run.StartedAt, &item.Run.HeartbeatAt, &item.Run.FinishedAt,
+			&item.Task.ID, &item.Task.ProjectID, &item.Task.BoardID, &milestone, &item.Task.Title, &item.Task.Body, &item.Task.Status,
+			&item.Task.Priority, &item.Task.Assignee, &item.Task.CreatedBy, &item.Task.CreatedAt, &item.Task.UpdatedAt, &item.Task.CompletedAt,
+			&item.ProjectSlug, &item.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		if milestone.Valid {
+			item.Task.MilestoneID = milestone.String
+		}
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }
