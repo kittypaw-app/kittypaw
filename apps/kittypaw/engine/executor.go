@@ -1385,6 +1385,14 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (str
 			} else if !strings.Contains(err.Error(), "not installed") && !strings.Contains(err.Error(), "package ID contains invalid") {
 				return jsonResult(map[string]any{"error": err.Error()})
 			}
+			if pkgID, err := resolveInstalledPackageID(s.PackageManager, name); err == nil {
+				if err := s.PackageManager.Uninstall(pkgID); err != nil {
+					return jsonResult(map[string]any{"error": err.Error()})
+				}
+				return jsonResult(map[string]any{"success": true, "name": pkgID, "kind": "package"})
+			} else if !strings.Contains(err.Error(), "not installed") && !strings.Contains(err.Error(), "package ID contains invalid") {
+				return jsonResult(map[string]any{"error": err.Error()})
+			}
 		}
 		skill, _, err := core.LoadSkillFrom(s.BaseDir, name)
 		if err != nil {
@@ -1428,6 +1436,22 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (str
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Skill method: %s", call.Method)})
 	}
+}
+
+func resolveInstalledPackageID(pm *core.PackageManager, name string) (string, error) {
+	packages, err := pm.ListInstalled()
+	if err != nil {
+		return "", err
+	}
+	for _, pkg := range packages {
+		if pkg.Meta.ID == name || pkg.Meta.Name == name {
+			return pkg.Meta.ID, nil
+		}
+	}
+	if err := core.ValidatePackageID(name); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("package %q not installed", name)
 }
 
 // executeSkillSearch wraps RegistryClient.SearchEntries; empty query browses

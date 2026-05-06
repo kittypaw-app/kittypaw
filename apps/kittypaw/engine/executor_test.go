@@ -513,6 +513,37 @@ func TestResolveSkillCallPackageUninstall(t *testing.T) {
 	}
 }
 
+func TestResolveSkillCallPackageUninstallByDisplayName(t *testing.T) {
+	baseDir := t.TempDir()
+	pm := installTestPackage(t, baseDir, `[meta]
+id = "weather-now"
+name = "날씨 조회"
+version = "1.0.0"
+description = "현재 날씨와 비 여부를 확인합니다."
+`, `return "ok";`)
+	s := &Session{
+		BaseDir:        baseDir,
+		Config:         &core.Config{AutonomyLevel: core.AutonomyFull},
+		PackageManager: pm,
+	}
+
+	name := json.RawMessage(`"날씨 조회"`)
+	got, err := resolveSkillCall(context.Background(), core.SkillCall{
+		SkillName: "Skill",
+		Method:    "uninstall",
+		Args:      []json.RawMessage{name},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) || !strings.Contains(got, `"name":"weather-now"`) {
+		t.Fatalf("unexpected uninstall result: %s", got)
+	}
+	if _, _, err := pm.LoadPackage("weather-now"); err == nil {
+		t.Fatal("weather-now package still installed")
+	}
+}
+
 func TestResolveSkillCallPermissionGate(t *testing.T) {
 	st := openTestStore(t)
 	s := &Session{
