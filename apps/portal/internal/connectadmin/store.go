@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,10 +19,15 @@ type Store interface {
 	GetProviderPolicy(context.Context, string) (ProviderPolicy, error)
 	ListProviderPolicies(context.Context) ([]ProviderPolicy, error)
 	UpsertUserEntitlement(context.Context, UserEntitlement) error
+	UpdateUserEntitlementWithAudit(context.Context, UserEntitlement, AuditEvent) error
 	UserAllowed(context.Context, string, string) (bool, error)
 	AppendAuditEvent(context.Context, AuditEvent) error
 	ListAuditEvents(context.Context, int) ([]AuditEvent, error)
 	EnsureDefaultPolicies(context.Context, ProviderRegistry) error
+}
+
+type sqlExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
 func NewStore(pool *pgxpool.Pool) *PostgresStore {
@@ -102,6 +108,26 @@ func (s *PostgresStore) ListProviderPolicies(ctx context.Context) ([]ProviderPol
 }
 
 func (s *PostgresStore) UpsertUserEntitlement(ctx context.Context, e UserEntitlement) error {
+	return upsertUserEntitlement(ctx, s.pool, e)
+}
+
+func (s *PostgresStore) UpdateUserEntitlementWithAudit(ctx context.Context, e UserEntitlement, audit AuditEvent) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := upsertUserEntitlement(ctx, tx, e); err != nil {
+		return err
+	}
+	if err := appendAuditEvent(ctx, tx, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func upsertUserEntitlement(ctx context.Context, exec sqlExecutor, e UserEntitlement) error {
 	if e.QuotaJSON == nil {
 		e.QuotaJSON = map[string]any{}
 	}
@@ -109,7 +135,7 @@ func (s *PostgresStore) UpsertUserEntitlement(ctx context.Context, e UserEntitle
 	if err != nil {
 		return fmt.Errorf("marshal quota: %w", err)
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = exec.Exec(ctx, `
 		INSERT INTO connect_user_entitlements
 			(user_id, provider_id, status, quota_json, reason, granted_by, granted_at, revoked_at)
 		VALUES ($1, $2, $3, $4::jsonb, $5, nullif($6, '')::uuid, now(), CASE WHEN $3 = 'revoked' THEN now() ELSE null END)
@@ -163,6 +189,10 @@ func (s *PostgresStore) UserAllowed(ctx context.Context, userID, providerID stri
 }
 
 func (s *PostgresStore) AppendAuditEvent(ctx context.Context, e AuditEvent) error {
+	return appendAuditEvent(ctx, s.pool, e)
+}
+
+func appendAuditEvent(ctx context.Context, exec sqlExecutor, e AuditEvent) error {
 	beforeJSON, err := json.Marshal(e.Before)
 	if err != nil {
 		return fmt.Errorf("marshal before: %w", err)
@@ -171,7 +201,7 @@ func (s *PostgresStore) AppendAuditEvent(ctx context.Context, e AuditEvent) erro
 	if err != nil {
 		return fmt.Errorf("marshal after: %w", err)
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = exec.Exec(ctx, `
 		INSERT INTO connect_admin_audit_events
 			(actor_user_id, action, provider_id, target_user_id, before_json, after_json)
 		VALUES (nullif($1, '')::uuid, $2, nullif($3, ''), nullif($4, '')::uuid, $5::jsonb, $6::jsonb)

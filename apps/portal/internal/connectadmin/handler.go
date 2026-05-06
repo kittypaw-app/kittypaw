@@ -1,6 +1,7 @@
 package connectadmin
 
 import (
+	"bytes"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -68,6 +69,7 @@ func NewHandler(opts HandlerOptions) *Handler {
 
 func (h *Handler) HandleHome() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setAdminSecurityHeaders(w)
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -112,9 +114,13 @@ func (h *Handler) HandleHome() http.HandlerFunc {
 			})
 		}
 
-		setHTMLHeaders(w)
-		if err := connectAdminHome.Execute(w, data); err != nil {
+		var buf bytes.Buffer
+		if err := connectAdminHome.Execute(&buf, data); err != nil {
 			http.Error(w, "render connect admin", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if _, err := w.Write(buf.Bytes()); err != nil {
 			return
 		}
 	}
@@ -122,6 +128,7 @@ func (h *Handler) HandleHome() http.HandlerFunc {
 
 func (h *Handler) HandleUserProviderUpdate(userID, providerID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setAdminSecurityHeaders(w)
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -159,6 +166,8 @@ func (h *Handler) HandleUserProviderUpdate(userID, providerID string) http.Handl
 		}
 		reason := r.FormValue("reason")
 
+		// Admin membership is enforced by router middleware; these handlers only
+		// require the authenticated actor for audit attribution.
 		entitlement := UserEntitlement{
 			UserID:     userID,
 			ProviderID: providerID,
@@ -167,11 +176,7 @@ func (h *Handler) HandleUserProviderUpdate(userID, providerID string) http.Handl
 			QuotaJSON:  quota,
 			GrantedBy:  actor.ID,
 		}
-		if err := h.store.UpsertUserEntitlement(r.Context(), entitlement); err != nil {
-			http.Error(w, "upsert entitlement", http.StatusInternalServerError)
-			return
-		}
-		if err := h.store.AppendAuditEvent(r.Context(), AuditEvent{
+		event := AuditEvent{
 			ActorUserID:  actor.ID,
 			Action:       "entitlement.update",
 			ProviderID:   providerID,
@@ -181,8 +186,9 @@ func (h *Handler) HandleUserProviderUpdate(userID, providerID string) http.Handl
 				"reason": reason,
 				"quota":  quota,
 			},
-		}); err != nil {
-			http.Error(w, "append audit event", http.StatusInternalServerError)
+		}
+		if err := h.store.UpdateUserEntitlementWithAudit(r.Context(), entitlement, event); err != nil {
+			http.Error(w, "update entitlement", http.StatusInternalServerError)
 			return
 		}
 
@@ -190,8 +196,7 @@ func (h *Handler) HandleUserProviderUpdate(userID, providerID string) http.Handl
 	}
 }
 
-func setHTMLHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+func setAdminSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")

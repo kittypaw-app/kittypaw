@@ -509,6 +509,52 @@ func TestRepeatedRevokedEntitlementPreservesRevokedAt(t *testing.T) {
 	}
 }
 
+func TestUpdateUserEntitlementWithAuditRollsBackOnAuditFailure(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	users := model.NewUserStore(pool)
+	adminUser, err := users.CreateOrUpdate(ctx, "google", "admin-atomic-rollback", "admin-atomic-rollback@example.com", "Admin", "")
+	if err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	targetUser, err := users.CreateOrUpdate(ctx, "google", "target-atomic-rollback", "target-atomic-rollback@example.com", "Target", "")
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	store := connectadmin.NewStore(pool)
+	err = store.UpdateUserEntitlementWithAudit(ctx, connectadmin.UserEntitlement{
+		UserID:     targetUser.ID,
+		ProviderID: "atomic-provider",
+		Status:     connectadmin.EntitlementAllowed,
+		QuotaJSON:  map[string]any{"monthly_post_reads": float64(100)},
+		Reason:     "rollback if audit fails",
+		GrantedBy:  adminUser.ID,
+	}, connectadmin.AuditEvent{
+		ActorUserID:  adminUser.ID,
+		Action:       "entitlement.update",
+		ProviderID:   "atomic-provider",
+		TargetUserID: "00000000-0000-0000-0000-000000000001",
+		After:        map[string]any{"status": connectadmin.EntitlementAllowed},
+	})
+	if err == nil {
+		t.Fatal("UpdateUserEntitlementWithAudit error = nil, want audit FK error")
+	}
+
+	var entitlementCount int
+	err = pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2
+	`, targetUser.ID, "atomic-provider").Scan(&entitlementCount)
+	if err != nil {
+		t.Fatalf("query entitlement count: %v", err)
+	}
+	if entitlementCount != 0 {
+		t.Fatalf("entitlement count = %d, want 0", entitlementCount)
+	}
+}
+
 func setupTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 

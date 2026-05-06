@@ -2,6 +2,8 @@ package connectadmin
 
 import (
 	"context"
+	"errors"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -116,6 +118,57 @@ func TestHandlerGrantEntitlementWritesAudit(t *testing.T) {
 	}
 }
 
+func TestHandlerGrantEntitlementAtomicFailureDoesNotRecordPartialState(t *testing.T) {
+	store := &fakeStore{atomicErr: errors.New("audit failed")}
+	handler := NewHandler(HandlerOptions{
+		Registry: DefaultProviderRegistry(ProviderRegistryConfig{}),
+		Store:    store,
+	})
+	form := url.Values{
+		"status": {"allowed"},
+		"reason": {"internal beta"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/connect/users/user-1/providers/x", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "admin-user"}))
+	rec := httptest.NewRecorder()
+
+	handler.HandleUserProviderUpdate("user-1", connect.XProviderID)(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	assertSecurityHeaders(t, rec)
+	if len(store.entitlements) != 0 {
+		t.Fatalf("entitlements len = %d, want 0", len(store.entitlements))
+	}
+	if len(store.auditEvents) != 0 {
+		t.Fatalf("audit events len = %d, want 0", len(store.auditEvents))
+	}
+}
+
+func TestHandlerHomeRenderErrorDoesNotWritePartialOutput(t *testing.T) {
+	original := connectAdminHome
+	connectAdminHome = template.Must(template.New("broken").Parse("partial output {{call .Providers}}"))
+	t.Cleanup(func() { connectAdminHome = original })
+
+	handler := NewHandler(HandlerOptions{
+		Registry: DefaultProviderRegistry(ProviderRegistryConfig{}),
+		Store:    &fakeStore{},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/admin/connect", nil)
+	rec := httptest.NewRecorder()
+
+	handler.HandleHome()(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if strings.Contains(rec.Body.String(), "partial output") {
+		t.Fatalf("body contains partial render output:\n%s", rec.Body.String())
+	}
+}
+
 func TestHandlerHomeRejectsInvalidMethod(t *testing.T) {
 	handler := NewHandler(HandlerOptions{
 		Registry: DefaultProviderRegistry(ProviderRegistryConfig{}),
@@ -147,6 +200,7 @@ func TestHandlerUserProviderUpdateRejectsInvalidStatus(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
+	assertSecurityHeaders(t, rec)
 }
 
 func TestHandlerUserProviderUpdateRejectsUnknownProvider(t *testing.T) {
@@ -182,12 +236,14 @@ func TestHandlerUserProviderUpdateRejectsNilUser(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
+	assertSecurityHeaders(t, rec)
 }
 
 type fakeStore struct {
 	policies     []ProviderPolicy
 	entitlements []UserEntitlement
 	auditEvents  []AuditEvent
+	atomicErr    error
 }
 
 func (s *fakeStore) UpsertProviderPolicy(context.Context, ProviderPolicy) error {
@@ -212,6 +268,15 @@ func (s *fakeStore) UpsertUserEntitlement(_ context.Context, entitlement UserEnt
 	return nil
 }
 
+func (s *fakeStore) UpdateUserEntitlementWithAudit(_ context.Context, entitlement UserEntitlement, event AuditEvent) error {
+	if s.atomicErr != nil {
+		return s.atomicErr
+	}
+	s.entitlements = append(s.entitlements, entitlement)
+	s.auditEvents = append(s.auditEvents, event)
+	return nil
+}
+
 func (s *fakeStore) UserAllowed(context.Context, string, string) (bool, error) {
 	return false, nil
 }
@@ -227,4 +292,14 @@ func (s *fakeStore) ListAuditEvents(context.Context, int) ([]AuditEvent, error) 
 
 func (s *fakeStore) EnsureDefaultPolicies(context.Context, ProviderRegistry) error {
 	return nil
+}
+
+func assertSecurityHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
 }
