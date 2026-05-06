@@ -65,4 +65,4 @@
 - [ ] Run `bash -n apps/space/deploy/smoke.sh scripts/smoke-local.sh`.
 - [ ] Run `PYTHONPYCACHEPREFIX=/private/tmp/kitty-pycache-space python3 -m py_compile apps/space/fabfile.py apps/kittyapi/fabfile.py apps/portal/fabfile.py apps/chat/fabfile.py apps/kakao/fabfile.py`.
 - [ ] Run `git diff --check`.
-- [ ] Review `git diff main...HEAD` for remaining `apps/space`, `space_base_url`, `SPACE_BASE_URL`, `KITTYSPACE`, `kittyspace`, and `space.kittypaw.app` references.
+- [ ] Review `git diff main...HEAD` for stale `apps/home`, `home_base_url`, `HOME_BASE_URL`, `KITTYHOME`, `kittyhome`, and `home.kittypaw.app` references.

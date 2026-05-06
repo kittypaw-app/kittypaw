@@ -21,8 +21,9 @@ This repo is a Go-first monorepo for KittyPaw apps.
   and service bootstrap metadata.
 - `apps/space` owns hosted Space surfaces, beginning with `/chat`, plus the
   daemon outbound WebSocket relay and Space capability routing.
-- `apps/chat` owns hosted chat, route discovery, OpenAI-compatible relay
-  endpoints, and daemon outbound WebSocket relay.
+- `apps/chat` owns the legacy hosted chat service until Space cutover,
+  including route discovery, OpenAI-compatible relay endpoints, and daemon
+  outbound WebSocket relay.
 - `apps/kakao` owns Kakao OpenBuilder webhook, Kakao callback dispatch, and
   Kakao-specific pairing.
 - `contracts` owns wire-level schemas and examples. It is the first place to

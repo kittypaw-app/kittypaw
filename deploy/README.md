@@ -7,7 +7,7 @@ deploy/
   kittyapi/
   portal/
   chat/
-  home/
+  space/
   kakao/
 ```
 
@@ -17,8 +17,8 @@ notes and shared deployment material.
 
 Hosted Go services are deployed behind nginx/systemd. Current production
 templates bind them to Unix socket files where supported (`UNIX_SOCKET`,
-`KITTYCHAT_BIND_ADDR`, or `BIND_ADDR`) and let nginx proxy public HTTPS traffic
-to the socket.
+`KITTYCHAT_BIND_ADDR`, `KITTYSPACE_BIND_ADDR`, or `BIND_ADDR`) and let nginx
+proxy public HTTPS traffic to the socket.
 
 `apps/kittypaw` release automation is GitHub-release based rather than a hosted
 service deployment. Its active workflow is `.github/workflows/release-kittypaw.yml`
