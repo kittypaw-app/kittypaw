@@ -4,6 +4,7 @@
 
 setup_file() {
   APP_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
+  export APP_DIR
   export MODELS_TOML="$APP_DIR/eval/models.toml"
   export PARSE="$APP_DIR/eval/parse-models.py"
   if [ -f "$MODELS_TOML" ]; then
@@ -47,4 +48,70 @@ setup_file() {
 @test "T1: parse-models.py exits 2 when toml missing" {
   run uv run python "$PARSE" /nonexistent/models.toml
   [ "$status" -eq 2 ]
+}
+
+# ---------- T2: dev-models config generator + sentinel guard ----------
+
+setup() {
+  # T1 케이스는 setup_file의 export로 충분 — T2 mock 환경 cost 회피.
+  [[ "$BATS_TEST_DESCRIPTION" == T2:* ]] || return 0
+  T2_TMP="$BATS_TEST_TMPDIR/dev-models"
+  T2_BIN="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$T2_TMP" "$T2_BIN"
+  cat > "$T2_BIN/kittypaw" <<'KP'
+#!/usr/bin/env bash
+home="${KITTYPAW_CONFIG_DIR:-/tmp/kp-mock}"
+mkdir -p "$home/accounts/default"
+touch "$home/accounts/default/config.toml"
+exit 0
+KP
+  chmod +x "$T2_BIN/kittypaw"
+  export KITTYPAW_DEV_HOME="$T2_TMP"
+  export KP_BIN="$T2_BIN/kittypaw"
+  DEV_MODELS="$APP_DIR/scripts/dev-models.sh"
+  GENERATOR="$APP_DIR/scripts/dev-models-config-generate.sh"
+  CFG="$T2_TMP/accounts/default/config.toml"
+}
+
+@test "T2: generator stdout has sentinel + 7 [[llm.models]] + [llm] default" {
+  out="$(bash "$GENERATOR")"
+  echo "$out" | head -1 | grep -q "GENERATED FROM eval/models.toml"
+  blocks="$(echo "$out" | grep -c '^\[\[llm.models\]\]')"
+  [ "$blocks" -eq 7 ]
+  echo "$out" | grep -q '^\[llm\]'
+  echo "$out" | grep -q '^default = "groq-qwen"'
+}
+
+@test "T2: setup with no cfg → generates sentinel + 7 entries" {
+  run bash "$DEV_MODELS" setup
+  [ "$status" -eq 0 ]
+  [ -f "$CFG" ]
+  head -1 "$CFG" | grep -q "GENERATED FROM eval/models.toml"
+  blocks="$(grep -c '^\[\[llm.models\]\]' "$CFG")"
+  [ "$blocks" -eq 7 ]
+}
+
+@test "T2: setup with sentinel cfg + no --force → skip (exit 0)" {
+  bash "$DEV_MODELS" setup >/dev/null
+  run bash "$DEV_MODELS" setup
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "sentinel managed"
+}
+
+@test "T2: setup with non-sentinel cfg + no --force → abort exit 3 + diff stderr" {
+  mkdir -p "$(dirname "$CFG")"
+  echo "# user-edited config without sentinel" > "$CFG"
+  echo "[llm]" >> "$CFG"
+  run bash "$DEV_MODELS" setup
+  [ "$status" -eq 3 ]
+  echo "$output" | grep -q "no sentinel header"
+  echo "$output" | grep -q "diff vs generated"
+}
+
+@test "T2: setup with non-sentinel cfg + --force → overwrites (no validation)" {
+  mkdir -p "$(dirname "$CFG")"
+  echo "# user-edited" > "$CFG"
+  run bash "$DEV_MODELS" setup --force
+  [ "$status" -eq 0 ]
+  head -1 "$CFG" | grep -q "GENERATED FROM eval/models.toml"
 }
