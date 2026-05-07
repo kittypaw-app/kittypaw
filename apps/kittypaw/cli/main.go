@@ -1,4 +1,4 @@
-// Command kittypaw is the CLI for the KittyPaw AI agent platform.
+// Command kittypaw is the CLI for the KittyPaw AI runner platform.
 package main
 
 import (
@@ -117,7 +117,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "kittypaw",
-		Short:        "KittyPaw — AI agent platform",
+		Short:        "KittyPaw — AI runner platform",
 		Version:      version,
 		SilenceUsage: true,
 	}

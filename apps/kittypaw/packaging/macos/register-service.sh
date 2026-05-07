@@ -33,7 +33,7 @@ fi
 DOMAIN="gui/$(id -u)"
 
 # --- Port conflict detection -------------------------------------------------
-# Bootout our own agent (if loaded) before checking — a repeat install
+# Bootout our own service (if loaded) before checking — a repeat install
 # shouldn't be blocked by the previous run's listener.
 if launchctl print "${DOMAIN}/${LABEL}" >/dev/null 2>&1; then
   launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true

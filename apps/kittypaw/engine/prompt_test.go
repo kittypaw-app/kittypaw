@@ -75,7 +75,7 @@ func TestParseAtMention(t *testing.T) {
 		wantMatch bool
 	}{
 		{"@bot hello", "bot", "hello", true},
-		{"@my-agent do something", "my-agent", "do something", true},
+		{"@my-runner do something", "my-runner", "do something", true},
 		{"@agent_1", "agent_1", "", true},
 		{"hello @bot", "", "hello @bot", false},       // not at start
 		{"@", "", "@", false},                         // bare @
@@ -402,7 +402,7 @@ func TestBuildPrompt_WithNickAndUserMD(t *testing.T) {
 	if !strings.Contains(sys, "Your name/nickname is: Paw") {
 		t.Error("nick not injected")
 	}
-	if !strings.Contains(sys, "## User Profile (USER.md)") {
+	if !strings.Contains(sys, "## User Notes (USER.md)") {
 		t.Error("missing USER.md header")
 	}
 	if !strings.Contains(sys, "User likes hiking.") {

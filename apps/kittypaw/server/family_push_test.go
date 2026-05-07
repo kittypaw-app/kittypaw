@@ -367,7 +367,7 @@ func legacyFamilyPushEvent(t *testing.T, target string, p core.FanoutPayload) co
 // TestDispatchLoop_FamilyPush_DeliversToTargetChannel is the happy path — a
 // team-space fanout push to alice with one telegram channel configured lands on
 // that telegram channel's SendResponse with alice's AllowedChatIDs[0] as the
-// chat ID. Critically, the agent loop must NOT run (payload.Text is a
+// chat ID. Critically, the runner loop must NOT run (payload.Text is a
 // finished outbound message, not an inbound chat that needs LLM processing).
 // The mock's backing Session has Provider=nil — if the dispatch loop ever
 // routed through session.Run, the test would error or panic instead of

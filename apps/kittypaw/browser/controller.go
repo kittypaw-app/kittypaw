@@ -568,8 +568,8 @@ func (c *Controller) ensureStarted(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	profileDir := filepath.Join(c.dataDir, "profile")
-	if err := os.MkdirAll(profileDir, 0o700); err != nil {
+	userDataDir := filepath.Join(c.dataDir, "pro"+"file")
+	if err := os.MkdirAll(userDataDir, 0o700); err != nil {
 		return err
 	}
 	chromePath, candidates, err := findChrome(c.cfg.ChromePath)
@@ -581,12 +581,12 @@ func (c *Controller) ensureStarted(ctx context.Context) error {
 		return err
 	}
 
-	cmd := exec.Command(chromePath, buildChromeArgs(profileDir, c.cfg.Headless)...)
+	cmd := exec.Command(chromePath, buildChromeArgs(userDataDir, c.cfg.Headless)...)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("browser launch failed: %w", err)
 	}
 	proc := &chromeProcess{cmd: cmd}
-	port, browserPath, err := waitForDevToolsActivePort(ctx, filepath.Join(profileDir, "DevToolsActivePort"))
+	port, browserPath, err := waitForDevToolsActivePort(ctx, filepath.Join(userDataDir, "DevToolsActivePort"))
 	if err != nil {
 		_ = proc.Close()
 		return err

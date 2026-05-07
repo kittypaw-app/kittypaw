@@ -17,7 +17,7 @@ import (
 // detail, not part of the user-facing identity. Code-generation rules
 // still pin the language explicitly in ExecutionBlock so the LLM knows
 // what to actually emit.
-const IdentityBlock = `You are KittyPaw, an AI agent that helps users automate tasks and answer questions.
+const IdentityBlock = `You are KittyPaw, an AI runner that helps users automate tasks and answer questions.
 
 ## How you work
 1. You receive an event (message, command, etc.)
@@ -200,9 +200,9 @@ CRITICAL: "schedule" = recurring (cron), "once" = one-shot (runs once then delet
 // MemoryBlock guides memory usage for user preferences.
 const MemoryBlock = `## Memory & Learning
 When you learn something about the user (preferences, interests, corrections):
-- Use Memory.user(key, value) to save it to their profile`
+- Use Memory.user(key, value) to save it to their user notes`
 
-// SystemPrompt is the assembled base prompt, stored in agent state for auditing.
+// SystemPrompt is the assembled base prompt, stored in runner state for auditing.
 // BuildPrompt assembles blocks directly — this var exists for backward compatibility.
 var SystemPrompt = IdentityBlock + "\n\n" + ExecutionBlock + "\n\n" + QualityBlock + "\n\n" + SkillCreationBlock + "\n\n" + MemoryBlock
 
@@ -305,7 +305,7 @@ func FormatExecResult(result *core.ExecutionResult) string {
 	return fmt.Sprintf("error: %s", result.Error)
 }
 
-// BuildPrompt constructs the LLM message chain from agent state and config.
+// BuildPrompt constructs the LLM message chain from runner state and config.
 // Assembly order: SOUL.md → Identity → Execution → Quality → Channel → Skills → SkillCreation → Memory → MCP → Nick/UserMD → MemoryContext → Observations
 func BuildPrompt(
 	state *core.ConversationState,
@@ -370,7 +370,7 @@ func BuildPrompt(
 			sb.WriteString(staff.Nick)
 		}
 		if staff.UserMD != "" {
-			sb.WriteString("\n\n## User Profile (USER.md)\n")
+			sb.WriteString("\n\n## User Notes (USER.md)\n")
 			sb.WriteString(staff.UserMD)
 		}
 	}
@@ -463,7 +463,7 @@ func buildSkillsSection(baseDir string) string {
 	}
 
 	// Auto-discovery guidance — install-state independent. If nothing above
-	// matches, the agent can search the public registry and offer the user
+	// matches, the runner can search the public registry and offer the user
 	// to install a missing skill. Two-turn protocol so the user gets ONE
 	// LLM-level confirm + ONE system approve gate (not three asks).
 	lines = append(lines, "\n### Skill auto-discovery (when no installed skill matches)")
@@ -597,18 +597,18 @@ func ParseAtMention(text string) (string, string, bool) {
 		idEnd = len(rest)
 	}
 
-	profileID := rest[:idEnd]
-	if profileID == "" {
+	staffID := rest[:idEnd]
+	if staffID == "" {
 		return "", text, false
 	}
 
 	// Validate: alphanumeric + hyphen/underscore only
-	for _, r := range profileID {
+	for _, r := range staffID {
 		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
 			return "", text, false
 		}
 	}
 
 	remaining := strings.TrimSpace(rest[idEnd:])
-	return profileID, remaining, true
+	return staffID, remaining, true
 }

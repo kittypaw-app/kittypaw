@@ -256,7 +256,7 @@ func ValidateAccountChannels(accountChannels map[string][]ChannelConfig) error {
 // When AllowedChatIDs is non-empty the check is strict: only IDs in that list
 // pass. This is the last line of defense against a compromised bot token or
 // a crafted inbound payload that claims AccountID=alice while carrying bob's
-// chat_id — a mismatch must never reach the agent loop or it would mix
+// chat_id — a mismatch must never reach the runner loop or it would mix
 // accounts' conversation histories in the DB (AC-T7).
 func ChatBelongsToAccount(cfg *Config, chatID string) bool {
 	allowed := cfgAllowedChatIDs(cfg)

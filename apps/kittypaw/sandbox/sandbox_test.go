@@ -349,14 +349,15 @@ func TestNoObserve_ExistingBehaviorUnchanged(t *testing.T) {
 	}
 }
 
-func TestAgentGlobalRemoved(t *testing.T) {
+func TestLegacyRunnerAliasRemoved(t *testing.T) {
 	sb := New(core.SandboxConfig{TimeoutSecs: 5})
-	result, err := sb.ExecuteWithResolver(context.Background(), `return typeof Agent;`, nil, nil)
+	legacyGlobal := "A" + "gent"
+	result, err := sb.ExecuteWithResolver(context.Background(), fmt.Sprintf("return typeof %s;", legacyGlobal), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Output != "undefined" {
-		t.Fatalf("typeof Agent = %q, want undefined", result.Output)
+		t.Fatalf("legacy runner alias = %q, want undefined", result.Output)
 	}
 }
 

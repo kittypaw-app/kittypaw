@@ -25,7 +25,7 @@ import (
 )
 
 // Server is the HTTP/WebSocket gateway that bridges REST clients and browsers
-// to the agent engine. It owns the chi router, the default-account engine
+// to the runner engine. It owns the chi router, the default-account engine
 // session, account schedulers, channel spawner, account router, and all
 // handler state.
 type Server struct {
@@ -525,8 +525,8 @@ func (s *Server) getConfig() *core.Config {
 }
 
 // ProcessEvent runs a single event through the engine session and returns
-// the agent response. This is used by the channel dispatch loop to bridge
-// inbound channel messages to the agent engine.
+// the runner response. This is used by the channel dispatch loop to bridge
+// inbound channel messages to the runner engine.
 func (s *Server) ProcessEvent(ctx context.Context, event core.Event) (string, error) {
 	return s.session.Run(ctx, event, nil)
 }
@@ -595,7 +595,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			}
 			// EventTeamSpacePush carries a FanoutPayload (not a ChatPayload) and
 			// delivers an already-composed message to the target account —
-			// skip the agent loop entirely. Without this branch the generic
+			// skip the runner loop entirely. Without this branch the generic
 			// ParsePayload below silently produces a zero-valued ChatPayload,
 			// the event routes through session.Run, and the push text never
 			// reaches the target channel.
@@ -751,7 +751,7 @@ func sendChannelResponse(ctx context.Context, ch channel.Channel, chatID string,
 }
 
 // deliverTeamSpacePush routes an EventTeamSpacePush to the target account's channel
-// and bypasses the agent loop. The payload is a finished outbound message
+// and bypasses the runner loop. The payload is a finished outbound message
 // (Fanout.send already gave a skill author's hand-authored text), so we do
 // not re-invoke the LLM — doing so would paraphrase, translate, or drop the
 // message entirely depending on prompt context.

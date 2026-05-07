@@ -252,7 +252,7 @@ Release tags should use a namespaced prefix:
 home/vX.Y.Z
 ```
 
-The root deployment docs and agent guide should be updated when the service is
+The root deployment docs and runner guide should be updated when the service is
 introduced.
 
 ## Testing

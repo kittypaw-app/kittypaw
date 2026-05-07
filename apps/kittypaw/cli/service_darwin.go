@@ -44,7 +44,7 @@ func serviceInstall(stdout, stderr io.Writer, f *serviceFlags) error {
 		return err
 	}
 
-	// Bootout existing agent (if loaded) so the rewrite doesn't race against
+	// Bootout existing service (if loaded) so the rewrite doesn't race against
 	// a live listener and bootstrap doesn't error with "already loaded".
 	target := darwinDomain() + "/" + darwinLabel
 	if err := run(io.Discard, io.Discard, "launchctl", "print", target); err == nil {

@@ -105,7 +105,7 @@ func TestEnsureDefaultStaff_Idempotent(t *testing.T) {
 
 	// Write custom content to SOUL.md.
 	soulPath := filepath.Join(base, "staff", "default", "SOUL.md")
-	custom := "My custom persona"
+	custom := "My custom staff identity"
 	if err := os.WriteFile(soulPath, []byte(custom), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestStaffPresetStatus_Custom(t *testing.T) {
 	}
 	// Modify SOUL.md.
 	soulPath := filepath.Join(base, "staff", "bot", "SOUL.md")
-	if err := os.WriteFile(soulPath, []byte("custom persona"), 0o644); err != nil {
+	if err := os.WriteFile(soulPath, []byte("custom staff identity"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	status := StaffPresetStatus(base, "bot")

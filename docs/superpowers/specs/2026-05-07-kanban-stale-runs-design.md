@@ -30,7 +30,7 @@ This phase adds:
 - focused tests for cutoff, project filtering, ordering, validation, and command
   wiring
 
-This phase does not add a dispatcher, automatic reclaim, retries, profile worker
+This phase does not add a dispatcher, automatic reclaim, retries, staff runner
 launch, Web UI controls, WebSocket updates, schema migrations, or a new Run
 work-dir provider.
 

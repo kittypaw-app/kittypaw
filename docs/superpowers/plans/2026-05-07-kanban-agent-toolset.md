@@ -1,4 +1,4 @@
-# Kanban Agent Toolset Implementation Plan
+# Kanban Runner Toolset Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -76,26 +76,26 @@ func TestExecuteKanbanCreateShowCommentAndLink(t *testing.T) {
 
 	createRes := resolveKanbanTool(t, sess, "create", map[string]any{
 		"project":    "kitty",
-		"title":      "Agent task",
+		"title":      "Runner task",
 		"body":       "from tool",
 		"status":     store.KanbanStatusReady,
 		"priority":   7,
 		"assignee":   "coder",
-		"created_by": "agent",
+		"created_by": "runner",
 	})
 	task := createRes["task"].(map[string]any)
 	taskID := task["id"].(string)
-	if task["project_id"] != project.ID || task["title"] != "Agent task" || task["status"] != store.KanbanStatusReady {
+	if task["project_id"] != project.ID || task["title"] != "Runner task" || task["status"] != store.KanbanStatusReady {
 		t.Fatalf("created task = %+v", task)
 	}
 
 	showRes := resolveKanbanTool(t, sess, "show", taskID)
 	shown := showRes["task"].(map[string]any)
-	if shown["id"] != taskID || shown["title"] != "Agent task" {
+	if shown["id"] != taskID || shown["title"] != "Runner task" {
 		t.Fatalf("shown task = %+v", shown)
 	}
 
-	commentRes := resolveKanbanTool(t, sess, "comment", taskID, map[string]any{"author": "agent", "body": "note"})
+	commentRes := resolveKanbanTool(t, sess, "comment", taskID, map[string]any{"author": "runner", "body": "note"})
 	comment := commentRes["comment"].(map[string]any)
 	if comment["task_id"] != taskID || comment["body"] != "note" {
 		t.Fatalf("comment = %+v", comment)
@@ -144,16 +144,16 @@ func TestExecuteKanbanRunLifecycleTools(t *testing.T) {
 		t.Fatalf("CreateKanbanTask: %v", err)
 	}
 
-	claimRes := resolveKanbanTool(t, sess, "claim", task.ID, map[string]any{"actor": "agent"})
+	claimRes := resolveKanbanTool(t, sess, "claim", task.ID, map[string]any{"actor": "runner"})
 	run := claimRes["run"].(map[string]any)
-	if run["task_id"] != task.ID || run["actor"] != "agent" {
+	if run["task_id"] != task.ID || run["actor"] != "runner" {
 		t.Fatalf("claim run = %+v", run)
 	}
-	heartbeatRes := resolveKanbanTool(t, sess, "heartbeat", task.ID, map[string]any{"actor": "agent"})
+	heartbeatRes := resolveKanbanTool(t, sess, "heartbeat", task.ID, map[string]any{"actor": "runner"})
 	if heartbeatRes["run"].(map[string]any)["task_id"] != task.ID {
 		t.Fatalf("heartbeat = %+v", heartbeatRes)
 	}
-	completeRes := resolveKanbanTool(t, sess, "complete", task.ID, map[string]any{"actor": "agent", "summary": "done", "metadata": map[string]any{"source": "test"}})
+	completeRes := resolveKanbanTool(t, sess, "complete", task.ID, map[string]any{"actor": "runner", "summary": "done", "metadata": map[string]any{"source": "test"}})
 	if completeRes["success"] != true {
 		t.Fatalf("complete = %+v", completeRes)
 	}
@@ -169,8 +169,8 @@ func TestExecuteKanbanRunLifecycleTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateKanbanTask blocked: %v", err)
 	}
-	resolveKanbanTool(t, sess, "claim", blockedTask.ID, map[string]any{"actor": "agent"})
-	blockRes := resolveKanbanTool(t, sess, "block", blockedTask.ID, map[string]any{"actor": "agent", "reason": "waiting"})
+	resolveKanbanTool(t, sess, "claim", blockedTask.ID, map[string]any{"actor": "runner"})
+	blockRes := resolveKanbanTool(t, sess, "block", blockedTask.ID, map[string]any{"actor": "runner", "reason": "waiting"})
 	if blockRes["success"] != true {
 		t.Fatalf("block = %+v", blockRes)
 	}
@@ -269,7 +269,7 @@ Import `github.com/jinto/kittypaw/store` in `apps/kittypaw/engine/executor.go`.
 
 - [ ] **Step 3: Add executeKanban and helpers**
 
-Add near `executeTodo` or before Profile:
+Add near `executeTodo` or before Staff:
 
 ```go
 func executeKanban(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
@@ -352,7 +352,7 @@ Run:
 
 ```bash
 git add apps/kittypaw/core/skillmeta.go apps/kittypaw/sandbox/sandbox_test.go apps/kittypaw/engine/executor.go apps/kittypaw/engine/kanban_tool_test.go
-git commit -m "feat(engine): expose kanban agent tools"
+git commit -m "feat(engine): expose kanban runner tools"
 ```
 
 ### Task 3: Verification

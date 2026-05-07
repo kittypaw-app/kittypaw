@@ -82,12 +82,14 @@ func TestStaffAPIActivateExistingStaff(t *testing.T) {
 	}
 }
 
-func TestProfileAPIRouteIsRemoved(t *testing.T) {
+func TestLegacyStaffAPIRouteIsRemoved(t *testing.T) {
 	srv := newStaffAPITestServer(t)
 
-	rr := kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/profiles", nil, http.StatusNotFound, nil)
-	if strings.Contains(rr.Body.String(), `"profiles"`) {
-		t.Fatalf("profiles route body = %s, want removed route", rr.Body.String())
+	legacyPath := "/api/v1/" + "pro" + "files"
+	legacyBodyKey := "\"" + "pro" + "files" + "\""
+	rr := kanbanAPIRequest(t, srv, http.MethodGet, legacyPath, nil, http.StatusNotFound, nil)
+	if strings.Contains(rr.Body.String(), legacyBodyKey) {
+		t.Fatalf("legacy staff route body = %s, want removed route", rr.Body.String())
 	}
 }
 

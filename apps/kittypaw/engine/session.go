@@ -45,7 +45,7 @@ type turnState struct {
 	err    error
 }
 
-// PermissionCallback is called when the agent needs user permission for an action.
+// PermissionCallback is called when the runner needs user permission for an action.
 type PermissionCallback func(ctx context.Context, description, resource string) (bool, error)
 
 // BrowserController executes built-in Browser.* calls. It is an interface so
@@ -292,7 +292,7 @@ func (s *Session) runTurnOwner(ctx context.Context, turnID string, state *turnSt
 	state.result, state.err = exec(ownerCtx)
 }
 
-// Run processes a single event through the agent loop.
+// Run processes a single event through the runner loop.
 func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
 	// Fast path: slash commands
 	eventText := FormatEvent(&event)
@@ -301,7 +301,7 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 		return response, nil
 	}
 
-	// Pipeline dispatch — deterministic branches before the LLM agent
+	// Pipeline dispatch — deterministic branches before the LLM runner
 	// loop. Legacy fallback when classifyIntent returns
 	// IntentLegacyFallback or a branch errors.
 	if s.Pipeline == nil {
@@ -319,7 +319,7 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 		// graceful.
 		//
 		// First-turn proactive suggestion is appended BEFORE the turn
-		// record. The agent-loop path lets the LLM weave suggestions
+		// record. The runner-loop path lets the LLM weave suggestions
 		// into its reply via system-prompt augmentation; the branch
 		// path returns a deterministic skill output with no LLM in the
 		// response loop, so we surface the suggestion as a literal
@@ -499,7 +499,7 @@ func pickActiveSuggestion(st *store.Store) (label, hash string) {
 // / etc) response when this is the account conversation's first turn AND there is an
 // active reflection candidate outside the silence window. Branch paths
 // don't run an LLM after the skill executes, so the
-// system-prompt-augmentation path used by the agent loop has no effect
+// system-prompt-augmentation path used by the runner loop has no effect
 // here — we have to compose the proposal text ourselves.
 //
 // First-turn detection probes the account-wide store: zero prior assistant

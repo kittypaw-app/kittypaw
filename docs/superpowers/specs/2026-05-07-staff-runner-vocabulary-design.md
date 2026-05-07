@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the overloaded Profile, Persona, and Agent vocabulary with three
+Replace the overloaded LegacyStaff, LegacyIdentity, and LegacyRunner vocabulary with three
 separate domain concepts:
 
 - Account: the user, workspace, configuration, and data isolation boundary.
@@ -17,10 +17,10 @@ use Staff and Runner after this change.
 
 ## Non Goals
 
-- Do not keep Profile, Persona, or Agent as compatibility aliases in the public
+- Do not keep LegacyStaff, LegacyIdentity, or LegacyRunner as compatibility aliases in the public
   skill surface, API surface, or CLI command surface.
 - Do not rename unrelated platform terms such as HTTP User-Agent, macOS
-  LaunchAgent, or upstream .agents skill registry paths.
+  LaunchLegacyRunner, or upstream .agents skill registry paths.
 - Do not change SOUL.md as a file name.
 - Do not expand Kanban behavior beyond naming updates required by this
   vocabulary change.
@@ -40,45 +40,45 @@ handles Runner.observe interrupts, and delegates work to another staff through
 Runner.delegate. Runner is not the owner of SOUL.md and should not be used as a
 synonym for the person-like assistant.
 
-Conversation history is neither Staff nor Runner. Existing AgentState and
-AgentID names should become ConversationState and ConversationID because that
+Conversation history is neither Staff nor Runner. Existing LegacyRunnerState and
+LegacyRunnerID names should become ConversationState and ConversationID because that
 data stores the account conversation timeline.
 
 ## Breaking Surface Changes
 
 Core code:
 
-- core.Profile becomes core.Staff.
-- core.ProfileConfig becomes core.StaffConfig.
-- core.ValidateProfileID becomes core.ValidateStaffID.
-- core.LoadProfile, EnsureDefaultProfile, ApplyPreset, DetectDirty, and
+- core.LegacyStaff becomes core.Staff.
+- core.LegacyStaffConfig becomes core.StaffConfig.
+- core.ValidateLegacyStaffID becomes core.ValidateStaffID.
+- core.LoadLegacyStaff, EnsureDefaultLegacyStaff, ApplyPreset, DetectDirty, and
   PresetStatus become Staff-named functions.
-- Account.ProfilesDir becomes Account.StaffDir or Account.StaffRootDir.
+- Account.LegacyStaffDir becomes Account.StaffDir or Account.StaffRootDir.
 
 Store:
 
-- store.ProfileMeta becomes store.StaffMeta.
-- profile_meta becomes staff_meta through a new SQLite migration.
+- store.LegacyStaffMeta becomes store.StaffMeta.
+- legacy_staff_meta becomes staff_meta through a new SQLite migration.
 - Store methods are renamed to UpsertStaffMeta, GetStaffMeta,
   ListActiveStaff, SetStaffActive, and UpdateEquippedStaffSkills.
-- user_context keys change from active_profile:<conversation> to
+- user_context keys change from legacy_active_staff:<conversation> to
   active_staff:<conversation>.
 
 Config:
 
-- Config.Profiles becomes Config.Staff.
-- TOML key profiles becomes staff.
-- AgentConfig, Agents, FindAgent, and DefaultAgent become RunnerConfig,
+- Config.LegacyStaffs becomes Config.Staff.
+- TOML key legacy staff dirs becomes staff.
+- LegacyRunnerConfig, LegacyRunners, FindLegacyRunner, and DefaultLegacyRunner become RunnerConfig,
   Runners, FindRunner, and DefaultRunner if the config is still active.
   If those fields are unused, remove or narrow them instead of carrying stale
   vocabulary forward.
 
 Engine and sandbox:
 
-- JavaScript Profile.list, Profile.switch, Profile.create, and Profile.update
+- JavaScript LegacyStaff.list, LegacyStaff.switch, LegacyStaff.create, and LegacyStaff.update
   become Staff.list, Staff.switch, Staff.create, and Staff.update.
-- JavaScript Agent.observe becomes Runner.observe.
-- JavaScript Agent.delegate becomes Runner.delegate(staffId, task, background?).
+- JavaScript LegacyRunner.observe becomes Runner.observe.
+- JavaScript LegacyRunner.delegate becomes Runner.delegate(staffId, task, background?).
 - Prompt text, tool metadata, code normalization, tests, and errors use
   Runner.observe and Staff terms only.
 - Delegation structs and comments should use StaffID when naming the target
@@ -86,29 +86,29 @@ Engine and sandbox:
 
 CLI and chat commands:
 
-- /persona becomes /staff.
+- /legacy_identity becomes /staff.
 - Help text and errors use staff ID.
-- Root CLI tests that assert no persona or agent management should be updated
+- Root CLI tests that assert no legacy_identity or legacy_runner management should be updated
   to the new public policy.
 
 Server and client:
 
-- /api/v1/profiles becomes /api/v1/staff.
-- Client methods ProfileList and ProfileActivate become StaffList and
+- /api/v1/legacy staff dirs becomes /api/v1/staff.
+- Client methods LegacyStaffList and LegacyStaffActivate become StaffList and
   StaffActivate.
 - JSON response keys use staff unless a more specific object name is better.
 
 Filesystem:
 
-- Account staff identity directories move from profiles/<id>/ to staff/<id>/.
+- Account staff identity directories move from legacy staff dirs/<id>/ to staff/<id>/.
 - New account setup creates staff/default/SOUL.md.
-- One-way local migration renames profiles to staff when staff does not already
+- One-way local migration renames legacy staff dirs to staff when staff does not already
   exist. After migration, code only reads staff.
 
 Docs and Kanban:
 
 - Kanban docs and tests should use runner tools or staff assignment wording
-  instead of agent toolset/profile worker wording.
+  instead of legacy_runner toolset/legacy_staff worker wording.
 - Kanban assignee help text should say staff or assignee staff ID.
 
 ## Data Migration
@@ -116,12 +116,12 @@ Docs and Kanban:
 The rename is breaking at the API and code level, but existing local data should
 not be discarded.
 
-SQLite should receive a new migration that renames profile_meta to staff_meta
-or creates staff_meta from profile_meta and then drops the old table. Runtime
+SQLite should receive a new migration that renames legacy_staff_meta to staff_meta
+or creates staff_meta from legacy_staff_meta and then drops the old table. Runtime
 code must reference only staff_meta after the migration.
 
 Filesystem migration should run through the existing account migration path. If
-an account has profiles/ and does not have staff/, rename profiles/ to staff/.
+an account has legacy staff dirs/ and does not have staff/, rename legacy staff dirs/ to staff/.
 If both exist, leave both untouched and prefer staff/ so the operator can
 resolve the conflict manually. The implementation should surface a clear log or
 error for this conflict where the existing migration pattern supports it.
@@ -129,7 +129,7 @@ error for this conflict where the existing migration pattern supports it.
 user_context active selection keys are not migrated in place unless the store
 already has a narrow migration helper. If omitted, active staff selection falls
 back to account default staff and users can select again with /staff. No
-runtime path should read active_profile after this change.
+runtime path should read legacy_active_staff after this change.
 
 ## Error Handling
 
@@ -150,7 +150,7 @@ Focused tests should cover:
 
 - staff directory loading, default staff creation, presets, dirty detection, and
   invalid StaffID validation.
-- account setup and account migration from profiles/ to staff/.
+- account setup and account migration from legacy staff dirs/ to staff/.
 - staff_meta migration and store CRUD methods.
 - Staff.switch and active_staff resolution.
 - Staff.create creates metadata and returns staff terminology.

@@ -106,15 +106,15 @@ func webChatEvent(text string) core.Event {
 func TestE2ESimpleReturn(t *testing.T) {
 	skipWithoutRuntime(t)
 
-	sess := newTestSession(t, mockResp(`return "Hello from agent";`))
+	sess := newTestSession(t, mockResp(`return "Hello from runner";`))
 	event := webChatEvent("say hello")
 
 	output, err := sess.Run(context.Background(), event, nil)
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
-	if output != "Hello from agent" {
-		t.Errorf("output = %q, want %q", output, "Hello from agent")
+	if output != "Hello from runner" {
+		t.Errorf("output = %q, want %q", output, "Hello from runner")
 	}
 }
 

@@ -33,7 +33,7 @@ const (
 	// EventTeamSpacePush is emitted by ChannelFanout when a team-space account
 	// pushes a message to a member account. AccountRouter dispatches to the
 	// target Session the same way it dispatches inbound chat events, so the
-	// member agent can treat it as a normal observation.
+	// member runner can treat it as a normal observation.
 	EventTeamSpacePush EventType = "team_space.push"
 
 	// EventFamilyPush is retained as a compile-time compatibility alias while
@@ -49,7 +49,7 @@ func IsTeamSpacePushEvent(t EventType) bool {
 	return t == EventTeamSpacePush || t == legacyTeamSpacePushEventType
 }
 
-// LoopPhase tracks the agent loop state machine position.
+// LoopPhase tracks the runner loop state machine position.
 type LoopPhase string
 
 const (

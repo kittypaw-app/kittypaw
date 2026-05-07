@@ -482,7 +482,7 @@ default = "us-east-1"
 primitives = ["http_get"]
 `
 	os.WriteFile(filepath.Join(dir, "package.toml"), []byte(toml), 0o644)
-	os.WriteFile(filepath.Join(dir, "main.js"), []byte(`Agent.respond("hello")`), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.js"), []byte(`return "hello"`), 0o644)
 }
 
 func writeTestPackageWithSource(t *testing.T, dir, id string) {
@@ -509,7 +509,7 @@ default = "us-east-1"
 primitives = ["http_get"]
 `
 	os.WriteFile(filepath.Join(dir, "package.toml"), []byte(toml), 0o644)
-	os.WriteFile(filepath.Join(dir, "main.js"), []byte(`Agent.respond("hello")`), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.js"), []byte(`return "hello"`), 0o644)
 }
 
 // ---------------------------------------------------------------------------

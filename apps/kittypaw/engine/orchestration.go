@@ -25,7 +25,7 @@ const backgroundTokenCap = 2048
 // PM decision types (JSON format)
 // ---------------------------------------------------------------------------
 
-// PMDecision is the JSON response from the PM agent.
+// PMDecision is the JSON response from the PM runner.
 type PMDecision struct {
 	Kind   string       `json:"kind"`   // "direct" or "delegate"
 	Reason string       `json:"reason"` // why this routing was chosen
@@ -39,7 +39,7 @@ type PMTaskSpec struct {
 	Background bool   `json:"background,omitempty"`
 }
 
-// DelegateCtx holds context for agent delegation within the skill executor.
+// DelegateCtx holds context for runner delegation within the skill executor.
 type DelegateCtx struct {
 	Provider llm.Provider
 	Store    *store.Store
@@ -65,7 +65,7 @@ type DelegateResult struct {
 // OrchestrateRequest routes a user message through the PM (Project Manager)
 // runner which decides whether to handle directly or delegate to staff.
 // Returns (response, handled, error). When handled is false, the caller
-// should fall through to the default agent loop.
+// should fall through to the default runner loop.
 func OrchestrateRequest(
 	ctx context.Context,
 	text string,

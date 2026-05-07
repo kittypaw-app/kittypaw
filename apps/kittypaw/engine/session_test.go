@@ -55,8 +55,8 @@ func TestResolveStaffName_MentionOverride(t *testing.T) {
 func TestResolveStaffName_SessionOverride(t *testing.T) {
 	cfg := core.DefaultConfig()
 	st := openTestStore(t)
-	// Set active_staff for this agent.
-	if err := st.SetUserContext("active_staff:user-1", "custom-bot", "agent"); err != nil {
+	// Set active_staff for this runner.
+	if err := st.SetUserContext("active_staff:user-1", "custom-bot", "runner"); err != nil {
 		t.Fatal(err)
 	}
 	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st)
@@ -104,7 +104,7 @@ func TestStaffSwitch_SetsContext(t *testing.T) {
 
 	// Create a staff directory so LoadStaff succeeds.
 	base := t.TempDir()
-	staffDir := filepath.Join(base, "staff", "new-persona")
+	staffDir := filepath.Join(base, "staff", "new-staff")
 	if err := os.MkdirAll(staffDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -116,15 +116,15 @@ func TestStaffSwitch_SetsContext(t *testing.T) {
 	// our temp dir, so test the store round-trip that Staff.switch performs.
 	agentID := "user-42"
 	key := fmt.Sprintf("active_staff:%s", agentID)
-	if err := st.SetUserContext(key, "new-persona", "runner"); err != nil {
+	if err := st.SetUserContext(key, "new-staff", "runner"); err != nil {
 		t.Fatal(err)
 	}
 
 	// ResolveStaffName should pick up the session override.
 	cfg := core.DefaultConfig()
 	got := ResolveStaffName(&cfg, "web", agentID, "", st)
-	if got != "new-persona" {
-		t.Errorf("got %q, want %q", got, "new-persona")
+	if got != "new-staff" {
+		t.Errorf("got %q, want %q", got, "new-staff")
 	}
 }
 

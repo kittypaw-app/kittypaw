@@ -6,8 +6,8 @@ Status: Draft approved for staged implementation
 ## Goal
 
 Add a local, durable Kanban system to `apps/kittypaw` that can track real
-project work before any automatic agent dispatcher exists. The first MVP should
-be useful from the CLI and stable enough for later Web UI and agent tool
+project work before any automatic runner dispatcher exists. The first MVP should
+be useful from the CLI and stable enough for later Web UI and runner tool
 layers.
 
 The MVP introduces Project, Board, Milestone, Task, and Run as durable local
@@ -88,7 +88,7 @@ Initial run outcomes:
 - `reclaimed`
 
 The kernel should centralize state transitions so CLI, server API, Web UI, and
-future agent tools do not each invent their own rules.
+future runner tools do not each invent their own rules.
 
 ## Storage
 
@@ -190,7 +190,7 @@ kittypaw project board list <project>
 kittypaw project milestone create <project> <title> [--target-date YYYY-MM-DD]
 kittypaw project milestone list <project>
 
-kittypaw kanban create <title> --project <project> [--board <board>] [--milestone <milestone>] [--body <text>] [--assignee <profile>]
+kittypaw kanban create <title> --project <project> [--board <board>] [--milestone <milestone>] [--body <text>] [--assignee <staff>]
 kittypaw kanban list --project <project> [--board <board>] [--milestone <milestone>] [--status <status>]
 kittypaw kanban show <task>
 kittypaw kanban claim <task> [--work-dir <path>] [--actor <name>]
@@ -206,7 +206,7 @@ The CLI uses local account resolution like other account-scoped commands.
 
 ## Server API
 
-The Web UI and future agent tools should use the same kernel through server
+The Web UI and future runner tools should use the same kernel through server
 handlers. The first API pass mirrors the CLI operations under `/api/v1`:
 
 - `/api/v1/projects`
@@ -237,9 +237,9 @@ The Web UI is a follow-up after CLI/kernel stability:
 Polling is acceptable for the first Web UI. Dedicated live updates can follow
 after the dispatcher exists.
 
-## Agent Toolset And Dispatcher
+## Runner Toolset And Dispatcher
 
-Agent tools are a follow-up after the CLI/API kernel is stable:
+Runner tools are a follow-up after the CLI/API kernel is stable:
 
 - `Kanban.show`
 - `Kanban.create`
@@ -253,7 +253,7 @@ Agent tools are a follow-up after the CLI/API kernel is stable:
 The automatic dispatcher is a separate follow-up:
 
 - ready-task claim loop
-- profile worker launch
+- staff runner launch
 - heartbeat timeout
 - failure limit
 - retry/reclaim
@@ -267,7 +267,7 @@ The automatic dispatcher is a separate follow-up:
 4. State-transition tests and dependency promotion.
 5. Server API.
 6. Web UI.
-7. Agent tools.
+7. Runner tools.
 8. Dispatcher and richer work-dir providers.
 
 The first implementation target is stages 1-4.
@@ -291,7 +291,7 @@ Minimum coverage for stages 1-4:
 
 ## Out Of Scope For First Target
 
-- automatic agent dispatcher
+- automatic runner dispatcher
 - Git worktree creation
 - background run process management
 - WebSocket live board updates

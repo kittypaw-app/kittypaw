@@ -189,7 +189,7 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 }
 
 // codeExecTimeout caps a single Code.exec call so a runaway loop in
-// LLM-generated arithmetic cannot stall the agent loop. 1s is far more
+// LLM-generated arithmetic cannot stall the runner loop. 1s is far more
 // than any honest unit-conversion / scope-filter / fmt task needs.
 const codeExecTimeout = 1 * time.Second
 
@@ -207,7 +207,7 @@ const codeExecMaxOutputBytes = 8000
 // are too one-off to live in a permanent JS skill but too error-prone
 // to entrust to LLM paraphrase.
 //
-// Functionally close to the main agent loop's JS-as-response contract
+// Functionally close to the main runner loop's JS-as-response contract
 // (every LLM reply already runs in goja). The marginal value is the
 // affordance signal — a named tool tells the model "you can self-trigger
 // computation when uncertain about a number" — and the lockdown: no IO
@@ -1097,7 +1097,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *Session) (string, 
 		_ = json.Unmarshal(call.Args[0], &key)
 		var value string
 		_ = json.Unmarshal(call.Args[1], &value)
-		if err := s.Store.SetUserContext(key, value, "agent"); err != nil {
+		if err := s.Store.SetUserContext(key, value, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"success": true})

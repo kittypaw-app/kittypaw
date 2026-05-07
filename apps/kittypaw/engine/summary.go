@@ -26,7 +26,7 @@ const (
 // Three defense layers against prompt injection:
 //  1. System prompt telling the model to ignore instructions inside the file.
 //  2. User template wrapping the file payload in explicit FILE CONTENT fences.
-//  3. Agent loop treating every tool_result as untrusted (existing contract).
+//  3. Runner loop treating every tool_result as untrusted (existing contract).
 //
 // Edits to either constant change currentPromptHash, auto-invalidating every
 // existing llm_cache row for file.summary.

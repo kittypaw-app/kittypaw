@@ -22,7 +22,7 @@ This phase adds:
 - focused CLI tests for stale reclaim execution, max-attempt blocking, and
   validation
 
-This phase does not add schema columns, hosted dispatcher workers, profile/LLM
+This phase does not add schema columns, hosted dispatcher workers, staff/runner
 worker selection, backoff scheduling, Web UI controls, or a new work-dir
 provider.
 

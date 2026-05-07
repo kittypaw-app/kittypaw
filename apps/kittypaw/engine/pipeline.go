@@ -14,7 +14,7 @@ import (
 )
 
 // IntentKind classifies a user message into a deterministic branch or
-// the legacy LLM agent loop. Each non-fallback kind is owned by a single
+// the legacy LLM runner loop. Each non-fallback kind is owned by a single
 // Branch implementation. Adding a new behavioral case becomes "add a
 // constant + classifier rule + Branch", not "grow the system prompt".
 type IntentKind string
@@ -52,7 +52,7 @@ type Branch interface {
 
 // classifyIntent runs the rule-first classifier. Phase 1-3 cover
 // chitchat / browse / install-consent-reply. Everything else falls
-// back to the legacy LLM agent loop. Phase 4 will add LLM-fallback
+// back to the legacy LLM runner loop. Phase 4 will add LLM-fallback
 // classification for ambiguous queries (clarify trigger).
 //
 // install-consent-reply is the only state-aware rule today: it fires
@@ -668,7 +668,7 @@ func runeCount(s string) int {
 // dispatchPipeline runs the rule-first classifier and, if the intent
 // has a deterministic branch, executes it and returns (response, true).
 // On (legacy_fallback OR branch error), it returns (_, false) so the
-// caller falls through to the legacy LLM agent loop.
+// caller falls through to the legacy LLM runner loop.
 //
 // Returning a bool instead of a sentinel error keeps the legacy path
 // untouched — callers can wire this in with a single if-statement.
@@ -714,7 +714,7 @@ func getBranch(kind IntentKind) Branch {
 }
 
 // ChitchatBranch returns a deterministic ack — no LLM call, no tool
-// call. Reproduces the user-vision pattern (4) "친화 비서 persona": a
+// call. Reproduces the user-vision pattern (4) "친화 비서 staff identity": a
 // short reactive utterance gets a short reactive reply, never re-runs
 // the prior tool or re-emits the prior result.
 type ChitchatBranch struct{}
@@ -1354,7 +1354,7 @@ func containsAny(haystack string, needles ...string) bool {
 // regression in commit a4dc8a4 / 26d25c2).
 //
 // Reproduces user-vision pattern (2) "도구 부족 가시화" plus the
-// friendly persona — the user agrees, and the system installs and
+// friendly staff identity — the user agrees, and the system installs and
 // runs without asking again.
 type InstallConsentBranch struct{}
 

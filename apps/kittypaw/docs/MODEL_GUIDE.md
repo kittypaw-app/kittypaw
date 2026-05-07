@@ -47,7 +47,7 @@ This is a fact-only running log of which models work as a KittyPaw assistant, wh
 | 모델 | 측정일 | 부적합 차원 | 재검토 트리거 | § |
 |---|---|---|---|---|
 | `qwen3:4b` / `:latest`(8B) / `:14b` / `:30b-a3b` (default = thinking) | 2026-05-04 | 4종 모두 thinking 토큰 출력. 14B max_tok=1024에서 57s. 4B는 1241 thinking 토큰으로 max_tok 한도 도달 후 final 0 | instruct variant 사용 (LM Studio MLX 4bit Qwen3-30B-A3B-Instruct-2507) | § 5.1 |
-| `hermes3:8b` | (5.x) | 한국어 자기소개 매 호출마다 가공된 이름 자칭 (agent persona/RP 학습 누수) | 영어 function calling 전용 (Berkeley FC 91% 강점) | § 5.1.1 |
+| `hermes3:8b` | (5.x) | 한국어 자기소개 매 호출마다 가공된 이름 자칭 (staff identity/RP 학습 누수) | 영어 function calling 전용 (Berkeley FC 91% 강점) | § 5.1.1 |
 | `granite4.1:8b` | (5.x) | 정체성 unstable hallucination — ChatGPT/Gemini/Granite 매 호출 다르게 자칭 | system prompt에 정체성 강제 시 ★★ | § 5.1.2 |
 | `mistral-nemo:12b-instruct-2407-q4_K_M` | (5.x) | 한국어 안정성 부족 — 영어 응답, 러시아어 mixin. Tekken은 토큰 효율이지 한국어 품질 X | 영어 코드/툴 보조 용도 | § 5.1.3 |
 | `llama3.3:70b` Q4_K_M (Ollama) | 2026-05-05 | Markdown/Go code block 직접 출력 → JS sandbox SyntaxError 3 retry → empty fallback. cloud (Groq/OpenRouter) 버전은 같은 모델인데 ★★ 통과 | cloud (Groq/OpenRouter) 사용 / Q4 vs full precision 측정 후 | § 5.1.4 |
@@ -357,7 +357,7 @@ prompt 동일.
 
 ### 5.1.1 Hermes-3 한국어 일반 chat 부적합 (★ 새 발견)
 
-- `hermes3:8b`는 Berkeley FC 91% 영어 function calling 강점. 그러나 한국어 자기소개 prompt에서 **매 호출마다 다른 가공된 이름**(에스파이어 / 가교 / 토미) 자칭 — agent persona/RP 학습이 일반 chat에 새어나옴.
+- `hermes3:8b`는 Berkeley FC 91% 영어 function calling 강점. 그러나 한국어 자기소개 prompt에서 **매 호출마다 다른 가공된 이름**(에스파이어 / 가교 / 토미) 자칭 — staff identity/RP 학습이 일반 chat에 새어나옴.
 - 한국어 "비서" 용도엔 비추, **영어 function calling 전용**으로만 권장.
 
 ### 5.1.2 IBM Granite 4.1 8B 정체성 hallucination (★ 마케팅 ≠ 실측)
@@ -433,7 +433,7 @@ Apple Metal Unified Memory 효과: 36GB UMS에서 42 GB 모델이 swap heavy 예
 | 7.5K 초과 비율 | 70% (19/27) |
 | 6K 초과 비율 | 100% (27/27) |
 
-**의미**: KittyPaw의 system prompt(11 block) + MCP tools 정의 + profile/memory/observation + recent_window=20 history → 압축 후에도 평균 8.2K. **이미 압축된 결과가 8K 이상이라 압축 미들웨어로 못 살림**.
+**의미**: KittyPaw의 system prompt(11 block) + MCP tools 정의 + user notes/memory/observation + recent_window=20 history → 압축 후에도 평균 8.2K. **이미 압축된 결과가 8K 이상이라 압축 미들웨어로 못 살림**.
 
 추가 발견 (stateful daemon 함정): 단발 chat "안녕" 한 번에 `est_tokens=7319` (`message_count=30` history). **single-turn 요청도 stateful daemon은 누적 history 보냄** — 사용자 인터랙션의 single-turn ≠ LLM 입력의 single-turn. 같은 daemon에서 6번 chat 동안 7319 → 7507 단조 증가 관찰됨.
 
@@ -473,7 +473,7 @@ Apple Metal Unified Memory 효과: 36GB UMS에서 42 GB 모델이 swap heavy 예
 
 ### 5.10 Qwen3-Coder family tool calling — 외부 production framework 실패 6+ 보고 (load-bearing 회귀 권장)
 
-R3 production agent framework 채택 조사(2026-05-05)에서 발견 — Qwen3-Coder 30B A3B family는 multiple production framework에서 일관되게 tool calling 실패:
+R3 production runner framework 채택 조사(2026-05-05)에서 발견 — Qwen3-Coder 30B A3B family는 multiple production framework에서 일관되게 tool calling 실패:
 
 - [RooCode #10780](https://github.com/RooCodeInc/Roo-Code/issues/10780) — llama.cpp tool calls fail
 - [Continue #6913](https://github.com/continuedev/continue/issues/6913) — Continue가 Qwen3 Coder 30B tool 인식 못함
@@ -499,7 +499,7 @@ R3 production agent framework 채택 조사(2026-05-05)에서 발견 — Qwen3-C
 | 함정 패턴 | 예 | 처리 |
 |---|---|---|
 | **Unstable hallucination** | granite4.1:8b — 호출마다 다른 회사 자칭 | system prompt로 안정화 가능 (페르소나 강제 주입) |
-| **Stable persona SFT** | mistral-large-latest — "호기심 많은 개발자" 일관 | SFT가 강해서 system prompt도 뚫고 나올 risk (별도 측정 필요) |
+| **Stable identity SFT** | mistral-large-latest — "호기심 많은 개발자" 일관 | SFT가 강해서 system prompt도 뚫고 나올 risk (별도 측정 필요) |
 
 **mistral-small-latest의 경계 동작** — `max_tok=256`은 정상 ("AI 챗봇이에요"), `max_tok=1024+`는 페르소나 노출 ("호기심 많은 개발자이자 새로운 도전을 즐기는 사람"). 즉 **응답 길이가 페르소나 가시성을 결정**.
 

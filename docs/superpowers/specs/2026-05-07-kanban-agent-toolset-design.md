@@ -1,4 +1,4 @@
-# Kanban Agent Toolset Design
+# Kanban Runner Toolset Design
 
 Date: 2026-05-07
 Status: Approved for implementation by user design approval
@@ -22,7 +22,7 @@ This phase adds the `Kanban` sandbox global with:
 - `Kanban.link(parentTaskId, childTaskId)`
 - `Kanban.heartbeat(taskId, options?)`
 
-This phase does not add dispatcher profile execution, hosted API contracts,
+This phase does not add dispatcher staff execution, hosted API contracts,
 bulk task operations, automatic retries, task listing, Web UI controls, or a new
 work-dir provider.
 
@@ -37,20 +37,20 @@ work-dir provider.
   body: "...",
   status: "ready",
   priority: 10,
-  assignee: "profile-id",
+  assignee: "staff-id",
   milestone: "milestone-id-or-slug",
-  created_by: "agent"
+  created_by: "runner"
 }
 ```
 
 Other mutating calls accept object options when they need more than one value:
 
 ```js
-Kanban.claim(taskId, {actor: "agent", work_dir: "/repo"})
-Kanban.complete(taskId, {actor: "agent", summary: "done", metadata: {source: "agent"}})
-Kanban.block(taskId, {actor: "agent", reason: "waiting on review"})
-Kanban.comment(taskId, {author: "agent", body: "note"})
-Kanban.heartbeat(taskId, {actor: "agent"})
+Kanban.claim(taskId, {actor: "runner", work_dir: "/repo"})
+Kanban.complete(taskId, {actor: "runner", summary: "done", metadata: {source: "runner"}})
+Kanban.block(taskId, {actor: "runner", reason: "waiting on review"})
+Kanban.comment(taskId, {author: "runner", body: "note"})
+Kanban.heartbeat(taskId, {actor: "runner"})
 ```
 
 For convenience, `block` may receive a plain reason string and `comment` may

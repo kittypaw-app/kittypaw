@@ -6,10 +6,10 @@ Status: Approved for implementation
 ## Goal
 
 Expose the durable Kanban store through the local `apps/kittypaw` server so the
-Web UI and later agent tool layer can use the same Project/Board/Milestone/Task
+Web UI and later runner tool layer can use the same Project/Board/Milestone/Task
 kernel that the CLI already uses.
 
-This phase does not build the Web UI, agent toolset, dispatcher, or automatic
+This phase does not build the Web UI, runner toolset, dispatcher, or automatic
 run work-dir providers.
 
 ## Scope

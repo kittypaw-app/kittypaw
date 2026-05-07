@@ -42,7 +42,7 @@ func TestTriggerEvolutionStoresPendingFromConversationPatterns(t *testing.T) {
 	}
 
 	// Applying/rejecting the pending proposal is intentionally not asserted
-	// here: the CLI approval surface was removed when persona management moved
+	// here: the CLI approval surface was removed when staff management moved
 	// into chat/server flows. Keep CI deterministic by locking the pending
 	// contract and track the approval UX in apps/kittypaw/TASKS.md.
 }

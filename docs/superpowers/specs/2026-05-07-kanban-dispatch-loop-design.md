@@ -42,7 +42,7 @@ This phase adds:
   queues, and env propagation
 
 This phase does not add a server background daemon, Web UI controls, automatic
-stale reclaim, retry limits, profile-specific LLM worker orchestration, a new
+stale reclaim, retry limits, staff-specific runner orchestration, a new
 Run work-dir provider, or schema migrations.
 
 ## CLI

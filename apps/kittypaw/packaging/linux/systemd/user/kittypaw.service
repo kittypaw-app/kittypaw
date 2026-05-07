@@ -1,5 +1,5 @@
 [Unit]
-Description=KittyPaw AI agent server (user)
+Description=KittyPaw AI runner server (user)
 Documentation=https://github.com/kittypaw-app/kitty
 After=network-online.target
 Wants=network-online.target

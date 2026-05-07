@@ -5,7 +5,7 @@ Status: Approved for implementation by continuation request
 
 ## Goal
 
-Complete the manual durable Run lifecycle before adding agent tools or an
+Complete the manual durable Run lifecycle before adding runner tools or an
 automatic dispatcher. A running Kanban task should support a heartbeat, manual
 cancel, and manual reclaim by another actor.
 

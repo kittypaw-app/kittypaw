@@ -404,12 +404,12 @@ func TestParseDevToolsActivePort(t *testing.T) {
 }
 
 func TestBuildChromeArgs(t *testing.T) {
-	args := buildChromeArgs("/tmp/profile", true)
+	args := buildChromeArgs("/tmp/chrome-user-data", true)
 	joined := strings.Join(args, "\n")
 	for _, want := range []string{
 		"--remote-debugging-port=0",
 		"--remote-debugging-address=127.0.0.1",
-		"--user-data-dir=/tmp/profile",
+		"--user-data-dir=/tmp/chrome-user-data",
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--headless=new",
@@ -531,11 +531,11 @@ func findChrome(explicit string) (string, []string, error) {
 	return "", candidates, fmt.Errorf("chrome executable not found")
 }
 
-func buildChromeArgs(profileDir string, headless bool) []string {
+func buildChromeArgs(userDataDir string, headless bool) []string {
 	args := []string{
 		"--remote-debugging-port=0",
 		"--remote-debugging-address=127.0.0.1",
-		"--user-data-dir=" + profileDir,
+		"--user-data-dir=" + userDataDir,
 		"--no-first-run",
 		"--no-default-browser-check",
 		"about:blank",
@@ -1318,7 +1318,7 @@ func (c *Controller) ensureStarted(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Join(c.dataDir, "profile"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(c.dataDir, "user-data"), 0o700); err != nil {
 		return err
 	}
 	chromePath, candidates, err := findChrome(c.cfg.ChromePath)
@@ -1330,13 +1330,13 @@ func (c *Controller) ensureStarted(ctx context.Context) error {
 		return err
 	}
 
-	profileDir := filepath.Join(c.dataDir, "profile")
-	cmd := exec.CommandContext(ctx, chromePath, buildChromeArgs(profileDir, c.cfg.Headless)...)
+	userDataDir := filepath.Join(c.dataDir, "user-data")
+	cmd := exec.CommandContext(ctx, chromePath, buildChromeArgs(userDataDir, c.cfg.Headless)...)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("browser launch failed: %w", err)
 	}
 	proc := &chromeProcess{cmd: cmd}
-	port, browserPath, err := waitForDevToolsActivePort(ctx, filepath.Join(profileDir, "DevToolsActivePort"))
+	port, browserPath, err := waitForDevToolsActivePort(ctx, filepath.Join(userDataDir, "DevToolsActivePort"))
 	if err != nil {
 		_ = proc.Close()
 		return err
@@ -1978,6 +1978,6 @@ Expected: commit created only when files changed.
 
 ## Self-Review Notes
 
-- Spec coverage: managed Chrome, account-local profile, Browser methods, URL validation, screenshots, supervised approvals, engine/server wiring, and integration testing each have a task.
+- Spec coverage: managed Chrome, account-local user data, Browser methods, URL validation, screenshots, supervised approvals, engine/server wiring, and integration testing each have a task.
 - Scope boundary: hosted apps, contracts, MCP server integration, file upload/download automation, and attach-only UX are not included.
 - Type consistency: `core.BrowserConfig`, `browser.Controller`, `Controller.Execute(ctx, core.SkillCall)`, `engine.BrowserController`, and `server.AccountDeps.BrowserController` are the same names across tasks.

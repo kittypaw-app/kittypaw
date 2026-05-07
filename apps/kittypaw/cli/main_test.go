@@ -248,7 +248,7 @@ func TestPersonaCommandRejected(t *testing.T) {
 
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("kittypaw persona must fail after persona management moves to chat")
+		t.Fatal("kittypaw persona must fail after staff management moves to chat")
 	}
 	if !strings.Contains(err.Error(), `unknown command "persona" for "kittypaw"`) {
 		t.Fatalf("unexpected error: %v", err)
@@ -352,7 +352,7 @@ func TestRunSkillDryRunUsesSelectedAccount(t *testing.T) {
 		Format:      core.SkillFormatNative,
 		Trigger:     core.SkillTrigger{Type: "manual"},
 	}
-	if err := core.SaveSkillTo(filepath.Join(root, "accounts", "bob"), skill, "Agent.respond('bob')"); err != nil {
+	if err := core.SaveSkillTo(filepath.Join(root, "accounts", "bob"), skill, `return "bob"`); err != nil {
 		t.Fatalf("SaveSkillTo: %v", err)
 	}
 

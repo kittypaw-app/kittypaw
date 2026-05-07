@@ -74,7 +74,7 @@ func TestRegistryClient_DownloadSSRFDefense(t *testing.T) {
 		case "/pkg/package.toml":
 			w.Write([]byte("[meta]\nid = \"test-pkg\"\nname = \"Test\"\nversion = \"1.0.0\"\n"))
 		case "/pkg/main.js":
-			w.Write([]byte(`Agent.respond("hello")`))
+			w.Write([]byte(`return "hello"`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -111,7 +111,7 @@ func TestRegistryClient_DownloadSSRFDefense(t *testing.T) {
 
 func TestRegistryClient_DownloadMultiFile(t *testing.T) {
 	tomlContent := "[meta]\nid = \"multi\"\nname = \"Multi\"\nversion = \"2.0.0\"\n"
-	jsContent := `Agent.respond("multi")`
+	jsContent := `return "multi"`
 	readmeContent := "# Multi Package\n"
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +187,7 @@ func TestRegistryClient_DownloadOptionalReadme404(t *testing.T) {
 		case "/noreadme/package.toml":
 			w.Write([]byte("[meta]\nid = \"noreadme\"\nname = \"No Readme\"\nversion = \"1.0.0\"\n"))
 		case "/noreadme/main.js":
-			w.Write([]byte(`Agent.respond("ok")`))
+			w.Write([]byte(`return "ok"`))
 		default:
 			http.NotFound(w, r)
 		}

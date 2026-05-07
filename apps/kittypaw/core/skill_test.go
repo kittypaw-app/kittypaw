@@ -21,7 +21,7 @@ func TestSkillProvenanceRoundtrip(t *testing.T) {
 		SourceText:  "# My Skill\nDo something useful",
 	}
 
-	if err := SaveSkillTo(baseDir, skill, "Agent.respond('ok')"); err != nil {
+	if err := SaveSkillTo(baseDir, skill, `return "ok"`); err != nil {
 		t.Fatalf("SaveSkillTo: %v", err)
 	}
 

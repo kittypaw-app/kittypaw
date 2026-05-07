@@ -11,7 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// AutonomyLevel controls how much freedom the agent has.
+// AutonomyLevel controls how much freedom the runner has.
 type AutonomyLevel string
 
 const (
@@ -264,7 +264,7 @@ type EvolutionConfig struct {
 	ObservationThreshold uint32 `toml:"observation_threshold"`
 }
 
-// OrchestrationConfig controls multi-agent PM pattern.
+// OrchestrationConfig controls multi-runner PM pattern.
 type OrchestrationConfig struct {
 	Enabled      bool   `toml:"enabled"`
 	MaxDepth     uint32 `toml:"max_depth"`
