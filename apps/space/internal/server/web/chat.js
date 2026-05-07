@@ -17,6 +17,7 @@
     model: document.getElementById("modelSelect"),
     reloadRoutes: document.getElementById("reloadRoutesButton"),
     loadModels: document.getElementById("loadModelsButton"),
+    clearChat: document.getElementById("clearChatButton"),
     messages: document.getElementById("messages"),
     input: document.getElementById("messageInput"),
     composer: document.getElementById("composer"),
@@ -202,6 +203,13 @@
     window.location.replace("/chat/");
   }
 
+  function clearChat() {
+    state.messages = [];
+    renderMessages();
+    saveState();
+    setStatus("Chat cleared");
+  }
+
   function syncSelection() {
     state.deviceID = els.device.value;
     state.accountID = els.account.value;
@@ -225,6 +233,7 @@
     els.account.addEventListener("change", syncSelection);
     els.model.addEventListener("change", syncSelection);
     els.composer.addEventListener("submit", sendMessage);
+    els.clearChat.addEventListener("click", clearChat);
     els.logout.addEventListener("click", logout);
     try {
       await loadRoutes();

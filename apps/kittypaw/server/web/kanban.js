@@ -3,6 +3,7 @@
 const Kanban = {
   _container: null,
   _projects: [],
+  _workspaces: [],
   _boards: [],
   _milestones: [],
   _tasks: [],
@@ -25,6 +26,7 @@ const Kanban = {
   mount(container) {
     this._container = container;
     this._projects = [];
+    this._workspaces = [];
     this._boards = [];
     this._milestones = [];
     this._tasks = [];
@@ -43,8 +45,12 @@ const Kanban = {
     this._error = '';
     this._render();
     try {
-      const data = await api('/api/v1/projects');
-      this._projects = data.projects || [];
+      const [projectData, workspaceData] = await Promise.all([
+        api('/api/v1/projects'),
+        api('/api/settings/workspaces'),
+      ]);
+      this._projects = projectData.projects || [];
+      this._workspaces = Array.isArray(workspaceData) ? workspaceData : [];
       if (!this._selectedProject && this._projects.length) {
         this._selectedProject = this._projectKey(this._projects[0]);
       }
@@ -138,17 +144,37 @@ const Kanban = {
   },
 
   _emptyProjectHTML() {
+    if (this._workspaces.length === 0) {
+      return '<div class="kanban-empty">' +
+        '<h2>No projects</h2>' +
+        '<p class="kanban-muted">Add a workspace in Settings before creating a Kanban project.</p>' +
+        '<a class="btn btn--secondary btn--sm" href="/_settings">Add a workspace in Settings</a>' +
+        '</div>';
+    }
     return '<div class="kanban-empty">' +
       '<h2>No projects</h2>' +
       '<form class="kanban-form" id="kanban-project-form">' +
+        '<label>Workspace<select class="input" id="kanban-workspace-select" name="workspace_id" required>' +
+          this._workspaceOptionsHTML() +
+        '</select></label>' +
         '<div class="kanban-form-row">' +
-          '<label>Slug<input class="input" name="slug" required></label>' +
-          '<label>Name<input class="input" name="name"></label>' +
+          '<label>Slug<input class="input" name="slug" placeholder="optional"></label>' +
+          '<label>Name<input class="input" name="name" placeholder="optional"></label>' +
         '</div>' +
-        '<label>Project root<input class="input" name="root_path" required placeholder="/absolute/path"></label>' +
         '<button class="btn btn--primary btn--sm" type="submit">Create Project</button>' +
       '</form>' +
       '</div>';
+  },
+
+  _workspaceOptionsHTML() {
+    let html = '';
+    for (const workspace of this._workspaces) {
+      const key = this._workspaceKey(workspace);
+      const label = (workspace.alias || workspace.name || workspace.id || 'Workspace') +
+        (workspace.root_path ? ' - ' + workspace.root_path : '');
+      html += '<option value="' + esc(key) + '">' + esc(label) + '</option>';
+    }
+    return html;
   },
 
   _workspaceHTML() {
@@ -427,17 +453,23 @@ const Kanban = {
   },
 
   async _createProject(form) {
-    const slug = this._field(form, 'slug');
-    const rootPath = this._field(form, 'root_path');
-    if (!slug || !rootPath) return;
+    const workspace = this._workspaceByID(this._field(form, 'workspace_id'));
+    if (!workspace || !workspace.root_path) {
+      this._error = 'Select a workspace first.';
+      this._render();
+      return;
+    }
+    const slug = this._field(form, 'slug') || this._projectSlugFromWorkspace(workspace);
+    const name = this._field(form, 'name') || workspace.alias || workspace.name || slug;
+    if (!slug) return;
     this._loading = true;
     this._error = '';
     this._render();
     try {
       const data = await this._postJSON('/api/v1/projects', {
         slug: slug,
-        name: this._field(form, 'name'),
-        root_path: rootPath,
+        name: name,
+        root_path: workspace.root_path,
       });
       const project = data.project || {};
       this._selectedProject = project.slug || project.id || slug;
@@ -630,6 +662,22 @@ const Kanban = {
 
   _projectKey(project) {
     return project.slug || project.id || '';
+  },
+
+  _workspaceKey(workspace) {
+    return workspace.id || workspace.root_path || '';
+  },
+
+  _workspaceByID(id) {
+    return this._workspaces.find(workspace => this._workspaceKey(workspace) === id) || null;
+  },
+
+  _projectSlugFromWorkspace(workspace) {
+    for (const candidate of [workspace.alias, workspace.name, workspace.id, 'project']) {
+      const slug = String(candidate || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      if (slug) return slug;
+    }
+    return 'project';
   },
 
   _selectedProjectObject() {

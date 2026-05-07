@@ -42,7 +42,7 @@ func TestChatRouteServesSpaceChatHTML(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "space-chat-root") {
 		t.Fatalf("space chat marker missing from body:\n%s", w.Body.String())
 	}
-	for _, want := range []string{`id="deviceSelect"`, `id="composer"`, `/assets/shared.js`, `/assets/chat.js`} {
+	for _, want := range []string{`id="deviceSelect"`, `id="composer"`, `id="clearChatButton"`, `/assets/shared.js`, `/assets/chat.js`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("space chat app HTML missing %q:\n%s", want, w.Body.String())
 		}
@@ -100,6 +100,29 @@ func TestChatScriptUsesChatBFFRoutes(t *testing.T) {
 	}
 	if strings.Contains(body, "/app/api/") {
 		t.Fatalf("chat.js still references legacy app API path:\n%s", body)
+	}
+}
+
+func TestChatScriptCanClearPersistedMessages(t *testing.T) {
+	r := NewRouter(Config{})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/chat.js", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"clearChat: document.getElementById(\"clearChatButton\")",
+		"function clearChat()",
+		"state.messages = []",
+		"els.clearChat.addEventListener(\"click\", clearChat)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("chat.js missing persisted-message clear behavior %q:\n%s", want, body)
+		}
 	}
 }
 

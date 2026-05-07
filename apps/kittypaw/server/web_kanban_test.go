@@ -62,7 +62,11 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 		"id=\"kanban-project-form\"",
 		"id=\"kanban-task-form\"",
 		"_requestJSON(url, 'POST', body)",
-		"root_path",
+		"/api/settings/workspaces",
+		"id=\"kanban-workspace-select\"",
+		"name=\"workspace_id\"",
+		"_workspaceByID",
+		"for (const candidate of [workspace.alias, workspace.name, workspace.id, 'project'])",
 		"/api/v1/kanban/tasks'",
 		"/claim'",
 		"/complete'",
@@ -82,6 +86,28 @@ func TestKanbanWebModuleSupportsCreateDetailActionsAndRuns(t *testing.T) {
 	} {
 		if !strings.Contains(src, token) {
 			t.Fatalf("kanban module missing token %s", token)
+		}
+	}
+	for _, bad := range []string{
+		`name="root_path"`,
+		`placeholder="/absolute/path"`,
+		"_field(form, 'root_path')",
+	} {
+		if strings.Contains(src, bad) {
+			t.Fatalf("kanban project form must not ask for absolute paths directly, found %s", bad)
+		}
+	}
+}
+
+func TestKanbanWebModuleDirectsEmptyWorkspaceUsersToSettings(t *testing.T) {
+	src := readWebAssetForKanbanTest(t, "web/kanban.js")
+	for _, token := range []string{
+		"Add a workspace in Settings",
+		`href="/_settings"`,
+		"_workspaces.length === 0",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("kanban module missing empty-workspace guidance %s", token)
 		}
 	}
 }
