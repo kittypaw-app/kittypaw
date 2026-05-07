@@ -18,7 +18,7 @@ type Staff struct {
 	UserMD string // USER.md content, optional
 }
 
-// PresetInfo describes a built-in persona preset.
+// PresetInfo describes a built-in staff identity preset.
 type PresetInfo struct {
 	ID          string
 	Name        string
@@ -26,7 +26,7 @@ type PresetInfo struct {
 	Soul        string
 }
 
-// Presets contains the built-in persona presets.
+// Presets contains the built-in staff identity presets.
 var Presets = map[string]PresetInfo{
 	"default-assistant": {
 		ID:          "default-assistant",

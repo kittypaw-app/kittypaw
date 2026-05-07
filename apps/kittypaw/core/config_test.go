@@ -52,7 +52,7 @@ version = 2
 is_shared = true
 freeform_fallback = true
 autonomy_level = "full"
-default_profile = "default"
+default_staff = "default"
 
 [llm]
 default = "main"
@@ -104,6 +104,9 @@ access = "read_write"
 	}
 	if cfg.LLM.Default != "main" || cfg.LLM.Fallback != "backup" {
 		t.Fatalf("LLM default/fallback = %q/%q", cfg.LLM.Default, cfg.LLM.Fallback)
+	}
+	if cfg.DefaultStaff != "default" {
+		t.Fatalf("DefaultStaff = %q, want default", cfg.DefaultStaff)
 	}
 	if got := cfg.DefaultModel(); got == nil || got.ID != "main" || got.Credential != "openai" {
 		t.Fatalf("DefaultModel = %#v, want main/openai", got)
