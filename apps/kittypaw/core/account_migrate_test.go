@@ -7,8 +7,9 @@ import (
 )
 
 // seedLegacyLayout writes a pre-multi-account ~/.kittypaw layout: config.toml
-// + data/kittypaw.db + skills/ + secrets.json directly under baseDir. The
-// helper is shared between tests that need a realistic legacy starting point.
+// + data/kittypaw.db + skills/ + profiles/ + secrets.json directly under
+// baseDir. The helper is shared between tests that need a realistic legacy
+// starting point.
 func seedLegacyLayout(t *testing.T, baseDir string) {
 	t.Helper()
 	for _, dir := range []string{"data", "skills", "profiles"} {
@@ -66,7 +67,7 @@ func TestMigrateLegacyLayout_Moves(t *testing.T) {
 	mustExist(t, filepath.Join(defDir, "data", "kittypaw.db-wal"))
 	mustExist(t, filepath.Join(defDir, "secrets.json"))
 	mustExist(t, filepath.Join(defDir, "skills", "hello.md"))
-	mustExist(t, filepath.Join(defDir, "profiles", "default.yaml"))
+	mustExist(t, filepath.Join(defDir, "staff", "default.yaml"))
 
 	// Legacy paths are gone.
 	mustNotExist(t, filepath.Join(base, "config.toml"))

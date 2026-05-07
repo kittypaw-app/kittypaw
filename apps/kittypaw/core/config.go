@@ -71,7 +71,7 @@ type Config struct {
 	Version          int                 `toml:"version"`
 	LLM              LLMConfig           `toml:"llm"`
 	Sandbox          SandboxConfig       `toml:"sandbox"`
-	Agents           []AgentConfig       `toml:"agents"`
+	Runners          []RunnerConfig      `toml:"runners"`
 	Channels         []ChannelConfig     `toml:"channels"`
 	AllowedChatIDs   []string            `toml:"-"`
 	FreeformFallback bool                `toml:"freeform_fallback"`
@@ -82,8 +82,8 @@ type Config struct {
 	AutonomyLevel    AutonomyLevel       `toml:"autonomy_level"`
 	PairedChatIDs    []string            `toml:"paired_chat_ids"`
 	Server           ServerConfig        `toml:"server"`
-	Profiles         []ProfileConfig     `toml:"profiles"`
-	DefaultProfile   string              `toml:"default_profile"`
+	Staff            []StaffConfig       `toml:"staff"`
+	DefaultStaff     string              `toml:"default_staff"`
 	Reflection       ReflectionConfig    `toml:"reflection"`
 	Evolution        EvolutionConfig     `toml:"evolution"`
 	Orchestration    OrchestrationConfig `toml:"orchestration"`
@@ -380,8 +380,8 @@ func InjectChannelSecrets(accountID string, channels []ChannelConfig) {
 	}
 }
 
-// AgentConfig defines a single agent's behavior.
-type AgentConfig struct {
+// RunnerConfig defines one runner's execution behavior.
+type RunnerConfig struct {
 	ID            string            `toml:"id"`
 	Name          string            `toml:"name"`
 	SystemPrompt  string            `toml:"system_prompt"`
@@ -389,15 +389,15 @@ type AgentConfig struct {
 	AllowedSkills []SkillPermission `toml:"allowed_skills"`
 }
 
-// SkillPermission controls per-skill access for an agent.
+// SkillPermission controls per-skill access for a runner.
 type SkillPermission struct {
 	Skill              string   `toml:"skill"`
 	Methods            []string `toml:"methods"`
 	RateLimitPerMinute uint32   `toml:"rate_limit_per_minute"`
 }
 
-// ProfileConfig defines a switchable persona.
-type ProfileConfig struct {
+// StaffConfig defines a switchable staff identity.
+type StaffConfig struct {
 	ID       string   `toml:"id"`
 	Nick     string   `toml:"nick"`
 	Channels []string `toml:"channels"`
@@ -423,8 +423,8 @@ func DefaultConfig() Config {
 			TimeoutSecs:   30,
 			MemoryLimitMB: 64,
 		},
-		AutonomyLevel:  AutonomyFull,
-		DefaultProfile: "default",
+		AutonomyLevel: AutonomyFull,
+		DefaultStaff:  "default",
 		STT: STTConfig{
 			Language: "ko",
 		},
@@ -547,22 +547,22 @@ func ConfigPath() (string, error) {
 	return ConfigPathForAccount(DefaultAccountID)
 }
 
-// FindAgent returns the agent config matching the given ID, or nil.
-func (c *Config) FindAgent(id string) *AgentConfig {
-	for i := range c.Agents {
-		if c.Agents[i].ID == id {
-			return &c.Agents[i]
+// FindRunner returns the runner config matching the given ID, or nil.
+func (c *Config) FindRunner(id string) *RunnerConfig {
+	for i := range c.Runners {
+		if c.Runners[i].ID == id {
+			return &c.Runners[i]
 		}
 	}
 	return nil
 }
 
-// DefaultAgent returns the first agent, or nil if none configured.
-func (c *Config) DefaultAgent() *AgentConfig {
-	if len(c.Agents) == 0 {
+// DefaultRunner returns the first runner, or nil if none configured.
+func (c *Config) DefaultRunner() *RunnerConfig {
+	if len(c.Runners) == 0 {
 		return nil
 	}
-	return &c.Agents[0]
+	return &c.Runners[0]
 }
 
 func (c *Config) NormalizeRuntimeFields() {

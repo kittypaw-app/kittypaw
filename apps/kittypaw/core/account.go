@@ -46,9 +46,9 @@ func (t *Account) SkillsDir() string {
 	return filepath.Join(t.BaseDir, "skills")
 }
 
-// ProfilesDir returns the account's profiles directory.
-func (t *Account) ProfilesDir() string {
-	return filepath.Join(t.BaseDir, "profiles")
+// StaffDir returns the account's staff identity directory.
+func (t *Account) StaffDir() string {
+	return filepath.Join(t.BaseDir, "staff")
 }
 
 // SecretsPath returns the path to the account's secrets file.
@@ -78,13 +78,40 @@ func (t *Account) PackagesDir() string {
 	return filepath.Join(t.BaseDir, "packages")
 }
 
+func (t *Account) migrateStaffDir() error {
+	profilesDir := filepath.Join(t.BaseDir, "profiles")
+	staffDir := t.StaffDir()
+
+	if _, err := os.Stat(profilesDir); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("stat legacy profiles dir: %w", err)
+	}
+
+	if _, err := os.Stat(staffDir); err == nil {
+		slog.Warn("legacy profiles/ and staff/ both exist; using staff/",
+			"account", t.ID, "profiles_dir", profilesDir, "staff_dir", staffDir)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat staff dir: %w", err)
+	}
+
+	if err := os.Rename(profilesDir, staffDir); err != nil {
+		return fmt.Errorf("rename profiles to staff: %w", err)
+	}
+	return nil
+}
+
 // EnsureDirs creates all required directories for the account.
 func (t *Account) EnsureDirs() error {
+	if err := t.migrateStaffDir(); err != nil {
+		return err
+	}
 	dirs := []string{
 		t.BaseDir,
 		t.DataDir(),
 		t.SkillsDir(),
-		t.ProfilesDir(),
+		t.StaffDir(),
 		t.PackagesDir(),
 	}
 	for _, d := range dirs {
@@ -405,7 +432,7 @@ func MigrateTenantsToAccounts(baseDir string) error {
 // not drop legacy files on top of it.
 //
 // Moved (account-scoped): config.toml, secrets.json, data/, skills/,
-// profiles/, packages/. Left in place (server-wide): server.toml,
+// staff/, profiles/, packages/. Left in place (server-wide): server.toml,
 // daemon.pid, daemon.log, anything else under baseDir.
 //
 // Atomicity: files are first relocated into a staging directory
@@ -450,7 +477,7 @@ func MigrateLegacyLayout(baseDir string) error {
 		return fmt.Errorf("create staging dir: %w", err)
 	}
 
-	for _, name := range []string{"config.toml", "secrets.json", "data", "skills", "profiles", "packages"} {
+	for _, name := range []string{"config.toml", "secrets.json", "data", "skills", "staff", "profiles", "packages"} {
 		src := filepath.Join(baseDir, name)
 		if _, err := os.Stat(src); os.IsNotExist(err) {
 			continue
@@ -468,6 +495,9 @@ func MigrateLegacyLayout(baseDir string) error {
 	finalDir := filepath.Join(accountsDir, "default")
 	if err := os.Rename(stagingDir, finalDir); err != nil {
 		return fmt.Errorf("commit staging → %s: %w", finalDir, err)
+	}
+	if err := (&Account{ID: DefaultAccountID, BaseDir: finalDir}).migrateStaffDir(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -27,7 +27,7 @@ func TestInitAccount_HappyPath_Personal(t *testing.T) {
 	}
 
 	dir := filepath.Join(accountsDir, "alice")
-	for _, sub := range []string{"data", "skills", "profiles", "packages"} {
+	for _, sub := range []string{"data", "skills", "staff", "packages"} {
 		if info, err := os.Stat(filepath.Join(dir, sub)); err != nil || !info.IsDir() {
 			t.Errorf("expected subdir %q, err=%v", sub, err)
 		}

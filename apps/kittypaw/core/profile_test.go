@@ -6,92 +6,87 @@ import (
 	"testing"
 )
 
-func TestLoadProfile_MissingSoul(t *testing.T) {
+func TestLoadStaff_MissingSoul(t *testing.T) {
 	base := t.TempDir()
 	// No SOUL.md exists — should fallback to default preset, no error.
-	p, err := LoadProfile(base, "default")
+	staff, err := LoadStaff(base, "default")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.ID != "default" {
-		t.Errorf("ID = %q, want %q", p.ID, "default")
+	if staff.ID != "default" {
+		t.Errorf("ID = %q, want %q", staff.ID, "default")
 	}
-	if p.Soul == "" {
+	if staff.Soul == "" {
 		t.Error("expected fallback preset Soul, got empty")
 	}
 	// Should match the default-assistant preset.
 	preset := Presets["default-assistant"]
-	if p.Soul != preset.Soul {
-		t.Errorf("Soul = %q, want default-assistant preset", p.Soul)
+	if staff.Soul != preset.Soul {
+		t.Errorf("Soul = %q, want default-assistant preset", staff.Soul)
 	}
 }
 
-func TestLoadProfile_ExistingSoul(t *testing.T) {
+func TestLoadStaff_ExistingSoul(t *testing.T) {
 	base := t.TempDir()
-	profDir := filepath.Join(base, "profiles", "mybot")
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
+	staffDir := filepath.Join(base, "staff", "mybot")
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	soul := "I am a custom bot with special powers."
-	if err := os.WriteFile(filepath.Join(profDir, "SOUL.md"), []byte(soul), 0o644); err != nil {
+	const soul = "custom staff soul"
+	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte(soul), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	p, err := LoadProfile(base, "mybot")
+	staff, err := LoadStaff(base, "mybot")
+	if err != nil {
+		t.Fatalf("LoadStaff() error = %v", err)
+	}
+	if staff.ID != "mybot" || staff.Soul != soul {
+		t.Fatalf("staff = %+v, want ID mybot and soul %q", staff, soul)
+	}
+}
+
+func TestLoadStaff_WithUserMD(t *testing.T) {
+	base := t.TempDir()
+	staffDir := filepath.Join(base, "staff", "bot")
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte("soul text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staffDir, "USER.md"), []byte("user likes cats"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	staff, err := LoadStaff(base, "bot")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.Soul != soul {
-		t.Errorf("Soul = %q, want %q", p.Soul, soul)
+	if staff.Soul != "soul text" {
+		t.Errorf("Soul = %q", staff.Soul)
 	}
-	if p.UserMD != "" {
-		t.Errorf("UserMD should be empty, got %q", p.UserMD)
-	}
-}
-
-func TestLoadProfile_WithUserMD(t *testing.T) {
-	base := t.TempDir()
-	profDir := filepath.Join(base, "profiles", "bot")
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profDir, "SOUL.md"), []byte("soul text"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profDir, "USER.md"), []byte("user likes cats"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	p, err := LoadProfile(base, "bot")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p.Soul != "soul text" {
-		t.Errorf("Soul = %q", p.Soul)
-	}
-	if p.UserMD != "user likes cats" {
-		t.Errorf("UserMD = %q", p.UserMD)
+	if staff.UserMD != "user likes cats" {
+		t.Errorf("UserMD = %q", staff.UserMD)
 	}
 }
 
-func TestLoadProfile_InvalidID(t *testing.T) {
-	base := t.TempDir()
-	_, err := LoadProfile(base, "../evil")
-	if err == nil {
-		t.Fatal("expected error for invalid profile ID")
+func TestValidateStaffID_Invalid(t *testing.T) {
+	if err := ValidateStaffID("../evil"); err == nil {
+		t.Fatal("expected invalid StaffID error")
 	}
 }
 
-func TestEnsureDefaultProfile_CreatesDir(t *testing.T) {
+func TestEnsureDefaultStaffCreatesStaffDir(t *testing.T) {
 	base := t.TempDir()
-	if err := EnsureDefaultProfile(base); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := EnsureDefaultStaff(base); err != nil {
+		t.Fatalf("EnsureDefaultStaff() error = %v", err)
 	}
 
-	soulPath := filepath.Join(base, "profiles", "default", "SOUL.md")
+	soulPath := filepath.Join(base, "staff", "default", "SOUL.md")
 	data, err := os.ReadFile(soulPath)
 	if err != nil {
-		t.Fatalf("SOUL.md not created: %v", err)
+		t.Fatalf("SOUL.md not created under staff/: %v", err)
 	}
 	if len(data) == 0 {
 		t.Error("SOUL.md is empty")
@@ -102,21 +97,21 @@ func TestEnsureDefaultProfile_CreatesDir(t *testing.T) {
 	}
 }
 
-func TestEnsureDefaultProfile_Idempotent(t *testing.T) {
+func TestEnsureDefaultStaff_Idempotent(t *testing.T) {
 	base := t.TempDir()
-	if err := EnsureDefaultProfile(base); err != nil {
+	if err := EnsureDefaultStaff(base); err != nil {
 		t.Fatal(err)
 	}
 
 	// Write custom content to SOUL.md.
-	soulPath := filepath.Join(base, "profiles", "default", "SOUL.md")
+	soulPath := filepath.Join(base, "staff", "default", "SOUL.md")
 	custom := "My custom persona"
 	if err := os.WriteFile(soulPath, []byte(custom), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second call should NOT overwrite.
-	if err := EnsureDefaultProfile(base); err != nil {
+	if err := EnsureDefaultStaff(base); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,16 +124,16 @@ func TestEnsureDefaultProfile_Idempotent(t *testing.T) {
 	}
 }
 
-// --- T2: ApplyPreset / DetectDirty / PresetStatus ---
+// --- T2: ApplyStaffPreset / DetectStaffDirty / StaffPresetStatus ---
 
-func TestApplyPreset(t *testing.T) {
+func TestApplyStaffPreset(t *testing.T) {
 	base := t.TempDir()
-	if err := ApplyPreset(base, "mybot", "friendly-assistant"); err != nil {
+	if err := ApplyStaffPreset(base, "mybot", "friendly-assistant"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// SOUL.md should match the preset.
-	soulPath := filepath.Join(base, "profiles", "mybot", "SOUL.md")
+	soulPath := filepath.Join(base, "staff", "mybot", "SOUL.md")
 	data, err := os.ReadFile(soulPath)
 	if err != nil {
 		t.Fatalf("SOUL.md not created: %v", err)
@@ -148,26 +143,26 @@ func TestApplyPreset(t *testing.T) {
 	}
 
 	// .preset_meta should exist.
-	metaPath := filepath.Join(base, "profiles", "mybot", ".preset_meta")
+	metaPath := filepath.Join(base, "staff", "mybot", ".preset_meta")
 	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf(".preset_meta not created: %v", err)
 	}
 }
 
-func TestApplyPreset_InvalidPreset(t *testing.T) {
+func TestApplyStaffPreset_InvalidPreset(t *testing.T) {
 	base := t.TempDir()
-	err := ApplyPreset(base, "mybot", "nonexistent-preset")
+	err := ApplyStaffPreset(base, "mybot", "nonexistent-preset")
 	if err == nil {
 		t.Fatal("expected error for unknown preset ID")
 	}
 }
 
-func TestDetectDirty_Clean(t *testing.T) {
+func TestDetectStaffDirty_Clean(t *testing.T) {
 	base := t.TempDir()
-	if err := ApplyPreset(base, "bot", "default-assistant"); err != nil {
+	if err := ApplyStaffPreset(base, "bot", "default-assistant"); err != nil {
 		t.Fatal(err)
 	}
-	dirty, err := DetectDirty(base, "bot")
+	dirty, err := DetectStaffDirty(base, "bot")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,19 +171,19 @@ func TestDetectDirty_Clean(t *testing.T) {
 	}
 }
 
-func TestDetectDirty_Modified(t *testing.T) {
+func TestDetectStaffDirty_Modified(t *testing.T) {
 	base := t.TempDir()
-	if err := ApplyPreset(base, "bot", "default-assistant"); err != nil {
+	if err := ApplyStaffPreset(base, "bot", "default-assistant"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Modify SOUL.md.
-	soulPath := filepath.Join(base, "profiles", "bot", "SOUL.md")
+	soulPath := filepath.Join(base, "staff", "bot", "SOUL.md")
 	if err := os.WriteFile(soulPath, []byte("modified soul"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	dirty, err := DetectDirty(base, "bot")
+	dirty, err := DetectStaffDirty(base, "bot")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -197,12 +192,12 @@ func TestDetectDirty_Modified(t *testing.T) {
 	}
 }
 
-func TestPresetStatus_Preset(t *testing.T) {
+func TestStaffPresetStatus_Preset(t *testing.T) {
 	base := t.TempDir()
-	if err := ApplyPreset(base, "bot", "professional-assistant"); err != nil {
+	if err := ApplyStaffPreset(base, "bot", "professional-assistant"); err != nil {
 		t.Fatal(err)
 	}
-	status := PresetStatus(base, "bot")
+	status := StaffPresetStatus(base, "bot")
 	if status.Kind != StatusPreset {
 		t.Errorf("Kind = %v, want StatusPreset", status.Kind)
 	}
@@ -211,17 +206,17 @@ func TestPresetStatus_Preset(t *testing.T) {
 	}
 }
 
-func TestPresetStatus_Custom(t *testing.T) {
+func TestStaffPresetStatus_Custom(t *testing.T) {
 	base := t.TempDir()
-	if err := ApplyPreset(base, "bot", "default-assistant"); err != nil {
+	if err := ApplyStaffPreset(base, "bot", "default-assistant"); err != nil {
 		t.Fatal(err)
 	}
 	// Modify SOUL.md.
-	soulPath := filepath.Join(base, "profiles", "bot", "SOUL.md")
+	soulPath := filepath.Join(base, "staff", "bot", "SOUL.md")
 	if err := os.WriteFile(soulPath, []byte("custom persona"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	status := PresetStatus(base, "bot")
+	status := StaffPresetStatus(base, "bot")
 	if status.Kind != StatusCustom {
 		t.Errorf("Kind = %v, want StatusCustom", status.Kind)
 	}
@@ -230,17 +225,17 @@ func TestPresetStatus_Custom(t *testing.T) {
 	}
 }
 
-func TestPresetStatus_Unknown(t *testing.T) {
+func TestStaffPresetStatus_Unknown(t *testing.T) {
 	base := t.TempDir()
-	// Create a profile without .preset_meta.
-	profDir := filepath.Join(base, "profiles", "manual")
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
+	// Create a staff member without .preset_meta.
+	staffDir := filepath.Join(base, "staff", "manual")
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(profDir, "SOUL.md"), []byte("hand-written"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte("hand-written"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	status := PresetStatus(base, "manual")
+	status := StaffPresetStatus(base, "manual")
 	if status.Kind != StatusUnknown {
 		t.Errorf("Kind = %v, want StatusUnknown", status.Kind)
 	}
