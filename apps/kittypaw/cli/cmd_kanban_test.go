@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -866,11 +867,12 @@ func TestKanbanDispatchReclaimsStaleRunAndExecutesCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateKanbanTask: %v", err)
 	}
-	if _, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{Actor: "old-worker"}); err != nil {
+	run, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{Actor: "old-worker"})
+	if err != nil {
 		t.Fatalf("ClaimKanbanTask: %v", err)
 	}
 	_ = st.Close()
-	time.Sleep(1100 * time.Millisecond)
+	mustSetCliKanbanRunHeartbeatForStaleTest(t, filepath.Join(root, "accounts", "alice", "data", "kittypaw.db"), run.ID, time.Now().UTC().Add(-2*time.Hour).Format("2006-01-02T15:04:05Z"))
 
 	err = runKanbanDispatch(
 		t.Context(),
@@ -879,7 +881,7 @@ func TestKanbanDispatchReclaimsStaleRunAndExecutesCommand(t *testing.T) {
 			shared:            &kanbanSharedFlags{accountID: "alice"},
 			project:           "kitty",
 			limit:             1,
-			reclaimStaleAfter: "500ms",
+			reclaimStaleAfter: "1s",
 		},
 	)
 	if err != nil {
@@ -919,6 +921,18 @@ func TestKanbanDispatchReclaimsStaleRunAndExecutesCommand(t *testing.T) {
 	}
 	if len(runs) != 2 || reclaimed != 1 || completed != 1 {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func mustSetCliKanbanRunHeartbeatForStaleTest(t *testing.T, dbPath, runID, heartbeat string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE kanban_task_runs SET heartbeat_at = ? WHERE id = ?`, heartbeat, runID); err != nil {
+		t.Fatalf("set stale heartbeat: %v", err)
 	}
 }
 
