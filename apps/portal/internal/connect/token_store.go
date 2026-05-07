@@ -203,7 +203,7 @@ func (s *PostgresTokenStore) RecordUsage(ctx context.Context, record UsageRecord
 
 	if _, err := tx.Exec(ctx, `
 		SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))
-	`, record.UserID+"\x00"+record.ProviderID+"\x00post_reads", window.Format("2006-01")); err != nil {
+	`, usageAdvisoryLockKey(record.UserID, record.ProviderID, "post_reads"), window.Format("2006-01")); err != nil {
 		return false, err
 	}
 
@@ -246,6 +246,10 @@ func tokenStoreKey(userID, providerID string) string {
 
 func usageStoreKey(userID, providerID, quotaKey string, window time.Time) string {
 	return userID + "\x00" + providerID + "\x00" + quotaKey + "\x00" + window.Format(time.RFC3339)
+}
+
+func usageAdvisoryLockKey(userID, providerID, quotaKey string) string {
+	return userID + "|" + providerID + "|" + quotaKey
 }
 
 func usageMonthStart(now time.Time) time.Time {

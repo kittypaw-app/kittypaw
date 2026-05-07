@@ -3,6 +3,7 @@ package connect
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,5 +107,15 @@ func TestMemoryConnectTokenStoreUnlimitedWhenMonthlyLimitMissing(t *testing.T) {
 	})
 	if err != nil || !allowed {
 		t.Fatalf("RecordUsage allowed=%v err=%v, want unlimited allowed", allowed, err)
+	}
+}
+
+func TestUsageAdvisoryLockKeyIsPostgresTextSafe(t *testing.T) {
+	key := usageAdvisoryLockKey("user-1", XProviderID, "post_reads")
+	if strings.ContainsRune(key, '\x00') {
+		t.Fatalf("usage advisory lock key contains NUL: %q", key)
+	}
+	if key != "user-1|x|post_reads" {
+		t.Fatalf("usage advisory lock key = %q", key)
 	}
 }
