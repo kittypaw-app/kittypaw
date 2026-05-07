@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,8 +17,45 @@ import (
 	"github.com/jinto/kittypaw/store"
 )
 
-func (s *Server) handleKanbanProjectsList(w http.ResponseWriter, _ *http.Request) {
-	projects, err := s.store.ListKanbanProjects(false)
+type kanbanStoreContextKey struct{}
+
+func (s *Server) requireKanbanAPIAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		required, err := s.apiAuthRequired()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read local auth store")
+			return
+		}
+
+		st := s.store
+		if required {
+			acct, acctErr := s.requestAccount(r)
+			if acctErr == nil {
+				if acct.Deps == nil || acct.Deps.Store == nil {
+					writeError(w, http.StatusInternalServerError, "account store unavailable")
+					return
+				}
+				st = acct.Deps.Store
+			} else if !s.apiTokenAccepted(requestAuthToken(r)) {
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+		}
+
+		ctx := context.WithValue(r.Context(), kanbanStoreContextKey{}, st)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) kanbanStore(r *http.Request) *store.Store {
+	if st, ok := r.Context().Value(kanbanStoreContextKey{}).(*store.Store); ok && st != nil {
+		return st
+	}
+	return s.store
+}
+
+func (s *Server) handleKanbanProjectsList(w http.ResponseWriter, r *http.Request) {
+	projects, err := s.kanbanStore(r).ListKanbanProjects(false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -50,7 +88,7 @@ func (s *Server) handleKanbanProjectsCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	project, err := s.store.CreateKanbanProject(store.CreateKanbanProjectRequest{
+	project, err := s.kanbanStore(r).CreateKanbanProject(store.CreateKanbanProjectRequest{
 		Slug:     body.Slug,
 		Name:     body.Name,
 		RootPath: filepath.Clean(body.RootPath),
@@ -59,7 +97,7 @@ func (s *Server) handleKanbanProjectsCreate(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	board, err := s.store.GetDefaultKanbanBoard(project.ID)
+	board, err := s.kanbanStore(r).GetDefaultKanbanBoard(project.ID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -68,7 +106,7 @@ func (s *Server) handleKanbanProjectsCreate(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleKanbanProjectShow(w http.ResponseWriter, r *http.Request) {
-	project, err := kanbanResolveProject(s.store, chi.URLParam(r, "project"))
+	project, err := kanbanResolveProject(s.kanbanStore(r), chi.URLParam(r, "project"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -77,12 +115,12 @@ func (s *Server) handleKanbanProjectShow(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleKanbanProjectBoardsList(w http.ResponseWriter, r *http.Request) {
-	project, err := kanbanResolveProject(s.store, chi.URLParam(r, "project"))
+	project, err := kanbanResolveProject(s.kanbanStore(r), chi.URLParam(r, "project"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	boards, err := s.store.ListKanbanBoards(project.ID)
+	boards, err := s.kanbanStore(r).ListKanbanBoards(project.ID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -95,12 +133,12 @@ func (s *Server) handleKanbanProjectBoardsList(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleKanbanProjectMilestonesList(w http.ResponseWriter, r *http.Request) {
-	project, err := kanbanResolveProject(s.store, chi.URLParam(r, "project"))
+	project, err := kanbanResolveProject(s.kanbanStore(r), chi.URLParam(r, "project"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	milestones, err := s.store.ListKanbanMilestones(project.ID)
+	milestones, err := s.kanbanStore(r).ListKanbanMilestones(project.ID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -113,7 +151,7 @@ func (s *Server) handleKanbanProjectMilestonesList(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleKanbanProjectMilestonesCreate(w http.ResponseWriter, r *http.Request) {
-	project, err := kanbanResolveProject(s.store, chi.URLParam(r, "project"))
+	project, err := kanbanResolveProject(s.kanbanStore(r), chi.URLParam(r, "project"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -135,7 +173,7 @@ func (s *Server) handleKanbanProjectMilestonesCreate(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	milestone, err := s.store.CreateKanbanMilestone(store.CreateKanbanMilestoneRequest{
+	milestone, err := s.kanbanStore(r).CreateKanbanMilestone(store.CreateKanbanMilestoneRequest{
 		ProjectID:   project.ID,
 		Title:       title,
 		Description: strings.TrimSpace(body.Description),
@@ -167,7 +205,7 @@ func (s *Server) handleKanbanTasksCreate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "project is required")
 		return
 	}
-	project, err := kanbanResolveProject(s.store, body.Project)
+	project, err := kanbanResolveProject(s.kanbanStore(r), body.Project)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -176,17 +214,17 @@ func (s *Server) handleKanbanTasksCreate(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	boardID, err := kanbanResolveBoardID(s.store, project.ID, body.Board)
+	boardID, err := kanbanResolveBoardID(s.kanbanStore(r), project.ID, body.Board)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	milestoneID, err := kanbanResolveMilestoneID(s.store, project.ID, body.Milestone)
+	milestoneID, err := kanbanResolveMilestoneID(s.kanbanStore(r), project.ID, body.Milestone)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	task, err := s.store.CreateKanbanTask(store.CreateKanbanTaskRequest{
+	task, err := s.kanbanStore(r).CreateKanbanTask(store.CreateKanbanTaskRequest{
 		ProjectID:   project.ID,
 		BoardID:     boardID,
 		MilestoneID: milestoneID,
@@ -209,7 +247,7 @@ func (s *Server) handleKanbanTasksList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "project is required")
 		return
 	}
-	project, err := kanbanResolveProject(s.store, r.URL.Query().Get("project"))
+	project, err := kanbanResolveProject(s.kanbanStore(r), r.URL.Query().Get("project"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -218,17 +256,17 @@ func (s *Server) handleKanbanTasksList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	boardID, err := kanbanResolveBoardID(s.store, project.ID, r.URL.Query().Get("board"))
+	boardID, err := kanbanResolveBoardID(s.kanbanStore(r), project.ID, r.URL.Query().Get("board"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	milestoneID, err := kanbanResolveMilestoneID(s.store, project.ID, r.URL.Query().Get("milestone"))
+	milestoneID, err := kanbanResolveMilestoneID(s.kanbanStore(r), project.ID, r.URL.Query().Get("milestone"))
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	tasks, err := s.store.ListKanbanTasks(store.KanbanTaskListFilter{
+	tasks, err := s.kanbanStore(r).ListKanbanTasks(store.KanbanTaskListFilter{
 		ProjectID:   project.ID,
 		BoardID:     boardID,
 		MilestoneID: milestoneID,
@@ -269,7 +307,7 @@ func (s *Server) handleKanbanStaleRunsList(w http.ResponseWriter, r *http.Reques
 
 	projectID := ""
 	if projectArg := strings.TrimSpace(r.URL.Query().Get("project")); projectArg != "" {
-		project, err := kanbanResolveProject(s.store, projectArg)
+		project, err := kanbanResolveProject(s.kanbanStore(r), projectArg)
 		if err != nil {
 			kanbanWriteStoreError(w, err)
 			return
@@ -278,7 +316,7 @@ func (s *Server) handleKanbanStaleRunsList(w http.ResponseWriter, r *http.Reques
 	}
 
 	cutoff := time.Now().UTC().Add(-staleAfter).Format("2006-01-02T15:04:05Z")
-	staleRuns, err := s.store.ListStaleKanbanRuns(store.KanbanStaleRunFilter{
+	staleRuns, err := s.kanbanStore(r).ListStaleKanbanRuns(store.KanbanStaleRunFilter{
 		ProjectID:   projectID,
 		StaleBefore: cutoff,
 		Limit:       limit,
@@ -295,22 +333,22 @@ func (s *Server) handleKanbanStaleRunsList(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleKanbanTaskShow(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	task, err := s.store.GetKanbanTask(taskID)
+	task, err := s.kanbanStore(r).GetKanbanTask(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	comments, err := s.store.ListKanbanComments(task.ID)
+	comments, err := s.kanbanStore(r).ListKanbanComments(task.ID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	events, err := s.store.ListKanbanEvents(task.ID)
+	events, err := s.kanbanStore(r).ListKanbanEvents(task.ID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	runs, err := s.store.ListKanbanRuns(task.ID)
+	runs, err := s.kanbanStore(r).ListKanbanRuns(task.ID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -325,7 +363,7 @@ func (s *Server) handleKanbanTaskShow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	task, err := kanbanResolveTask(s.store, taskID)
+	task, err := kanbanResolveTask(s.kanbanStore(r), taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -385,7 +423,7 @@ func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "milestone is required when supplied")
 			return
 		}
-		milestoneID, err := kanbanResolveMilestoneID(s.store, task.ProjectID, milestoneArg)
+		milestoneID, err := kanbanResolveMilestoneID(s.kanbanStore(r), task.ProjectID, milestoneArg)
 		if err != nil {
 			kanbanWriteStoreError(w, err)
 			return
@@ -393,7 +431,7 @@ func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) 
 		req.MilestoneID = &milestoneID
 	}
 
-	updated, err := s.store.UpdateKanbanTask(task.ID, req)
+	updated, err := s.kanbanStore(r).UpdateKanbanTask(task.ID, req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -403,7 +441,7 @@ func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleKanbanTaskClaim(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -421,7 +459,7 @@ func (s *Server) handleKanbanTaskClaim(w http.ResponseWriter, r *http.Request) {
 	if workDir != "" {
 		workDirProvider = store.KanbanWorkDirManual
 	}
-	run, err := s.store.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{
+	run, err := s.kanbanStore(r).ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{
 		Actor:           strings.TrimSpace(body.Actor),
 		WorkDir:         workDir,
 		WorkDirProvider: workDirProvider,
@@ -435,7 +473,7 @@ func (s *Server) handleKanbanTaskClaim(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleKanbanTaskHeartbeat(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -447,7 +485,7 @@ func (s *Server) handleKanbanTaskHeartbeat(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	run, err := s.store.HeartbeatKanbanTask(taskID, store.HeartbeatKanbanTaskRequest{
+	run, err := s.kanbanStore(r).HeartbeatKanbanTask(taskID, store.HeartbeatKanbanTaskRequest{
 		Actor: strings.TrimSpace(body.Actor),
 	})
 	if err != nil {
@@ -459,7 +497,7 @@ func (s *Server) handleKanbanTaskHeartbeat(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -481,7 +519,7 @@ func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if err := s.store.CompleteKanbanTask(taskID, store.CompleteKanbanTaskRequest{
+	if err := s.kanbanStore(r).CompleteKanbanTask(taskID, store.CompleteKanbanTaskRequest{
 		Actor:        strings.TrimSpace(body.Actor),
 		Summary:      summary,
 		MetadataJSON: metadata,
@@ -489,7 +527,7 @@ func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	task, err := s.store.GetKanbanTask(taskID)
+	task, err := s.kanbanStore(r).GetKanbanTask(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -499,7 +537,7 @@ func (s *Server) handleKanbanTaskComplete(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -522,7 +560,7 @@ func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.store.FailKanbanTask(taskID, store.FailKanbanTaskRequest{
+	if err := s.kanbanStore(r).FailKanbanTask(taskID, store.FailKanbanTaskRequest{
 		Actor:        strings.TrimSpace(body.Actor),
 		Summary:      strings.TrimSpace(body.Summary),
 		Error:        errorText,
@@ -531,7 +569,7 @@ func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	task, err := s.store.GetKanbanTask(taskID)
+	task, err := s.kanbanStore(r).GetKanbanTask(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -541,7 +579,7 @@ func (s *Server) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleKanbanTaskCancel(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -563,7 +601,7 @@ func (s *Server) handleKanbanTaskCancel(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	task, err := s.store.CancelKanbanTask(taskID, store.CancelKanbanTaskRequest{
+	task, err := s.kanbanStore(r).CancelKanbanTask(taskID, store.CancelKanbanTaskRequest{
 		Actor:        strings.TrimSpace(body.Actor),
 		Reason:       reason,
 		MetadataJSON: metadata,
@@ -577,7 +615,7 @@ func (s *Server) handleKanbanTaskCancel(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleKanbanTaskReclaim(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -611,7 +649,7 @@ func (s *Server) handleKanbanTaskReclaim(w http.ResponseWriter, r *http.Request)
 		workDir = filepath.Clean(workDir)
 		workDirProvider = store.KanbanWorkDirManual
 	}
-	run, err := s.store.ReclaimKanbanTask(taskID, store.ReclaimKanbanTaskRequest{
+	run, err := s.kanbanStore(r).ReclaimKanbanTask(taskID, store.ReclaimKanbanTaskRequest{
 		Actor:           actor,
 		Reason:          reason,
 		WorkDir:         workDir,
@@ -627,7 +665,7 @@ func (s *Server) handleKanbanTaskReclaim(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleKanbanTaskArchive(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -639,7 +677,7 @@ func (s *Server) handleKanbanTaskArchive(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	task, err := s.store.ArchiveKanbanTask(taskID, strings.TrimSpace(body.Actor))
+	task, err := s.kanbanStore(r).ArchiveKanbanTask(taskID, strings.TrimSpace(body.Actor))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -649,7 +687,7 @@ func (s *Server) handleKanbanTaskArchive(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleKanbanTaskBlock(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -664,14 +702,14 @@ func (s *Server) handleKanbanTaskBlock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "reason is required")
 		return
 	}
-	if err := s.store.BlockKanbanTask(taskID, store.BlockKanbanTaskRequest{
+	if err := s.kanbanStore(r).BlockKanbanTask(taskID, store.BlockKanbanTaskRequest{
 		Actor:  strings.TrimSpace(body.Actor),
 		Reason: strings.TrimSpace(body.Reason),
 	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	task, err := s.store.GetKanbanTask(taskID)
+	task, err := s.kanbanStore(r).GetKanbanTask(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -681,7 +719,7 @@ func (s *Server) handleKanbanTaskBlock(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleKanbanTaskUnblock(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -694,14 +732,14 @@ func (s *Server) handleKanbanTaskUnblock(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	if err := s.store.UnblockKanbanTask(taskID, store.UnblockKanbanTaskRequest{
+	if err := s.kanbanStore(r).UnblockKanbanTask(taskID, store.UnblockKanbanTaskRequest{
 		Actor:   strings.TrimSpace(body.Actor),
 		Comment: strings.TrimSpace(body.Comment),
 	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	task, err := s.store.GetKanbanTask(taskID)
+	task, err := s.kanbanStore(r).GetKanbanTask(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -711,11 +749,11 @@ func (s *Server) handleKanbanTaskUnblock(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleKanbanTaskCommentsList(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	comments, err := s.store.ListKanbanComments(taskID)
+	comments, err := s.kanbanStore(r).ListKanbanComments(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -725,7 +763,7 @@ func (s *Server) handleKanbanTaskCommentsList(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleKanbanTaskCommentsCreate(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -736,7 +774,7 @@ func (s *Server) handleKanbanTaskCommentsCreate(w http.ResponseWriter, r *http.R
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	comment, err := s.store.AddKanbanTaskComment(taskID, strings.TrimSpace(body.Author), body.Body)
+	comment, err := s.kanbanStore(r).AddKanbanTaskComment(taskID, strings.TrimSpace(body.Author), body.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -746,11 +784,11 @@ func (s *Server) handleKanbanTaskCommentsCreate(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleKanbanTaskRunsList(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, taskID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), taskID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	runs, err := s.store.ListKanbanRuns(taskID)
+	runs, err := s.kanbanStore(r).ListKanbanRuns(taskID)
 	if err != nil {
 		kanbanWriteStoreError(w, err)
 		return
@@ -760,7 +798,7 @@ func (s *Server) handleKanbanTaskRunsList(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleKanbanTaskLinksCreate(w http.ResponseWriter, r *http.Request) {
 	parentID := strings.TrimSpace(chi.URLParam(r, "task"))
-	if _, err := kanbanResolveTask(s.store, parentID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), parentID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
@@ -775,11 +813,11 @@ func (s *Server) handleKanbanTaskLinksCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	childID := strings.TrimSpace(body.ChildID)
-	if _, err := kanbanResolveTask(s.store, childID); err != nil {
+	if _, err := kanbanResolveTask(s.kanbanStore(r), childID); err != nil {
 		kanbanWriteStoreError(w, err)
 		return
 	}
-	if err := s.store.LinkKanbanTasks(parentID, childID); err != nil {
+	if err := s.kanbanStore(r).LinkKanbanTasks(parentID, childID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -147,9 +147,7 @@ const App = {
             password: form.password.value,
           }),
         });
-        if (!res.ok) {
-          throw new Error(res.status === 403 ? 'default account required' : 'login failed');
-        }
+        if (!res.ok) throw new Error('login failed');
         const auth = await res.json();
         this.authRequired = true;
         this.accountID = auth.account_id || null;
@@ -160,9 +158,7 @@ const App = {
           location.assign('/_settings');
         }
       } catch (e) {
-        error.textContent = e.message === 'default account required'
-          ? 'This Web UI is currently available only for the default account.'
-          : 'Invalid account ID or password.';
+        error.textContent = 'Invalid account ID or password.';
         error.hidden = false;
       } finally {
         button.disabled = false;
@@ -220,9 +216,10 @@ const App = {
 
   showShell() {
     this._teardown();
-    const adminNav = this.isDefault
-      ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="kanban">Kanban</button><button class="nav-item" data-tab="skills">Skills</button>'
+    const defaultNav = this.isDefault
+      ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="skills">Skills</button>'
       : '';
+    const kanbanNav = '<button class="nav-item" data-tab="kanban">Kanban</button>';
 
     // Override #app centering from stylesheet
     this.root.style.display = 'block';
@@ -233,7 +230,8 @@ const App = {
         <aside class="sidebar">
           <div class="sidebar-logo">Kitty<span class="accent">Paw</span></div>
           <nav class="sidebar-nav">
-            ${adminNav}
+            ${defaultNav}
+            ${kanbanNav}
             <button class="nav-item" data-tab="settings">Settings</button>
           </nav>
           <div class="sidebar-footer">
@@ -392,8 +390,7 @@ async function apiRaw(url, opts) {
     throw new Error('unauthorized');
   }
   if (res.status === 403) {
-    App.showLogin('This Web UI is currently available only for the default account.');
-    throw new Error('forbidden');
+    throw new Error(await responseErrorMessage(res, 'forbidden'));
   }
   if (!res.ok) {
     let message = `Request failed: ${res.status}`;
@@ -418,8 +415,7 @@ async function api(url, opts = {}) {
     throw new Error('unauthorized');
   }
   if (res.status === 403) {
-    App.showLogin('This Web UI is currently available only for the default account.');
-    throw new Error('forbidden');
+    throw new Error(await responseErrorMessage(res, 'forbidden'));
   }
   if (!res.ok) {
     let message = `Request failed: ${res.status}`;
@@ -430,6 +426,14 @@ async function api(url, opts = {}) {
     throw new Error(message);
   }
   return res.json();
+}
+
+async function responseErrorMessage(res, fallback) {
+  try {
+    const body = await res.json();
+    if (body && body.error) return body.error;
+  } catch (_) {}
+  return fallback;
 }
 
 async function apiPost(url, body) {

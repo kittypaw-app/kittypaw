@@ -414,102 +414,108 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 		})
 
 		r.Route("/api/v1", func(r chi.Router) {
-			r.Use(s.requireAPIKey)
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireAPIKey)
 
-			// Status / history
-			r.Get("/status", s.handleStatus)
-			r.Get("/executions", s.handleExecutions)
-			r.Post("/telegram/pairing/chat-id", s.handleTelegramPairingChatID)
+				// Status / history
+				r.Get("/status", s.handleStatus)
+				r.Get("/executions", s.handleExecutions)
+				r.Post("/telegram/pairing/chat-id", s.handleTelegramPairingChatID)
 
-			// Skills
-			r.Get("/skills", s.handleSkills)
-			r.Post("/skills/run", s.handleSkillsRun)
-			r.Post("/skills/teach", s.handleSkillsTeach)
-			r.Post("/skills/teach/approve", s.handleTeachApprove)
-			r.Delete("/skills/{name}", s.handleSkillsDelete)
-			r.Post("/skills/{name}/enable", s.handleSkillEnable)
-			r.Post("/skills/{name}/disable", s.handleSkillDisable)
-			r.Post("/skills/{name}/explain", s.handleSkillExplain)
+				// Skills
+				r.Get("/skills", s.handleSkills)
+				r.Post("/skills/run", s.handleSkillsRun)
+				r.Post("/skills/teach", s.handleSkillsTeach)
+				r.Post("/skills/teach/approve", s.handleTeachApprove)
+				r.Delete("/skills/{name}", s.handleSkillsDelete)
+				r.Post("/skills/{name}/enable", s.handleSkillEnable)
+				r.Post("/skills/{name}/disable", s.handleSkillDisable)
+				r.Post("/skills/{name}/explain", s.handleSkillExplain)
 
-			// Checkpoints
-			r.Post("/checkpoints/{id}/rollback", s.handleCheckpointRollback)
+				// Checkpoints
+				r.Post("/checkpoints/{id}/rollback", s.handleCheckpointRollback)
 
-			// Chat
-			r.Post("/chat", s.handleChat)
-			r.Get("/chat/history", s.handleChatHistory)
-			r.Post("/chat/forget", s.handleChatForget)
-			r.Post("/chat/compact", s.handleChatCompact)
-			r.Get("/chat/checkpoints", s.handleCheckpointsList)
-			r.Post("/chat/checkpoints", s.handleCheckpointsCreate)
+				// Chat
+				r.Post("/chat", s.handleChat)
+				r.Get("/chat/history", s.handleChatHistory)
+				r.Post("/chat/forget", s.handleChatForget)
+				r.Post("/chat/compact", s.handleChatCompact)
+				r.Get("/chat/checkpoints", s.handleCheckpointsList)
+				r.Post("/chat/checkpoints", s.handleCheckpointsCreate)
 
-			// Config
-			r.Get("/config/check", s.handleConfigCheck)
-			r.Post("/reload", s.handleReload)
+				// Config
+				r.Get("/config/check", s.handleConfigCheck)
+				r.Post("/reload", s.handleReload)
 
-			// Admin — runtime account lifecycle. Localhost-only on top of the
-			// /api/v1 requireAPIKey gate: the server binds to 127.0.0.1 by
-			// default, but if a future deployment exposes it, admin mutations
-			// still require local access.
-			r.Route("/admin", func(r chi.Router) {
-				r.Use(s.requireLocalhost)
-				r.Post("/accounts", s.handleAdminAccountAdd)
-				r.Post("/accounts/{id}/delete", s.handleAdminAccountRemove)
+				// Admin — runtime account lifecycle. Localhost-only on top of the
+				// /api/v1 requireAPIKey gate: the server binds to 127.0.0.1 by
+				// default, but if a future deployment exposes it, admin mutations
+				// still require local access.
+				r.Route("/admin", func(r chi.Router) {
+					r.Use(s.requireLocalhost)
+					r.Post("/accounts", s.handleAdminAccountAdd)
+					r.Post("/accounts/{id}/delete", s.handleAdminAccountRemove)
+				})
+
+				// Install
+				r.Post("/install", s.handleInstall)
+
+				// Search
+				r.Get("/search", s.handleSearch)
+
+				// Packages (gallery)
+				r.Get("/packages", s.handlePackagesList)
+				r.Post("/packages/install-from-registry", s.handlePackageInstallFromRegistry)
+				r.Get("/packages/{id}", s.handlePackageDetail)
+				r.Delete("/packages/{id}", s.handlePackageUninstall)
+				r.Post("/packages/{id}/config", s.handlePackageConfigSet)
+
+				// Channels
+				r.Get("/channels", s.handleChannels)
+
+				// Memory
+				r.Get("/memory/search", s.handleMemorySearch)
+
+				// Staff
+				r.Get("/staff", s.handleStaffList)
+				r.Post("/staff", s.handleStaffCreate)
+				r.Post("/staff/{id}/activate", s.handleStaffActivate)
+
+				// Workspaces
+				r.Get("/workspaces", s.handleWorkspacesList)
+				r.Post("/workspaces", s.handleWorkspacesCreate)
+				r.Delete("/workspaces/{id}", s.handleWorkspacesDelete)
 			})
 
-			// Install
-			r.Post("/install", s.handleInstall)
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireKanbanAPIAccess)
 
-			// Search
-			r.Get("/search", s.handleSearch)
-
-			// Packages (gallery)
-			r.Get("/packages", s.handlePackagesList)
-			r.Post("/packages/install-from-registry", s.handlePackageInstallFromRegistry)
-			r.Get("/packages/{id}", s.handlePackageDetail)
-			r.Delete("/packages/{id}", s.handlePackageUninstall)
-			r.Post("/packages/{id}/config", s.handlePackageConfigSet)
-
-			// Channels
-			r.Get("/channels", s.handleChannels)
-
-			// Memory
-			r.Get("/memory/search", s.handleMemorySearch)
-
-			// Staff
-			r.Get("/staff", s.handleStaffList)
-			r.Post("/staff", s.handleStaffCreate)
-			r.Post("/staff/{id}/activate", s.handleStaffActivate)
-
-			// Workspaces
-			r.Get("/workspaces", s.handleWorkspacesList)
-			r.Post("/workspaces", s.handleWorkspacesCreate)
-			r.Delete("/workspaces/{id}", s.handleWorkspacesDelete)
-
-			// Kanban
-			r.Get("/projects", s.handleKanbanProjectsList)
-			r.Post("/projects", s.handleKanbanProjectsCreate)
-			r.Get("/projects/{project}", s.handleKanbanProjectShow)
-			r.Get("/projects/{project}/boards", s.handleKanbanProjectBoardsList)
-			r.Get("/projects/{project}/milestones", s.handleKanbanProjectMilestonesList)
-			r.Post("/projects/{project}/milestones", s.handleKanbanProjectMilestonesCreate)
-			r.Get("/kanban/runs/stale", s.handleKanbanStaleRunsList)
-			r.Get("/kanban/tasks", s.handleKanbanTasksList)
-			r.Post("/kanban/tasks", s.handleKanbanTasksCreate)
-			r.Get("/kanban/tasks/{task}", s.handleKanbanTaskShow)
-			r.Patch("/kanban/tasks/{task}", s.handleKanbanTaskUpdate)
-			r.Post("/kanban/tasks/{task}/claim", s.handleKanbanTaskClaim)
-			r.Post("/kanban/tasks/{task}/heartbeat", s.handleKanbanTaskHeartbeat)
-			r.Post("/kanban/tasks/{task}/complete", s.handleKanbanTaskComplete)
-			r.Post("/kanban/tasks/{task}/fail", s.handleKanbanTaskFail)
-			r.Post("/kanban/tasks/{task}/cancel", s.handleKanbanTaskCancel)
-			r.Post("/kanban/tasks/{task}/reclaim", s.handleKanbanTaskReclaim)
-			r.Post("/kanban/tasks/{task}/archive", s.handleKanbanTaskArchive)
-			r.Post("/kanban/tasks/{task}/block", s.handleKanbanTaskBlock)
-			r.Post("/kanban/tasks/{task}/unblock", s.handleKanbanTaskUnblock)
-			r.Get("/kanban/tasks/{task}/comments", s.handleKanbanTaskCommentsList)
-			r.Post("/kanban/tasks/{task}/comments", s.handleKanbanTaskCommentsCreate)
-			r.Get("/kanban/tasks/{task}/runs", s.handleKanbanTaskRunsList)
-			r.Post("/kanban/tasks/{task}/links", s.handleKanbanTaskLinksCreate)
+				// Kanban
+				r.Get("/projects", s.handleKanbanProjectsList)
+				r.Post("/projects", s.handleKanbanProjectsCreate)
+				r.Get("/projects/{project}", s.handleKanbanProjectShow)
+				r.Get("/projects/{project}/boards", s.handleKanbanProjectBoardsList)
+				r.Get("/projects/{project}/milestones", s.handleKanbanProjectMilestonesList)
+				r.Post("/projects/{project}/milestones", s.handleKanbanProjectMilestonesCreate)
+				r.Get("/kanban/runs/stale", s.handleKanbanStaleRunsList)
+				r.Get("/kanban/tasks", s.handleKanbanTasksList)
+				r.Post("/kanban/tasks", s.handleKanbanTasksCreate)
+				r.Get("/kanban/tasks/{task}", s.handleKanbanTaskShow)
+				r.Patch("/kanban/tasks/{task}", s.handleKanbanTaskUpdate)
+				r.Post("/kanban/tasks/{task}/claim", s.handleKanbanTaskClaim)
+				r.Post("/kanban/tasks/{task}/heartbeat", s.handleKanbanTaskHeartbeat)
+				r.Post("/kanban/tasks/{task}/complete", s.handleKanbanTaskComplete)
+				r.Post("/kanban/tasks/{task}/fail", s.handleKanbanTaskFail)
+				r.Post("/kanban/tasks/{task}/cancel", s.handleKanbanTaskCancel)
+				r.Post("/kanban/tasks/{task}/reclaim", s.handleKanbanTaskReclaim)
+				r.Post("/kanban/tasks/{task}/archive", s.handleKanbanTaskArchive)
+				r.Post("/kanban/tasks/{task}/block", s.handleKanbanTaskBlock)
+				r.Post("/kanban/tasks/{task}/unblock", s.handleKanbanTaskUnblock)
+				r.Get("/kanban/tasks/{task}/comments", s.handleKanbanTaskCommentsList)
+				r.Post("/kanban/tasks/{task}/comments", s.handleKanbanTaskCommentsCreate)
+				r.Get("/kanban/tasks/{task}/runs", s.handleKanbanTaskRunsList)
+				r.Post("/kanban/tasks/{task}/links", s.handleKanbanTaskLinksCreate)
+			})
 		})
 	})
 

@@ -125,17 +125,39 @@ func TestWebAppDoesNotStartBrowserOnboarding(t *testing.T) {
 	}
 }
 
-func TestWebAppNonDefaultShellHidesDefaultBoundAPITabs(t *testing.T) {
+func TestWebAppNonDefaultShellExposesAccountScopedKanban(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatalf("read web app: %v", err)
 	}
 	body := string(src)
-	if !strings.Contains(body, "const adminNav = this.isDefault") {
-		t.Fatal("showShell must gate default-account API-backed nav items")
+	start := strings.Index(body, "showShell() {")
+	if start < 0 {
+		t.Fatal("showShell method not found")
+	}
+	end := strings.Index(body[start:], "\n  switchTab(")
+	if end < 0 {
+		t.Fatal("showShell method end not found")
+	}
+	showShell := body[start : start+end]
+	if strings.Contains(showShell, "const adminNav = this.isDefault") {
+		t.Fatal("showShell must not hide Kanban inside the default-account-only nav")
+	}
+	if !strings.Contains(showShell, `data-tab="kanban"`) {
+		t.Fatalf("showShell must expose account-scoped Kanban for every logged-in account, got:\n%s", showShell)
 	}
 	if strings.Contains(body, "wizardButton") {
 		t.Fatal("showShell must not expose a setup wizard entry")
+	}
+}
+
+func TestWebAppDoesNotUseDefaultOnlyLoginError(t *testing.T) {
+	src, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read web app: %v", err)
+	}
+	if strings.Contains(string(src), "This Web UI is currently available only for the default account.") {
+		t.Fatal("web login must not report a default-account-only restriction")
 	}
 }
 

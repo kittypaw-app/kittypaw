@@ -36,6 +36,49 @@ func TestKanbanAPIRequiresAuthAndRegistersProjectRoutes(t *testing.T) {
 	}
 }
 
+func TestKanbanAPIUsesNonDefaultWebSessionAccountStore(t *testing.T) {
+	srv := newMultiAccountAuthTestServer(t, "alice", map[string]string{
+		"alice": "alice-pw",
+		"bob":   "bob-pw",
+	}, map[string]*core.Config{
+		"alice": {},
+		"bob":   {},
+	})
+	bobCookie := loginSessionCookie(t, srv, "bob", "bob-pw")
+
+	body, err := json.Marshal(map[string]string{
+		"slug":      "bob-work",
+		"name":      "Bob Work",
+		"root_path": "/tmp/bob-work",
+	})
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(bobCookie)
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("non-default session project create code = %d body=%s, want 201", rr.Code, rr.Body.String())
+	}
+
+	bobProjects, err := srv.accountDepsForID("bob").Store.ListKanbanProjects(false)
+	if err != nil {
+		t.Fatalf("list bob projects: %v", err)
+	}
+	if len(bobProjects) != 1 || bobProjects[0].Slug != "bob-work" {
+		t.Fatalf("bob projects = %+v, want bob-work", bobProjects)
+	}
+	aliceProjects, err := srv.accountDepsForID("alice").Store.ListKanbanProjects(false)
+	if err != nil {
+		t.Fatalf("list alice projects: %v", err)
+	}
+	if len(aliceProjects) != 0 {
+		t.Fatalf("alice projects = %+v, want no cross-account write", aliceProjects)
+	}
+}
+
 func TestKanbanAPIProjectMilestoneLifecycle(t *testing.T) {
 	srv := newKanbanAPITestServer(t)
 
