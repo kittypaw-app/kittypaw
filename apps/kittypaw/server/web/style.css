@@ -498,6 +498,19 @@ th {
   flex-direction: column;
 }
 
+.kanban-surface {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#kanban-panel {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 /* ── Placeholder view ────────────────────────────────── */
 
 .placeholder-view {

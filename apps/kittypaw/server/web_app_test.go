@@ -203,3 +203,23 @@ func TestWebAppChatSurfaceUsesChatOnlyBootstrap(t *testing.T) {
 		t.Fatal("control shell must not expose Chat navigation; /chat is the only chat surface")
 	}
 }
+
+func TestWebAppKanbanSurfaceUsesDirectKanbanMount(t *testing.T) {
+	src, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read web app: %v", err)
+	}
+	body := string(src)
+	if !strings.Contains(body, "kanbanOnly: false") || !strings.Contains(body, "isKanbanSurface()") {
+		t.Fatal("web app must detect the /kanban surface explicitly")
+	}
+	if !strings.Contains(body, "async startKanbanFlow()") || !strings.Contains(body, "showKanbanSurface()") {
+		t.Fatal("kanban surface must use a kanban-only bootstrap path")
+	}
+	if !strings.Contains(body, "Kanban.mount") {
+		t.Fatal("kanban surface must mount Kanban directly")
+	}
+	if !strings.Contains(body, "this.chatOnly || this.kanbanOnly") {
+		t.Fatal("successful direct-surface login must stay on /chat or /kanban")
+	}
+}

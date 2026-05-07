@@ -176,6 +176,41 @@ func TestBootstrapRequiresSessionWhenLocalUsersExist(t *testing.T) {
 	}
 }
 
+func TestBootstrapAllowsRemoteDefaultAccountSession(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.Server.APIKey = "account-key"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "http://l.kittym3.com:3000/api/bootstrap", nil)
+	req.RemoteAddr = "192.168.0.13:65483"
+	req.Host = "l.kittym3.com:3000"
+	req.AddCookie(loginSessionCookie(t, srv, "alice", "pw"))
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("remote bootstrap with session code = %d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"api_key":"account-key"`) {
+		t.Fatalf("remote bootstrap leaked static account api key: %q", rr.Body.String())
+	}
+}
+
+func TestBootstrapRejectsRemoteFirstRunAccess(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	cfg.Server.APIKey = "account-key"
+	srv := newAuthTestServer(t, root, "alice", &cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "http://l.kittym3.com:3000/api/bootstrap", nil)
+	req.RemoteAddr = "192.168.0.13:65483"
+	req.Host = "l.kittym3.com:3000"
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("remote first-run bootstrap code = %d body=%s, want 403", rr.Code, rr.Body.String())
+	}
+}
+
 func TestSessionBoundBootstrapTokenIsRevokedWithLocalUser(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)

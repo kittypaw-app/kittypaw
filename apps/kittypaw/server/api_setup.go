@@ -21,14 +21,19 @@ import (
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
-	if !isLocalhost(r) {
-		writeError(w, http.StatusForbidden, "bootstrap only allowed from localhost")
+	required, err := s.localAuthRequired()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read local auth store")
 		return
 	}
 
 	apiKey, ok := s.browserAPIToken(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !isLocalhost(r) && (!required || apiKey == "") {
+		writeError(w, http.StatusForbidden, "bootstrap only allowed from localhost or an authenticated default account session")
 		return
 	}
 
