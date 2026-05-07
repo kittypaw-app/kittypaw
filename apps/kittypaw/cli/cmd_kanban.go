@@ -953,7 +953,7 @@ func parseKanbanDispatchOptions(flags *kanbanDispatchFlags) (kanbanDispatchOptio
 func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store.KanbanProject, command []string, flags *kanbanDispatchFlags, opts kanbanDispatchOptions, workDir, provider string) (int, error) {
 	processed := 0
 	if opts.stale {
-		cutoff := kanbanStaleCutoff(opts.staleAfter)
+		cutoff := time.Now().UTC().Add(-opts.staleAfter).Format("2006-01-02T15:04:05Z")
 		staleRuns, err := st.ListStaleKanbanRuns(store.KanbanStaleRunFilter{
 			ProjectID:   project.ID,
 			StaleBefore: cutoff,
@@ -1009,14 +1009,6 @@ func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store
 		processed++
 	}
 	return processed, nil
-}
-
-func kanbanStaleCutoff(staleAfter time.Duration) string {
-	cutoff := time.Now().UTC().Add(-staleAfter)
-	if staleAfter < time.Second {
-		cutoff = cutoff.Add(time.Second)
-	}
-	return cutoff.Format("2006-01-02T15:04:05Z")
 }
 
 func claimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
