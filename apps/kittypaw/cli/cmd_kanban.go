@@ -90,14 +90,21 @@ type kanbanExecFlags struct {
 }
 
 type kanbanDispatchFlags struct {
-	shared   *kanbanSharedFlags
-	project  string
-	actor    string
-	workDir  string
-	summary  string
-	limit    int
-	loop     bool
-	interval string
+	shared            *kanbanSharedFlags
+	project           string
+	actor             string
+	workDir           string
+	summary           string
+	limit             int
+	loop              bool
+	interval          string
+	reclaimStaleAfter string
+	maxAttempts       int
+}
+
+type kanbanDispatchOptions struct {
+	staleAfter time.Duration
+	stale      bool
 }
 
 type kanbanCompleteFlags struct {
@@ -343,6 +350,8 @@ func newKanbanDispatchCmd(shared *kanbanSharedFlags) *cobra.Command {
 	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
 	cmd.Flags().StringVar(&flags.workDir, "work-dir", "", "run working directory")
 	cmd.Flags().StringVar(&flags.summary, "summary", "", "completion summary")
+	cmd.Flags().StringVar(&flags.reclaimStaleAfter, "reclaim-stale-after", "", "reclaim and dispatch running tasks stale beyond this duration")
+	cmd.Flags().IntVar(&flags.maxAttempts, "max-attempts", 0, "block tasks with at least this many failed runs; 0 disables the limit")
 	return cmd
 }
 
@@ -885,6 +894,10 @@ func runKanbanDispatch(ctx context.Context, command []string, flags *kanbanDispa
 	if err != nil || interval <= 0 {
 		return fmt.Errorf("positive --interval duration is required")
 	}
+	opts, err := parseKanbanDispatchOptions(flags)
+	if err != nil {
+		return err
+	}
 	workDir, provider, err := normalizeRunWorkDir(flags.workDir)
 	if err != nil {
 		return err
@@ -902,7 +915,7 @@ func runKanbanDispatch(ctx context.Context, command []string, flags *kanbanDispa
 	}
 
 	for {
-		processed, err := runKanbanDispatchCycle(ctx, st, project, command, flags, workDir, provider)
+		processed, err := runKanbanDispatchCycle(ctx, st, project, command, flags, opts, workDir, provider)
 		if err != nil {
 			return err
 		}
@@ -922,7 +935,55 @@ func runKanbanDispatch(ctx context.Context, command []string, flags *kanbanDispa
 	}
 }
 
-func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store.KanbanProject, command []string, flags *kanbanDispatchFlags, workDir, provider string) (int, error) {
+func parseKanbanDispatchOptions(flags *kanbanDispatchFlags) (kanbanDispatchOptions, error) {
+	if flags.maxAttempts < 0 {
+		return kanbanDispatchOptions{}, fmt.Errorf("--max-attempts must not be negative")
+	}
+	raw := strings.TrimSpace(flags.reclaimStaleAfter)
+	if raw == "" {
+		return kanbanDispatchOptions{}, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return kanbanDispatchOptions{}, fmt.Errorf("positive --reclaim-stale-after duration is required")
+	}
+	return kanbanDispatchOptions{staleAfter: d, stale: true}, nil
+}
+
+func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store.KanbanProject, command []string, flags *kanbanDispatchFlags, opts kanbanDispatchOptions, workDir, provider string) (int, error) {
+	processed := 0
+	if opts.stale {
+		cutoff := time.Now().UTC().Add(-opts.staleAfter).Format("2006-01-02T15:04:05Z")
+		staleRuns, err := st.ListStaleKanbanRuns(store.KanbanStaleRunFilter{
+			ProjectID:   project.ID,
+			StaleBefore: cutoff,
+			Limit:       flags.limit,
+		})
+		if err != nil {
+			return 0, err
+		}
+		for _, item := range staleRuns {
+			if processed >= flags.limit {
+				break
+			}
+			handled, err := maybeBlockKanbanDispatchTask(st, item.Task.ID, flags)
+			if err != nil {
+				return processed, err
+			}
+			if handled {
+				processed++
+				continue
+			}
+			if err := reclaimAndExecuteKanbanTask(ctx, st, project, item.Task, command, flags, workDir, provider); err != nil {
+				return processed, err
+			}
+			processed++
+		}
+	}
+	if processed >= flags.limit {
+		return processed, nil
+	}
+
 	tasks, err := st.ListKanbanTasks(store.KanbanTaskListFilter{
 		ProjectID: project.ID,
 		Status:    store.KanbanStatusReady,
@@ -930,12 +991,19 @@ func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store
 	if err != nil {
 		return 0, err
 	}
-	processed := 0
 	for _, task := range tasks {
 		if processed >= flags.limit {
 			break
 		}
-		if err := executeDispatchedKanbanTask(ctx, st, project, task, command, flags, workDir, provider); err != nil {
+		handled, err := maybeBlockKanbanDispatchTask(st, task.ID, flags)
+		if err != nil {
+			return processed, err
+		}
+		if handled {
+			processed++
+			continue
+		}
+		if err := claimAndExecuteKanbanTask(ctx, st, project, task, command, flags, workDir, provider); err != nil {
 			return processed, err
 		}
 		processed++
@@ -943,16 +1011,35 @@ func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store
 	return processed, nil
 }
 
-func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
+func claimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
+	actor := strings.TrimSpace(flags.actor)
 	run, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{
-		Actor:           strings.TrimSpace(flags.actor),
+		Actor:           actor,
 		WorkDir:         workDir,
 		WorkDirProvider: provider,
 	})
 	if err != nil {
 		return err
 	}
+	return executeDispatchedKanbanRun(ctx, st, project, task, run, command, flags, actor)
+}
 
+func reclaimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
+	actor := kanbanDispatchAutomationActor(flags)
+	run, err := st.ReclaimKanbanTask(task.ID, store.ReclaimKanbanTaskRequest{
+		Actor:           actor,
+		Reason:          "stale dispatch reclaim",
+		WorkDir:         workDir,
+		WorkDirProvider: provider,
+		MetadataJSON:    `{"source":"kanban-dispatch"}`,
+	})
+	if err != nil {
+		return err
+	}
+	return executeDispatchedKanbanRun(ctx, st, project, task, run, command, flags, actor)
+}
+
+func executeDispatchedKanbanRun(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, run *store.KanbanRun, command []string, flags *kanbanDispatchFlags, actor string) error {
 	started := time.Now()
 	cmd := osexec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = run.WorkDir
@@ -974,7 +1061,7 @@ func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *
 			summary = kanbanExecDefaultSummary(summaryPrefix, command)
 		}
 		recordErr := st.FailKanbanTask(task.ID, store.FailKanbanTaskRequest{
-			Actor:        strings.TrimSpace(flags.actor),
+			Actor:        actor,
 			Summary:      summary,
 			Error:        runErr.Error(),
 			MetadataJSON: metadata,
@@ -993,7 +1080,7 @@ func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *
 		summary = kanbanExecDefaultSummary("command completed", command)
 	}
 	if err := st.CompleteKanbanTask(task.ID, store.CompleteKanbanTaskRequest{
-		Actor:        strings.TrimSpace(flags.actor),
+		Actor:        actor,
 		Summary:      summary,
 		MetadataJSON: metadata,
 	}); err != nil {
@@ -1003,6 +1090,50 @@ func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *
 	fmt.Printf("Run: %s\n", run.ID)
 	fmt.Printf("Work dir: %s\n", run.WorkDir)
 	return nil
+}
+
+func kanbanDispatchAutomationActor(flags *kanbanDispatchFlags) string {
+	actor := strings.TrimSpace(flags.actor)
+	if actor == "" {
+		return "dispatcher"
+	}
+	return actor
+}
+
+func maybeBlockKanbanDispatchTask(st *store.Store, taskID string, flags *kanbanDispatchFlags) (bool, error) {
+	if flags.maxAttempts <= 0 {
+		return false, nil
+	}
+	attempts, err := failedKanbanDispatchAttempts(st, taskID)
+	if err != nil {
+		return false, err
+	}
+	if attempts < flags.maxAttempts {
+		return false, nil
+	}
+	if err := st.BlockKanbanTask(taskID, store.BlockKanbanTaskRequest{
+		Actor:  kanbanDispatchAutomationActor(flags),
+		Reason: "max attempts reached",
+	}); err != nil {
+		return false, err
+	}
+	fmt.Printf("Blocked task: %s\n", taskID)
+	fmt.Println("Reason: max attempts reached")
+	return true, nil
+}
+
+func failedKanbanDispatchAttempts(st *store.Store, taskID string) (int, error) {
+	runs, err := st.ListKanbanRuns(taskID)
+	if err != nil {
+		return 0, err
+	}
+	var attempts int
+	for _, run := range runs {
+		if run.Outcome == store.KanbanRunFailed {
+			attempts++
+		}
+	}
+	return attempts, nil
 }
 
 func kanbanDispatchCommandEnv(base []string, project *store.KanbanProject, task store.KanbanTask, run *store.KanbanRun) []string {

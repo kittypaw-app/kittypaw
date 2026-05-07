@@ -86,7 +86,7 @@ func TestKanbanCommandFlags(t *testing.T) {
 	}
 
 	dispatch := mustFindCommand(t, root, []string{"kanban", "dispatch"})
-	for _, flag := range []string{"project", "limit", "loop", "interval", "actor", "work-dir", "summary", "account"} {
+	for _, flag := range []string{"project", "limit", "loop", "interval", "actor", "work-dir", "summary", "reclaim-stale-after", "max-attempts", "account"} {
 		if dispatch.Flag(flag) == nil {
 			t.Fatalf("kanban dispatch missing --%s", flag)
 		}
@@ -847,6 +847,150 @@ func TestKanbanDispatchRecordsCanceledWorker(t *testing.T) {
 	}
 }
 
+func TestKanbanDispatchReclaimsStaleRunAndExecutesCommand(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Recover stale", Status: store.KanbanStatusTodo})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{Actor: "old-worker"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	_ = st.Close()
+	time.Sleep(1100 * time.Millisecond)
+
+	err = runKanbanDispatch(
+		t.Context(),
+		[]string{"sh", "-c", "printf recovered > recovered.txt"},
+		&kanbanDispatchFlags{
+			shared:            &kanbanSharedFlags{accountID: "alice"},
+			project:           "kitty",
+			limit:             1,
+			reclaimStaleAfter: "500ms",
+		},
+	)
+	if err != nil {
+		t.Fatalf("runKanbanDispatch: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(projectRoot, "recovered.txt")); err != nil || string(data) != "recovered" {
+		t.Fatalf("recovered output = %q err=%v", string(data), err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusDone {
+		t.Fatalf("task status = %q, want done", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	var reclaimed, completed int
+	for _, run := range runs {
+		if run.Outcome == store.KanbanRunReclaimed {
+			reclaimed++
+		}
+		if run.Outcome == store.KanbanRunCompleted {
+			completed++
+			if run.Actor != "dispatcher" {
+				t.Fatalf("completed run actor = %q, want dispatcher", run.Actor)
+			}
+		}
+	}
+	if len(runs) != 2 || reclaimed != 1 || completed != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanDispatchBlocksReadyTaskAtMaxAttempts(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Too many failures", Status: store.KanbanStatusReady})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	if _, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{Actor: "worker"}); err != nil {
+		t.Fatalf("ClaimKanbanTask: %v", err)
+	}
+	if err := st.FailKanbanTask(task.ID, store.FailKanbanTaskRequest{Actor: "worker", Summary: "failed once", Error: "exit 1"}); err != nil {
+		t.Fatalf("FailKanbanTask: %v", err)
+	}
+	ready := store.KanbanStatusReady
+	if _, err := st.UpdateKanbanTask(task.ID, store.UpdateKanbanTaskRequest{Actor: "alice", Status: &ready}); err != nil {
+		t.Fatalf("UpdateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	err = runKanbanDispatch(
+		t.Context(),
+		[]string{"sh", "-c", "printf should-not-run > blocked.txt"},
+		&kanbanDispatchFlags{
+			shared:      &kanbanSharedFlags{accountID: "alice"},
+			project:     "kitty",
+			limit:       1,
+			maxAttempts: 1,
+		},
+	)
+	if err != nil {
+		t.Fatalf("runKanbanDispatch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, "blocked.txt")); err == nil {
+		t.Fatal("worker command ran despite max attempts")
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusBlocked {
+		t.Fatalf("task status = %q, want blocked", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != store.KanbanRunFailed {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
 func TestKanbanDispatchValidatesInputs(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -858,6 +1002,8 @@ func TestKanbanDispatchValidatesInputs(t *testing.T) {
 		{name: "missing project", command: []string{"sh"}, flags: &kanbanDispatchFlags{limit: 1}, want: "--project is required"},
 		{name: "bad limit", command: []string{"sh"}, flags: &kanbanDispatchFlags{project: "kitty", limit: 0}, want: "--limit must be positive"},
 		{name: "bad interval", command: []string{"sh"}, flags: &kanbanDispatchFlags{project: "kitty", limit: 1, interval: "0s"}, want: "positive --interval duration is required"},
+		{name: "bad stale duration", command: []string{"sh"}, flags: &kanbanDispatchFlags{project: "kitty", limit: 1, reclaimStaleAfter: "0s"}, want: "positive --reclaim-stale-after duration is required"},
+		{name: "bad max attempts", command: []string{"sh"}, flags: &kanbanDispatchFlags{project: "kitty", limit: 1, maxAttempts: -1}, want: "--max-attempts must not be negative"},
 	}
 
 	for _, tt := range tests {
