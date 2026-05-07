@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KittyPaw Space Kanban</title>
+  <link rel="stylesheet" href="/assets/style.css?v=20260508-2">
+</head>
+<body>
+  <main id="space-kanban-root" class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">KittyPaw Space</p>
+        <h1>Kanban</h1>
+      </div>
+      <button id="logoutButton" class="secondary-action" type="button">Log out</button>
+    </header>
+    <section class="panel">
+      <p id="kanbanRouteStatus" class="status-text">Loading</p>
+      <div class="field-grid field-grid--compact">
+        <label class="field">
+          <span>Device</span>
+          <select id="kanbanDeviceSelect"></select>
+        </label>
+        <label class="field">
+          <span>Account</span>
+          <select id="kanbanAccountSelect"></select>
+        </label>
+      </div>
+      <div class="entry-actions">
+        <button id="reloadKanbanRoutesButton" class="secondary-action" type="button">Reload routes</button>
+      </div>
+    </section>
+    <section id="kanbanApp" class="kanban-surface"></section>
+  </main>
+  <script src="/assets/shared.js?v=20260508-2"></script>
+  <script src="/assets/kanban.js?v=20260508-2"></script>
+  <script src="/assets/kanban-page.js?v=20260508-2"></script>
+</body>
+</html>

@@ -58,9 +58,17 @@ func (h *Handler) Routes() http.Handler {
 	r.Get("/v1/routes", h.handleRoutes)
 	r.Get("/nodes/{device_id}/accounts/{account_id}/v1/models", h.handleModels)
 	r.Post("/nodes/{device_id}/accounts/{account_id}/v1/chat/completions", h.handleChatCompletions)
+	h.mountKittyPawAPIRoutes(r, "/nodes/{device_id}/accounts/{account_id}/api/*")
 	r.Get("/nodes/{device_id}/v1/models", h.handleModels)
 	r.Post("/nodes/{device_id}/v1/chat/completions", h.handleChatCompletions)
+	h.mountKittyPawAPIRoutes(r, "/nodes/{device_id}/api/*")
 	return r
+}
+
+func (h *Handler) mountKittyPawAPIRoutes(r chi.Router, pattern string) {
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch} {
+		r.MethodFunc(method, pattern, h.handleKittyPawAPI)
+	}
 }
 
 type routeListResponse struct {
@@ -112,6 +120,23 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.relay(w, r, protocol.OperationOpenAIChatCompletions, http.MethodPost, "/v1/chat/completions", body)
+}
+
+func (h *Handler) handleKittyPawAPI(w http.ResponseWriter, r *http.Request) {
+	localPath := "/api/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	if r.URL.RawQuery != "" {
+		localPath += "?" + r.URL.RawQuery
+	}
+	if !protocol.AllowedKittyPawAPIRequest(r.Method, localPath) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	if err != nil {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	h.relay(w, r, protocol.OperationKittyPawAPI, r.Method, localPath, body)
 }
 
 func (h *Handler) relay(w http.ResponseWriter, r *http.Request, operation protocol.Operation, method, path string, body []byte) {
@@ -326,7 +351,7 @@ func requiredScope(operation protocol.Operation) string {
 	switch operation {
 	case protocol.OperationOpenAIModels:
 		return "models:read"
-	case protocol.OperationOpenAIChatCompletions:
+	case protocol.OperationOpenAIChatCompletions, protocol.OperationKittyPawAPI:
 		return "chat:relay"
 	default:
 		return ""

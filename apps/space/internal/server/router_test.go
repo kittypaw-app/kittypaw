@@ -64,6 +64,38 @@ func TestChatRouteRedirectsToSlash(t *testing.T) {
 	}
 }
 
+func TestKanbanRouteServesSpaceKanbanHTML(t *testing.T) {
+	r := NewRouter(Config{})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/kanban/", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	for _, want := range []string{"space-kanban-root", `id="kanbanRouteStatus"`, `/assets/kanban.js`, `/assets/kanban-page.js`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("space kanban app HTML missing %q:\n%s", want, w.Body.String())
+		}
+	}
+}
+
+func TestKanbanRouteRedirectsToSlash(t *testing.T) {
+	r := NewRouter(Config{})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/kanban", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want 301", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/kanban/" {
+		t.Fatalf("Location = %q, want /kanban/", got)
+	}
+}
+
 type fakeWebHandler struct{}
 
 func (fakeWebHandler) MountRoutes(r chi.Router) {
@@ -122,6 +154,29 @@ func TestChatScriptCanClearPersistedMessages(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat.js missing persisted-message clear behavior %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestKanbanPageScriptProxiesThroughKanbanBFFRoutes(t *testing.T) {
+	r := NewRouter(Config{})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/kanban-page.js", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"/kanban/api/routes",
+		"/kanban/api/nodes/",
+		"window.KittyPawKanbanAPI",
+		"Kanban.mount",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("kanban-page.js missing %q:\n%s", want, body)
 		}
 	}
 }

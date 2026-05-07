@@ -227,6 +227,50 @@ func TestChatCompletionsPassesThroughDaemonHTTPError(t *testing.T) {
 	}
 }
 
+func TestKittyPawAPIRelaysWhitelistedLocalAPIRequest(t *testing.T) {
+	fb := &fakeBroker{frames: []protocol.Frame{
+		{Type: protocol.FrameResponseHeaders, ID: "req_1", Status: http.StatusOK, Headers: map[string]string{"content-type": "application/json"}},
+		{Type: protocol.FrameResponseChunk, ID: "req_1", Data: `{"projects":[]}`},
+		{Type: protocol.FrameResponseEnd, ID: "req_1"},
+	}}
+	h := NewHandler(staticAuth{principal: Principal{
+		UserID: "user_1", DeviceID: "dev_1", AccountID: "alice", Scopes: []string{"chat:relay"},
+	}}, fb)
+
+	req := httptest.NewRequest(http.MethodGet, "/nodes/dev_1/accounts/alice/api/v1/projects?archived=0", nil)
+	req.Header.Set("Authorization", "Bearer kp_test")
+	rr := httptest.NewRecorder()
+	h.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if fb.req.UserID != "user_1" || fb.req.DeviceID != "dev_1" || fb.req.AccountID != "alice" {
+		t.Fatalf("broker request = %+v", fb.req)
+	}
+	if fb.req.Operation != protocol.OperationKittyPawAPI || fb.req.Method != http.MethodGet || fb.req.Path != "/api/v1/projects?archived=0" {
+		t.Fatalf("broker operation/method/path = %s %s %s", fb.req.Operation, fb.req.Method, fb.req.Path)
+	}
+	if strings.TrimSpace(rr.Body.String()) != `{"projects":[]}` {
+		t.Fatalf("body = %q, want local API response", rr.Body.String())
+	}
+}
+
+func TestKittyPawAPIRejectsNonAllowlistedLocalAPIPath(t *testing.T) {
+	h := NewHandler(staticAuth{principal: Principal{
+		UserID: "user_1", DeviceID: "dev_1", AccountID: "alice", Scopes: []string{"chat:relay"},
+	}}, &fakeBroker{})
+
+	req := httptest.NewRequest(http.MethodPost, "/nodes/dev_1/accounts/alice/api/v1/chat", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer kp_test")
+	rr := httptest.NewRecorder()
+	h.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for non-allowlisted local API path; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAccountScopedChatCompletionsRouteUsesURLAccount(t *testing.T) {
 	body := map[string]any{
 		"model": "kittypaw",

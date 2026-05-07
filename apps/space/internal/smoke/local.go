@@ -51,6 +51,13 @@ func RunLocal(ctx context.Context, out io.Writer) error {
 	}
 	defer srv.Close()
 
+	if err := runStaticSurfaces(ctx, srv.URL); err != nil {
+		return err
+	}
+	if err := writeProgress(out, "ok static chat and kanban surfaces"); err != nil {
+		return err
+	}
+
 	daemonReady := make(chan struct{})
 	daemonDone := make(chan error, 1)
 	go func() {
@@ -456,6 +463,40 @@ func runBFFLogin(ctx context.Context, baseURL string) (*http.Cookie, error) {
 		}
 	}
 	return nil, fmt.Errorf("session cookie missing")
+}
+
+func runStaticSurfaces(ctx context.Context, baseURL string) error {
+	checks := []struct {
+		path string
+		want string
+	}{
+		{path: "/chat/", want: "space-chat-root"},
+		{path: "/kanban/", want: "space-kanban-root"},
+		{path: "/assets/chat.js", want: "/chat/api/routes"},
+		{path: "/assets/kanban-page.js", want: "/kanban/api/routes"},
+	}
+	for _, check := range checks {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+check.path, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		raw, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("%s status = %d; body=%s", check.path, resp.StatusCode, raw)
+		}
+		if !strings.Contains(string(raw), check.want) {
+			return fmt.Errorf("%s missing %q", check.path, check.want)
+		}
+	}
+	return nil
 }
 
 func runBFFRoutes(ctx context.Context, baseURL string, cookie *http.Cookie) error {

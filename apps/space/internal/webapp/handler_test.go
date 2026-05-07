@@ -178,6 +178,36 @@ func TestAppAPIRoutesProxiesWithServerSideBearerToken(t *testing.T) {
 	}
 }
 
+func TestKanbanAPIRoutesProxyWithServerSideBearerToken(t *testing.T) {
+	var authHeader string
+	var proxiedPath string
+	var proxiedQuery string
+	openAI := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxiedPath = r.URL.Path
+		proxiedQuery = r.URL.RawQuery
+		authHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"projects":[]}`))
+	})
+	handler := newTestHandler(t, nil, openAI)
+	cookie := createSessionCookie(t, handler, "api-token", "refresh-token", 15*time.Minute)
+	req := httptest.NewRequest(http.MethodGet, "/kanban/api/nodes/dev_1/accounts/alice/api/v1/projects?archived=0", nil)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if proxiedPath != "/nodes/dev_1/accounts/alice/api/v1/projects" || proxiedQuery != "archived=0" {
+		t.Fatalf("proxied request = %q?%s", proxiedPath, proxiedQuery)
+	}
+	if authHeader != "Bearer api-token" {
+		t.Fatalf("Authorization = %q, want server-side bearer token", authHeader)
+	}
+}
+
 func TestAppAPIRefreshesExpiredSessionBeforeProxy(t *testing.T) {
 	var refreshCalled bool
 	handler := newTestHandler(t, func(w http.ResponseWriter, r *http.Request) {

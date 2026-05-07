@@ -52,7 +52,7 @@ func TestNewHelloFramePreservesExplicitEmptyCapabilities(t *testing.T) {
 }
 
 func TestOperationSupportIsOperationBased(t *testing.T) {
-	for _, op := range []string{OperationOpenAIModels, OperationOpenAIChatCompletions} {
+	for _, op := range []string{OperationOpenAIModels, OperationOpenAIChatCompletions, OperationKittyPawAPI} {
 		if !SupportedOperation(op) {
 			t.Fatalf("SupportedOperation(%q) = false, want true", op)
 		}
@@ -62,6 +62,43 @@ func TestOperationSupportIsOperationBased(t *testing.T) {
 		if SupportedOperation(op) {
 			t.Fatalf("SupportedOperation(%q) = true, want false", op)
 		}
+	}
+}
+
+func TestDefaultCapabilitiesIncludeLocalAPIForHostedKanban(t *testing.T) {
+	got := DefaultCapabilities()
+	for _, want := range []string{OperationOpenAIModels, OperationOpenAIChatCompletions, OperationKittyPawAPI} {
+		found := false
+		for _, capability := range got {
+			if capability == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("DefaultCapabilities() = %#v, missing %q", got, want)
+		}
+	}
+}
+
+func TestRequestFrameCarriesLocalAPIMethodAndPath(t *testing.T) {
+	raw, err := json.Marshal(RequestFrame{
+		Type:      FrameRequest,
+		ID:        "req_api",
+		Operation: OperationKittyPawAPI,
+		AccountID: "alice",
+		Method:    "GET",
+		Path:      "/api/v1/projects?archived=0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got RequestFrame
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Method != "GET" || got.Path != "/api/v1/projects?archived=0" {
+		t.Fatalf("request frame = %#v, want method/path preserved", got)
 	}
 }
 

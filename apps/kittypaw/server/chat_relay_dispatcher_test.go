@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/llm"
 	"github.com/jinto/kittypaw/remote/chatrelay"
+	"github.com/jinto/kittypaw/store"
 )
 
 func TestChatRelayDispatcherModelsListsDefaultAndNamedModels(t *testing.T) {
@@ -229,6 +231,70 @@ func TestChatRelayDispatcherChatCompletionsReturnsServerErrorShape(t *testing.T)
 	}
 	if strings.TrimSpace(decoded.Error.Message) == "" {
 		t.Fatalf("error message is empty: %+v", decoded.Error)
+	}
+}
+
+func TestChatRelayDispatcherLocalAPIRoutesKanbanToAccountStore(t *testing.T) {
+	aliceCfg := core.DefaultConfig()
+	bobCfg := core.DefaultConfig()
+	srv := newMultiAccountAuthTestServer(t, "alice", map[string]string{
+		"alice": "alice-pw",
+		"bob":   "bob-pw",
+	}, map[string]*core.Config{
+		"alice": &aliceCfg,
+		"bob":   &bobCfg,
+	})
+	bobDeps := srv.accountDepsForID("bob")
+	if _, err := bobDeps.Store.CreateKanbanProject(store.CreateKanbanProjectRequest{
+		Slug:     "bob-work",
+		Name:     "Bob Work",
+		RootPath: "/tmp/bob-work",
+	}); err != nil {
+		t.Fatalf("seed bob project: %v", err)
+	}
+
+	result, err := NewChatRelayDispatcher(srv).Dispatch(context.Background(), chatrelay.RequestFrame{
+		ID:        "req_local_api",
+		Operation: chatrelay.OperationKittyPawAPI,
+		AccountID: "bob",
+		Method:    http.MethodGet,
+		Path:      "/api/v1/projects",
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if result.Status != http.StatusOK {
+		t.Fatalf("Status = %d body=%s", result.Status, result.Body)
+	}
+	var decoded struct {
+		Projects []struct {
+			Slug string `json:"slug"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(result.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Projects) != 1 || decoded.Projects[0].Slug != "bob-work" {
+		t.Fatalf("projects = %+v, want bob-work from bob account store", decoded.Projects)
+	}
+}
+
+func TestChatRelayDispatcherLocalAPIRejectsNonAllowlistedPath(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	deps := buildAccountDeps(t, root, "alice", &cfg)
+	srv := New([]*AccountDeps{deps}, "test")
+
+	_, err := NewChatRelayDispatcher(srv).Dispatch(context.Background(), chatrelay.RequestFrame{
+		ID:        "req_forbidden_api",
+		Operation: chatrelay.OperationKittyPawAPI,
+		AccountID: "alice",
+		Method:    http.MethodPost,
+		Path:      "/api/v1/chat",
+		Body:      []byte(`{}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "local API path is not supported") {
+		t.Fatalf("Dispatch error = %v, want local API path rejection", err)
 	}
 }
 

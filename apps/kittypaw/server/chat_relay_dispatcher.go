@@ -47,6 +47,20 @@ func (d *chatRelayDispatcher) Dispatch(ctx context.Context, req chatrelay.Reques
 			)
 			return chatrelay.DispatchResult{}, err
 		}
+	case chatrelay.OperationKittyPawAPI:
+		var err error
+		result, err = d.dispatchKittyPawAPI(ctx, acct, req)
+		if err != nil {
+			slog.Warn("chat relay dispatch error",
+				"request_id", req.ID,
+				"account_id", req.AccountID,
+				"operation", req.Operation,
+				"method", req.Method,
+				"path", req.Path,
+				"error", err,
+			)
+			return chatrelay.DispatchResult{}, err
+		}
 	default:
 		return chatrelay.DispatchResult{}, chatrelay.DispatchError{
 			Code:    "unsupported_operation",
@@ -68,6 +82,77 @@ func (d *chatRelayDispatcher) Dispatch(ctx context.Context, req chatrelay.Reques
 		"status", status,
 	)
 	return result, nil
+}
+
+func (d *chatRelayDispatcher) dispatchKittyPawAPI(
+	ctx context.Context,
+	acct *requestAccount,
+	req chatrelay.RequestFrame,
+) (chatrelay.DispatchResult, error) {
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	if !chatrelay.AllowedKittyPawAPIRequest(method, req.Path) {
+		return chatrelay.DispatchResult{}, chatrelay.DispatchError{
+			Code:    "unsupported_local_api_path",
+			Message: "local API path is not supported by the hosted relay",
+		}
+	}
+
+	internalReq, err := http.NewRequestWithContext(ctx, method, "http://kittypaw.local"+req.Path, bytes.NewReader(req.Body))
+	if err != nil {
+		return chatrelay.DispatchResult{}, err
+	}
+	internalReq.Header.Set("Accept", "application/json")
+	if len(req.Body) > 0 {
+		internalReq.Header.Set("Content-Type", "application/json")
+	}
+	internalReq.AddCookie(d.server.newWebSessionCookie(internalReq, acct.ID, time.Now().Add(webSessionTTL)))
+
+	rr := newRelayResponseRecorder()
+	d.server.setupRoutes().ServeHTTP(rr, internalReq)
+	headers := map[string]string{}
+	if contentType := rr.Header().Get("Content-Type"); contentType != "" {
+		headers["content-type"] = contentType
+	}
+	return chatrelay.DispatchResult{
+		Status:  rr.StatusCode(),
+		Headers: headers,
+		Body:    rr.body.Bytes(),
+	}, nil
+}
+
+type relayResponseRecorder struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+}
+
+func newRelayResponseRecorder() *relayResponseRecorder {
+	return &relayResponseRecorder{header: make(http.Header)}
+}
+
+func (r *relayResponseRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *relayResponseRecorder) WriteHeader(status int) {
+	if r.code != 0 {
+		return
+	}
+	r.code = status
+}
+
+func (r *relayResponseRecorder) Write(data []byte) (int, error) {
+	if r.code == 0 {
+		r.code = http.StatusOK
+	}
+	return r.body.Write(data)
+}
+
+func (r *relayResponseRecorder) StatusCode() int {
+	if r.code == 0 {
+		return http.StatusOK
+	}
+	return r.code
 }
 
 func (d *chatRelayDispatcher) dispatchModels(acct *requestAccount) chatrelay.DispatchResult {

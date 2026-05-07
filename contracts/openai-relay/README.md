@@ -1,8 +1,9 @@
 # OpenAI Relay Contract
 
-Produced by `apps/chat`.
+Produced by `apps/chat` and `apps/space`.
 
 Consumed by OpenAI-compatible clients and forwarded to `apps/kittypaw`.
 
-This contract records the hosted OpenAI-compatible routes exposed through the
-chat relay. It is intentionally narrow.
+This contract records the hosted OpenAI-compatible routes plus the small
+allowlisted KittyPaw local API surface exposed through the relay. It is
+intentionally narrow.

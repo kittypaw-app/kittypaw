@@ -13,3 +13,10 @@ routes:
     method: POST
     path: /nodes/{device_id}/accounts/{account_id}/v1/chat/completions
     required_scope: chat:relay
+  account_kittypaw_api:
+    methods:
+      - GET
+      - POST
+      - PATCH
+    path: /nodes/{device_id}/accounts/{account_id}/api/{allowlisted-local-resource}
+    required_scope: chat:relay

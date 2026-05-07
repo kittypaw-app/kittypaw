@@ -45,8 +45,8 @@ BASE_URL=https://space.kittypaw.app bash apps/space/deploy/smoke.sh
 cd apps/space && uv run fab smoke
 ```
 
-This credential-free smoke checks `/health`, `/chat/`, `/assets/chat.js`,
-anonymous `/chat/api/session` rejection, and the Portal Google login redirect.
+This credential-free smoke checks `/health`, `/chat/`, `/kanban/`, app JS BFF
+wiring, anonymous session rejection, and the Portal Google login redirect.
 Run `make -C apps/space smoke-local` before deploy to verify the full local BFF
 round-trip with fake Portal and fake daemon services.
 

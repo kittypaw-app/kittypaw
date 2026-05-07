@@ -124,6 +124,11 @@ func (h *Handler) MountRoutes(r chi.Router) {
 	r.Get("/chat/api/routes", h.handleAppAPI)
 	r.Get("/chat/api/nodes/*", h.handleAppAPI)
 	r.Post("/chat/api/nodes/*", h.handleAppAPI)
+	r.Get("/kanban/api/session", h.handleSession)
+	r.Get("/kanban/api/routes", h.handleAppAPI)
+	r.Get("/kanban/api/nodes/*", h.handleAppAPI)
+	r.Post("/kanban/api/nodes/*", h.handleAppAPI)
+	r.Patch("/kanban/api/nodes/*", h.handleAppAPI)
 }
 
 func (h *Handler) handleLoginGoogle(w http.ResponseWriter, r *http.Request) {
@@ -419,6 +424,10 @@ func appAPIPath(path string) (string, bool) {
 		return "/v1/routes", true
 	case strings.HasPrefix(path, "/chat/api/nodes/"):
 		return strings.TrimPrefix(path, "/chat/api"), true
+	case path == "/kanban/api/routes":
+		return "/v1/routes", true
+	case strings.HasPrefix(path, "/kanban/api/nodes/"):
+		return strings.TrimPrefix(path, "/kanban/api"), true
 	default:
 		return "", false
 	}

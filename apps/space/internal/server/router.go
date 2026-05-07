@@ -57,6 +57,10 @@ func NewRouter(cfg Config) http.Handler {
 		http.Redirect(w, r, "/chat/", http.StatusMovedPermanently)
 	})
 	r.Get("/chat/", serveStaticFile("web/chat.html"))
+	r.Get("/kanban", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/kanban/", http.StatusMovedPermanently)
+	})
+	r.Get("/kanban/", serveStaticFile("web/kanban.html"))
 	r.Handle("/assets/*", http.StripPrefix("/assets/", assetHandler()))
 	if cfg.OpenAIHandler != nil {
 		r.Mount("/", cfg.OpenAIHandler.Routes())

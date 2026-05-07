@@ -11,8 +11,14 @@ printf 'ok health\n'
 curl -fsS "$BASE/chat/" | grep -q 'space-chat-root'
 printf 'ok chat html\n'
 
+curl -fsS "$BASE/kanban/" | grep -q 'space-kanban-root'
+printf 'ok kanban html\n'
+
 curl -fsS "$BASE/assets/chat.js" | grep -q '/chat/api/routes'
 printf 'ok chat js bff route\n'
+
+curl -fsS "$BASE/assets/kanban-page.js" | grep -q '/kanban/api/routes'
+printf 'ok kanban js bff route\n'
 
 SESSION_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/chat/api/session")"
 if [[ "$SESSION_CODE" != "401" ]]; then
@@ -20,6 +26,13 @@ if [[ "$SESSION_CODE" != "401" ]]; then
     exit 1
 fi
 printf 'ok anonymous session rejected\n'
+
+KANBAN_SESSION_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/kanban/api/session")"
+if [[ "$KANBAN_SESSION_CODE" != "401" ]]; then
+    echo "expected /kanban/api/session to return 401 for anonymous caller, got $KANBAN_SESSION_CODE" >&2
+    exit 1
+fi
+printf 'ok anonymous kanban session rejected\n'
 
 LOGIN_CODE="$(curl -sS -o /dev/null -D "$HEADERS_FILE" -w '%{http_code}' "$BASE/auth/login/google")"
 if [[ "$LOGIN_CODE" != "302" ]]; then

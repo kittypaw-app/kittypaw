@@ -428,6 +428,8 @@ func TestRunDispatchesRequestAndWritesResponseFrames(t *testing.T) {
 			ID:        "req_dispatch",
 			Operation: OperationOpenAIModels,
 			AccountID: "alice",
+			Method:    "GET",
+			Path:      "/v1/models",
 		}
 		raw, err := json.Marshal(req)
 		if err != nil {
@@ -463,7 +465,7 @@ func TestRunDispatchesRequestAndWritesResponseFrames(t *testing.T) {
 			DaemonVersion: "0.1.5",
 		},
 		Dispatcher: dispatchFunc(func(_ context.Context, req RequestFrame) (DispatchResult, error) {
-			if req.ID != "req_dispatch" || req.Operation != OperationOpenAIModels || req.AccountID != "alice" {
+			if req.ID != "req_dispatch" || req.Operation != OperationOpenAIModels || req.AccountID != "alice" || req.Method != "GET" || req.Path != "/v1/models" {
 				t.Fatalf("dispatch req = %#v", req)
 			}
 			return DispatchResult{

@@ -18,10 +18,19 @@ WebSocket connections and relays only supported capability operations.
 - `GET /chat/api/routes`
 - `GET /chat/api/nodes/*`
 - `POST /chat/api/nodes/*`
+- `GET /kanban`
+- `GET /kanban/`
+- `GET /kanban/api/session`
+- `GET /kanban/api/routes`
+- `GET /kanban/api/nodes/*`
+- `POST /kanban/api/nodes/*`
+- `PATCH /kanban/api/nodes/*`
 - `GET /daemon/connect`
 - `GET /v1/routes`
 - `GET /nodes/{device_id}/accounts/{account_id}/v1/models`
 - `POST /nodes/{device_id}/accounts/{account_id}/v1/chat/completions`
+- `GET|POST|PATCH /nodes/{device_id}/accounts/{account_id}/api/*` for the
+  allowlisted Kanban/workspace local API surface
 
 ## Configuration
 
@@ -48,8 +57,8 @@ login callback, session cookie, `/chat/api/routes`, and `/chat/api` chat
 completion.
 
 `bash deploy/smoke.sh` is safe against production without credentials. It checks
-health, `/chat/`, chat JS wiring to `/chat/api`, anonymous session rejection, and
-the Google login redirect shape.
+health, `/chat/`, `/kanban/`, app JS wiring to the BFF routes, anonymous session
+rejection, and the Google login redirect shape.
 
 `make smoke-cutover` is a manual credentialed smoke for the Space cutover path.
 It requires Portal-issued user and device credentials:

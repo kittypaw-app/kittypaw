@@ -4,5 +4,5 @@
   "local_accounts": ["alice"],
   "daemon_version": "0.1.0",
   "protocol_version": "1",
-  "capabilities": ["openai.models", "openai.chat_completions"]
+  "capabilities": ["openai.models", "openai.chat_completions", "kittypaw.api"]
 }

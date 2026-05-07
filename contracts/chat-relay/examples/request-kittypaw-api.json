@@ -1,0 +1,8 @@
+{
+  "type": "request",
+  "id": "req_kanban_123",
+  "operation": "kittypaw.api",
+  "account_id": "alice",
+  "method": "GET",
+  "path": "/api/v1/projects?archived=0"
+}

@@ -29,7 +29,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["openai.models", "openai.chat_completions"]
+            "enum": ["openai.models", "openai.chat_completions", "kittypaw.api"]
           }
         }
       }
@@ -43,11 +43,22 @@
         "id": { "type": "string", "minLength": 1 },
         "operation": {
           "type": "string",
-          "enum": ["openai.models", "openai.chat_completions"]
+          "enum": ["openai.models", "openai.chat_completions", "kittypaw.api"]
         },
         "account_id": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "enum": ["GET", "POST", "PATCH"] },
+        "path": { "type": "string", "pattern": "^/" },
         "body": true
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "operation": { "const": "kittypaw.api" } },
+            "required": ["operation"]
+          },
+          "then": { "required": ["method", "path"] }
+        }
+      ]
     },
     "response_headers": {
       "type": "object",

@@ -128,6 +128,45 @@ func TestValidateRequestRestrictsOperations(t *testing.T) {
 	}
 }
 
+func TestValidateRequestAllowsWhitelistedKittyPawAPIPaths(t *testing.T) {
+	frame := Frame{
+		Type:      FrameRequest,
+		ID:        "req_kanban",
+		AccountID: "alice",
+		Operation: OperationKittyPawAPI,
+		Method:    "GET",
+		Path:      "/api/v1/projects?archived=0",
+	}
+	if err := frame.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil for whitelisted local API request", err)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "admin", method: "POST", path: "/api/v1/admin/accounts"},
+		{name: "chat", method: "POST", path: "/api/v1/chat"},
+		{name: "path traversal", method: "GET", path: "/api/v1/projects/../config"},
+		{name: "settings mutation", method: "POST", path: "/api/settings/llm"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			frame := Frame{
+				Type:      FrameRequest,
+				ID:        "req_kanban",
+				AccountID: "alice",
+				Operation: OperationKittyPawAPI,
+				Method:    tt.method,
+				Path:      tt.path,
+			}
+			if err := frame.Validate(); err == nil || !strings.Contains(err.Error(), "method/path do not match operation") {
+				t.Fatalf("Validate() error = %v, want method/path rejection", err)
+			}
+		})
+	}
+}
+
 func TestValidateRequestRejectsMismatchedHTTPCompatibilityFields(t *testing.T) {
 	frame := Frame{
 		Type:      FrameRequest,

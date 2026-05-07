@@ -8,3 +8,11 @@ operations:
     method: POST
     path: /v1/chat/completions
     required_client_scope: chat:relay
+  kittypaw.api:
+    methods:
+      - GET
+      - POST
+      - PATCH
+    path: /api/{allowlisted-local-resource}
+    required_client_scope: chat:relay
+    notes: Only explicit Kanban and workspace-read local API paths are allowed.
