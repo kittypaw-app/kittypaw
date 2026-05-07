@@ -145,7 +145,7 @@ var SkillRegistry = []SkillMeta{
 	{Name: "Staff", Methods: []SkillMethodMeta{
 		{Name: "list", Signature: "Staff.list()"},
 		{Name: "switch", Signature: "Staff.switch(id)"},
-		{Name: "create", Signature: "Staff.create(id, desc)"},
+		{Name: "create", Signature: "Staff.create(id, desc) — creates a pending draft for approval; does not persist a staff until approved"},
 		{Name: "update", Signature: "Staff.update(id, desc)"},
 	}},
 	{Name: "Web", Methods: []SkillMethodMeta{

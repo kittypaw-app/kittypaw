@@ -174,6 +174,7 @@ type GlobalPath struct {
 // StaffMeta stores metadata about a switchable staff identity.
 type StaffMeta struct {
 	ID             string
+	DisplayName    string
 	Description    string
 	EquippedSkills string
 	Active         bool
@@ -1087,6 +1088,9 @@ func (s *Store) MemoryContextLines() ([]string, error) {
 	// --- Remembered Facts (user_context, cap 20, most recent first) ---
 	rows, err := s.db.Query(`
 		SELECT key, value FROM user_context
+		WHERE key NOT LIKE 'pending_staff_draft:%'
+		  AND key NOT LIKE 'pending_staff_offer:%'
+		  AND key NOT LIKE 'pending_staff_switch:%'
 		ORDER BY updated_at DESC
 		LIMIT 20`)
 	if err != nil {
@@ -1593,14 +1597,23 @@ func (s *Store) RevokeCapability(capability string) error {
 
 // UpsertStaffMeta creates or updates a staff identity's metadata.
 func (s *Store) UpsertStaffMeta(id, description, equippedSkills, createdBy string) error {
+	return s.UpsertStaffMetaWithDisplayName(id, "", description, equippedSkills, createdBy)
+}
+
+// UpsertStaffMetaWithDisplayName creates or updates a staff identity's metadata.
+func (s *Store) UpsertStaffMetaWithDisplayName(id, displayName, description, equippedSkills, createdBy string) error {
 	_, err := s.db.Exec(`
-		INSERT INTO staff_meta (id, description, equipped_skills, created_by)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO staff_meta (id, display_name, description, equipped_skills, created_by)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			display_name    = CASE
+				WHEN excluded.display_name != '' THEN excluded.display_name
+				ELSE staff_meta.display_name
+			END,
 			description     = excluded.description,
 			equipped_skills = excluded.equipped_skills,
 			created_by      = excluded.created_by`,
-		id, description, equippedSkills, createdBy)
+		id, displayName, description, equippedSkills, createdBy)
 	return err
 }
 
@@ -1609,9 +1622,9 @@ func (s *Store) GetStaffMeta(id string) (*StaffMeta, bool, error) {
 	var staff StaffMeta
 	var active int
 	err := s.db.QueryRow(`
-		SELECT id, description, equipped_skills, active, created_by, created_at
+		SELECT id, display_name, description, equipped_skills, active, created_by, created_at
 		FROM staff_meta WHERE id = ?`, id,
-	).Scan(&staff.ID, &staff.Description, &staff.EquippedSkills, &active, &staff.CreatedBy, &staff.CreatedAt)
+	).Scan(&staff.ID, &staff.DisplayName, &staff.Description, &staff.EquippedSkills, &active, &staff.CreatedBy, &staff.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
 	}
@@ -1625,7 +1638,7 @@ func (s *Store) GetStaffMeta(id string) (*StaffMeta, bool, error) {
 // ListActiveStaff returns all staff identities where active = 1.
 func (s *Store) ListActiveStaff() ([]StaffMeta, error) {
 	rows, err := s.db.Query(`
-		SELECT id, description, equipped_skills, active, created_by, created_at
+		SELECT id, display_name, description, equipped_skills, active, created_by, created_at
 		FROM staff_meta
 		WHERE active = 1
 		ORDER BY created_at`)
@@ -1638,13 +1651,77 @@ func (s *Store) ListActiveStaff() ([]StaffMeta, error) {
 	for rows.Next() {
 		var staff StaffMeta
 		var active int
-		if err := rows.Scan(&staff.ID, &staff.Description, &staff.EquippedSkills, &active, &staff.CreatedBy, &staff.CreatedAt); err != nil {
+		if err := rows.Scan(&staff.ID, &staff.DisplayName, &staff.Description, &staff.EquippedSkills, &active, &staff.CreatedBy, &staff.CreatedAt); err != nil {
 			return nil, err
 		}
 		staff.Active = active != 0
 		out = append(out, staff)
 	}
 	return out, rows.Err()
+}
+
+// ReplaceStaffAliases replaces all aliases for a staff identity.
+func (s *Store) ReplaceStaffAliases(staffID string, aliases []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM staff_aliases WHERE staff_id = ?", staffID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	seen := make(map[string]bool, len(aliases))
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || alias == staffID || seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		if _, err := tx.Exec("INSERT INTO staff_aliases (alias, staff_id) VALUES (?, ?)", alias, staffID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListStaffAliases returns aliases for a staff identity.
+func (s *Store) ListStaffAliases(staffID string) ([]string, error) {
+	rows, err := s.db.Query("SELECT alias FROM staff_aliases WHERE staff_id = ? ORDER BY alias", staffID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var aliases []string
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return nil, err
+		}
+		aliases = append(aliases, alias)
+	}
+	return aliases, rows.Err()
+}
+
+// ResolveStaffID resolves a canonical staff ID or alias to a staff ID.
+func (s *Store) ResolveStaffID(idOrAlias string) (string, bool, error) {
+	idOrAlias = strings.TrimSpace(idOrAlias)
+	if idOrAlias == "" {
+		return "", false, nil
+	}
+	if _, ok, err := s.GetStaffMeta(idOrAlias); err != nil || ok {
+		return idOrAlias, ok, err
+	}
+	var staffID string
+	err := s.db.QueryRow("SELECT staff_id FROM staff_aliases WHERE alias = ?", idOrAlias).Scan(&staffID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return staffID, true, nil
 }
 
 // SetStaffActive enables or disables a staff identity.

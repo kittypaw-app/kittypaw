@@ -360,7 +360,7 @@ func TestRunCanCreateStaffFromConversationRequest(t *testing.T) {
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `
 const created = Staff.create("finance", "재무담당 스태프");
-return created.success ? "finance staff created" : created.error;
+return created.output || created.error || "missing draft output";
 `}
 	sess := &Session{
 		Provider:  provider,
@@ -372,19 +372,118 @@ return created.success ? "finance staff created" : created.error;
 		Pipeline:  NewPipelineState(),
 	}
 
-	out, err := sess.Run(context.Background(), webChatEvent("재무담당 비서를 고용해"), nil)
+	out, err := sess.Run(context.Background(), webChatEvent("도구 테스트"), nil)
 	if err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
-	if out != "finance staff created" {
-		t.Fatalf("out = %q", out)
+	if !strings.Contains(out, "초안") || !strings.Contains(out, "생성") {
+		t.Fatalf("out = %q, want draft approval response", out)
 	}
-	meta, ok, err := st.GetStaffMeta("finance")
+	if _, ok, err := st.GetStaffMeta("finance"); err != nil || ok {
+		t.Fatalf("finance staff meta = ok %v err %v, want no durable staff", ok, err)
+	}
+	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || !ok {
+		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
+	}
+}
+
+func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	baseDir := t.TempDir()
+	sess := &Session{
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("개발PM 한 명 만들어줘"), nil)
+	if err != nil {
+		t.Fatalf("Run request error: %v", err)
+	}
+	if !strings.Contains(out, "Staff 기능") {
+		t.Fatalf("first response = %q, want Staff opt-in question", out)
+	}
+	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || ok {
+		t.Fatalf("pending draft after opt-in question ok=%v err=%v, want none", ok, err)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("응"), nil)
+	if err != nil {
+		t.Fatalf("Run opt-in error: %v", err)
+	}
+	if !strings.Contains(out, "초안") || !strings.Contains(out, "dev-pm") {
+		t.Fatalf("opt-in response = %q, want dev-pm draft", out)
+	}
+	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || !ok {
+		t.Fatalf("pending draft after opt-in ok=%v err=%v, want ok true nil", ok, err)
+	}
+	if _, ok, err := st.GetStaffMeta("dev-pm"); err != nil || ok {
+		t.Fatalf("staff meta after draft ok=%v err=%v, want no durable staff", ok, err)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("생성해"), nil)
+	if err != nil {
+		t.Fatalf("Run approval error: %v", err)
+	}
+	if !strings.Contains(out, "만들었어요") || !strings.Contains(out, "지금 이 대화") {
+		t.Fatalf("approval response = %q, want creation plus switch question", out)
+	}
+	meta, ok, err := st.GetStaffMeta("dev-pm")
 	if err != nil || !ok {
-		t.Fatalf("finance staff meta missing: ok=%v err=%v", ok, err)
+		t.Fatalf("staff meta after approval ok=%v err=%v", ok, err)
 	}
-	if meta.Description != "재무담당 스태프" || !meta.Active || meta.CreatedBy != "runner" {
-		t.Fatalf("staff meta = %+v", meta)
+	if meta.DisplayName != "개발 PM" {
+		t.Fatalf("DisplayName = %q, want 개발 PM", meta.DisplayName)
+	}
+	if _, ok, err := st.GetUserContext("active_staff:alice"); err != nil || ok {
+		t.Fatalf("active staff before switch ok=%v err=%v, want unset", ok, err)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("응"), nil)
+	if err != nil {
+		t.Fatalf("Run switch confirmation error: %v", err)
+	}
+	if !strings.Contains(out, "dev-pm") {
+		t.Fatalf("switch response = %q, want dev-pm", out)
+	}
+	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || !ok || got != "dev-pm" {
+		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want dev-pm", got, ok, err)
+	}
+}
+
+func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   t.TempDir(),
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+	if err := savePendingStaffDraft(st, "alice", buildStaffDraft("개발PM", "test")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("디자이너 한 명 만들어줘"), nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if !strings.Contains(out, "이미") || !strings.Contains(out, "dev-pm") {
+		t.Fatalf("response = %q, want existing draft notice", out)
+	}
+	draft, ok, err := loadPendingStaffDraft(st, "alice")
+	if err != nil || !ok {
+		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
+	}
+	if draft.ID != "dev-pm" {
+		t.Fatalf("pending draft ID = %q, want dev-pm", draft.ID)
+	}
+	if role, ok, err := loadPendingStaffOffer(st, "alice"); err != nil || ok {
+		t.Fatalf("pending offer = %q ok=%v err=%v, want none", role, ok, err)
 	}
 }
 

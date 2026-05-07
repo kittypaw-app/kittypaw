@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 25 {
-		t.Fatalf("expected 25 migrations, got %d", count)
+	if count != 26 {
+		t.Fatalf("expected 26 migrations, got %d", count)
 	}
 }
 
@@ -728,6 +728,26 @@ func TestMemoryContextLines(t *testing.T) {
 		}
 	})
 
+	t.Run("skips_staff_control_state", func(t *testing.T) {
+		st := openTestStore(t)
+		st.SetUserContext("pending_staff_draft:alice", `{"id":"dev-pm","soul":"secret"}`, "staff_draft")
+		st.SetUserContext("pending_staff_offer:alice", "개발PM", "staff_draft")
+		st.SetUserContext("pending_staff_switch:alice", "dev-pm", "staff_draft")
+		st.SetUserContext("fact.name", "Jinto", "user")
+
+		lines, err := st.MemoryContextLines()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(lines, "\n")
+		if strings.Contains(joined, "pending_staff") || strings.Contains(joined, "secret") {
+			t.Fatalf("memory context leaked staff control state: %s", joined)
+		}
+		if !strings.Contains(joined, "fact.name") {
+			t.Fatalf("memory context missing normal fact: %s", joined)
+		}
+	})
+
 	t.Run("24h_excludes_old", func(t *testing.T) {
 		st := openTestStore(t)
 
@@ -1082,6 +1102,53 @@ func TestStaffMetaCRUD(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("active staff after inactive = %+v, want empty", list)
+	}
+}
+
+func TestStaffMetaDisplayNameAndAliases(t *testing.T) {
+	st := openTestStore(t)
+
+	if err := st.UpsertStaffMetaWithDisplayName("dev-pm", "개발 PM", "요구사항 정리", "[]", "test"); err != nil {
+		t.Fatalf("UpsertStaffMetaWithDisplayName() error = %v", err)
+	}
+	if err := st.ReplaceStaffAliases("dev-pm", []string{"개발PM", "개발 PM", "PM"}); err != nil {
+		t.Fatalf("ReplaceStaffAliases() error = %v", err)
+	}
+
+	meta, ok, err := st.GetStaffMeta("dev-pm")
+	if err != nil || !ok {
+		t.Fatalf("GetStaffMeta(dev-pm) = ok %v err %v", ok, err)
+	}
+	if meta.DisplayName != "개발 PM" {
+		t.Fatalf("DisplayName = %q, want 개발 PM", meta.DisplayName)
+	}
+	if err := st.UpsertStaffMeta("dev-pm", "updated desc", "[]", "legacy"); err != nil {
+		t.Fatalf("UpsertStaffMeta() error = %v", err)
+	}
+	meta, ok, err = st.GetStaffMeta("dev-pm")
+	if err != nil || !ok {
+		t.Fatalf("GetStaffMeta(dev-pm) after legacy upsert = ok %v err %v", ok, err)
+	}
+	if meta.DisplayName != "개발 PM" {
+		t.Fatalf("DisplayName after legacy upsert = %q, want preserved 개발 PM", meta.DisplayName)
+	}
+
+	resolved, ok, err := st.ResolveStaffID("개발PM")
+	if err != nil || !ok || resolved != "dev-pm" {
+		t.Fatalf("ResolveStaffID(개발PM) = %q ok=%v err=%v, want dev-pm true nil", resolved, ok, err)
+	}
+
+	resolved, ok, err = st.ResolveStaffID("dev-pm")
+	if err != nil || !ok || resolved != "dev-pm" {
+		t.Fatalf("ResolveStaffID(dev-pm) = %q ok=%v err=%v, want dev-pm true nil", resolved, ok, err)
+	}
+
+	aliases, err := st.ListStaffAliases("dev-pm")
+	if err != nil {
+		t.Fatalf("ListStaffAliases() error = %v", err)
+	}
+	if strings.Join(aliases, ",") != "PM,개발 PM,개발PM" {
+		t.Fatalf("aliases = %#v", aliases)
 	}
 }
 

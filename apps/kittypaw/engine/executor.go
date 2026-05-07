@@ -2184,10 +2184,30 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		if err := s.Store.UpsertStaffMeta(id, desc, "[]", "runner"); err != nil {
+		if _, ok, err := s.Store.GetStaffMeta(id); err != nil {
+			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
+		} else if ok {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q already exists", id)})
+		}
+		draft := buildStaffDraft(id, "runner")
+		draft.ID = id
+		draft.DisplayName = id
+		draft.Description = strings.TrimSpace(desc)
+		draft.Aliases = staffAliases(desc, draft.DisplayName, draft.ID)
+		draft.Soul = staffSoulDraft(draft)
+		conversationID := ConversationIDFromContext(ctx)
+		if conversationID == "" {
+			conversationID = "default"
+		}
+		if err := savePendingStaffDraft(s.Store, conversationID, draft); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"success": true})
+		return jsonResult(map[string]any{
+			"success":           false,
+			"requires_approval": true,
+			"draft":             draft,
+			"output":            formatStaffDraftPreview(draft),
+		})
 
 	case "update":
 		if len(call.Args) < 2 {

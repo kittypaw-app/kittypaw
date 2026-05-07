@@ -30,6 +30,11 @@ const (
 	IntentRunInstalledSkill      IntentKind = "run_installed_skill"
 	IntentModifierFollowup       IntentKind = "modifier_followup"
 	IntentAmbiguousFollowup      IntentKind = "ambiguous_followup"
+	IntentStaffCreateRequest     IntentKind = "staff_create_request"
+	IntentStaffCreateOptIn       IntentKind = "staff_create_opt_in"
+	IntentStaffDraftApprove      IntentKind = "staff_draft_approve"
+	IntentStaffDraftCancel       IntentKind = "staff_draft_cancel"
+	IntentStaffPostCreateSwitch  IntentKind = "staff_post_create_switch"
 	IntentLegacyFallback         IntentKind = "legacy_fallback"
 )
 
@@ -64,6 +69,54 @@ func classifyIntent(text string, state *PipelineState, sess *Session) Intent {
 	t := strings.TrimSpace(text)
 	if t == "" {
 		return Intent{Kind: IntentLegacyFallback}
+	}
+	if sess != nil && sess.Store != nil {
+		convKey := conversationKey(sess)
+		if staffID, ok, _ := loadPendingStaffSwitch(sess.Store, convKey); ok && staffID != "" && (isBareAffirmative(t) || isBareNegative(t) || isStaffDraftCancel(t)) {
+			return Intent{
+				Kind: IntentStaffPostCreateSwitch,
+				Params: map[string]any{
+					"staff_id": staffID,
+					"accept":   isBareAffirmative(t),
+				},
+				Confidence: 1.0,
+			}
+		}
+		if _, ok, _ := loadPendingStaffDraft(sess.Store, convKey); ok {
+			if role, ok := staffCreateRoleFromText(t); ok {
+				return Intent{
+					Kind: IntentStaffCreateRequest,
+					Params: map[string]any{
+						"role": role,
+					},
+					Confidence: 1.0,
+				}
+			}
+			if isStaffDraftCancel(t) {
+				return Intent{Kind: IntentStaffDraftCancel, Confidence: 1.0}
+			}
+			if isStaffDraftApproval(t) {
+				return Intent{Kind: IntentStaffDraftApprove, Confidence: 1.0}
+			}
+		}
+		if role, ok, _ := loadPendingStaffOffer(sess.Store, convKey); ok && role != "" && isBareAffirmative(t) {
+			return Intent{
+				Kind: IntentStaffCreateOptIn,
+				Params: map[string]any{
+					"role": role,
+				},
+				Confidence: 1.0,
+			}
+		}
+	}
+	if role, ok := staffCreateRoleFromText(t); ok {
+		return Intent{
+			Kind: IntentStaffCreateRequest,
+			Params: map[string]any{
+				"role": role,
+			},
+			Confidence: 1.0,
+		}
 	}
 	if isChitchat(t) {
 		return Intent{Kind: IntentChitchat, Confidence: 1.0}
@@ -709,6 +762,16 @@ func getBranch(kind IntentKind) Branch {
 		return &ModifierFollowupBranch{}
 	case IntentAmbiguousFollowup:
 		return &AmbiguousFollowupBranch{}
+	case IntentStaffCreateRequest:
+		return &StaffCreateRequestBranch{}
+	case IntentStaffCreateOptIn:
+		return &StaffCreateOptInBranch{}
+	case IntentStaffDraftApprove:
+		return &StaffDraftApproveBranch{}
+	case IntentStaffDraftCancel:
+		return &StaffDraftCancelBranch{}
+	case IntentStaffPostCreateSwitch:
+		return &StaffPostCreateSwitchBranch{}
 	}
 	return nil
 }
@@ -721,6 +784,112 @@ type ChitchatBranch struct{}
 
 func (b *ChitchatBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
 	return "도움이 됐다니 좋아요! 또 필요하면 말씀해 주세요.", nil
+}
+
+type StaffCreateRequestBranch struct{}
+
+func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+	if sess == nil || sess.Store == nil {
+		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
+	}
+	if existing, ok, err := loadPendingStaffDraft(sess.Store, conversationKey(sess)); err != nil {
+		return "staff 초안을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
+	} else if ok {
+		return formatPendingStaffDraftNotice(existing), nil
+	}
+	role := strings.TrimSpace(fmt.Sprint(intent.Params["role"]))
+	if role == "" {
+		role = strings.TrimSpace(FormatEvent(&event))
+	}
+	if err := savePendingStaffOffer(sess.Store, conversationKey(sess), role); err != nil {
+		return "staff 생성 제안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
+	}
+	return "KittyPaw Staff 기능으로 새 역할을 만들까요?", nil
+}
+
+type StaffCreateOptInBranch struct{}
+
+func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+	if sess == nil || sess.Store == nil {
+		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
+	}
+	role := strings.TrimSpace(fmt.Sprint(intent.Params["role"]))
+	if role == "" {
+		var ok bool
+		var err error
+		role, ok, err = loadPendingStaffOffer(sess.Store, conversationKey(sess))
+		if err != nil || !ok {
+			return "진행할 staff 생성 요청을 찾지 못했어요.", nil
+		}
+	}
+	draft := buildStaffDraft(role, "natural_language")
+	if _, ok, err := sess.Store.GetStaffMeta(draft.ID); err != nil {
+		return "staff 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
+	} else if ok {
+		_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
+		return fmt.Sprintf("staff %q는 이미 존재합니다.", draft.ID), nil
+	}
+	if err := savePendingStaffDraft(sess.Store, conversationKey(sess), draft); err != nil {
+		return "staff 초안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
+	}
+	_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
+	return formatStaffDraftPreview(draft), nil
+}
+
+type StaffDraftApproveBranch struct{}
+
+func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+	if sess == nil || sess.Store == nil {
+		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
+	}
+	draft, ok, err := loadPendingStaffDraft(sess.Store, conversationKey(sess))
+	if err != nil {
+		return "staff 초안을 읽지 못했어요. 잠시 후 다시 시도해 주세요.", nil
+	}
+	if !ok {
+		return "생성할 staff 초안이 없습니다.", nil
+	}
+	if err := commitStaffDraft(sess.BaseDir, sess.Store, draft); err != nil {
+		return fmt.Sprintf("staff 생성 실패: %s", err), nil
+	}
+	_ = clearPendingStaffDraft(sess.Store, conversationKey(sess))
+	if err := savePendingStaffSwitch(sess.Store, conversationKey(sess), draft.ID); err != nil {
+		return fmt.Sprintf("%s staff를 만들었어요.\n\n시스템 이름은 %s 입니다.", draft.DisplayName, draft.ID), nil
+	}
+	return fmt.Sprintf("%s staff를 만들었어요.\n\n시스템 이름은 %s 입니다.\n지금 이 대화에서 사용할까요?", draft.DisplayName, draft.ID), nil
+}
+
+type StaffDraftCancelBranch struct{}
+
+func (b *StaffDraftCancelBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+	if sess == nil || sess.Store == nil {
+		return "staff 초안을 위한 저장소가 준비되지 않았어요.", nil
+	}
+	_ = clearPendingStaffDraft(sess.Store, conversationKey(sess))
+	_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
+	_ = clearPendingStaffSwitch(sess.Store, conversationKey(sess))
+	return "staff 초안을 취소했습니다.", nil
+}
+
+type StaffPostCreateSwitchBranch struct{}
+
+func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+	if sess == nil || sess.Store == nil {
+		return "staff 전환을 위한 저장소가 준비되지 않았어요.", nil
+	}
+	staffID := strings.TrimSpace(fmt.Sprint(intent.Params["staff_id"]))
+	accept, _ := intent.Params["accept"].(bool)
+	if staffID == "" {
+		return "전환할 staff를 찾지 못했어요.", nil
+	}
+	_ = clearPendingStaffSwitch(sess.Store, conversationKey(sess))
+	if !accept {
+		return "알겠습니다. 현재 staff를 유지합니다.", nil
+	}
+	if err := sess.Store.SetUserContext("active_staff:"+conversationKey(sess), staffID, "staff_draft"); err != nil {
+		return fmt.Sprintf("staff 전환 실패: %s", err), nil
+	}
+	return fmt.Sprintf("이 대화에서 %s staff를 사용합니다.", staffID), nil
 }
 
 // BrowseBranch lists registry skills grouped by domain. No LLM call —
@@ -1345,6 +1514,47 @@ func containsAny(haystack string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+func staffCreateRoleFromText(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return "", false
+	}
+	lower := strings.ToLower(t)
+	if !(containsAny(lower, "만들", "고용", "채용", "hire", "create") &&
+		containsAny(lower, "staff", "비서", "담당", "pm", "피엠", "매니저",
+			"디자인", "디자이너", "재무", "법무", "마케팅", "운영", "데이터", "테스트", "qa")) {
+		return "", false
+	}
+	role := t
+	replacer := strings.NewReplacer(
+		"한 명", "", "하나", "", "새", "", "staff", "", "Staff", "",
+		"비서를", "", "비서", "", "스태프를", "", "스태프", "",
+		"만들어줘", "", "만들어 줘", "", "만들어주세요", "", "만들어 주세요", "",
+		"고용해줘", "", "고용해 줘", "", "고용해", "", "채용해줘", "", "채용해 줘", "", "채용해", "",
+		"create", "", "hire", "",
+	)
+	role = strings.TrimSpace(replacer.Replace(role))
+	role = strings.Trim(role, ".。!！?？")
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = t
+	}
+	return role, true
+}
+
+func isStaffDraftApproval(text string) bool {
+	t := strings.TrimSpace(strings.ToLower(text))
+	if isBareAffirmative(t) {
+		return true
+	}
+	return containsAny(t, "생성해", "만들어", "진행", "승인", "좋아", "ok", "ㅇㅋ")
+}
+
+func isStaffDraftCancel(text string) bool {
+	t := strings.TrimSpace(strings.ToLower(text))
+	return isBareNegative(t) || containsAny(t, "취소", "그만", "하지마", "나중에")
 }
 
 // InstallConsentBranch handles the user's "네" / "설치해줘요" / etc.

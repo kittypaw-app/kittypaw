@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/store"
 )
 
 // tryHandleCommand checks if the event text is a slash command.
@@ -38,10 +41,7 @@ func tryHandleCommand(ctx context.Context, text string, s *Session) (string, boo
 		}
 		return "사용법: /teach <설명>", true
 	case "/staff":
-		if len(parts) > 1 {
-			return handleStaff(parts[1], s), true
-		}
-		return "사용법: /staff <staff-id>", true
+		return handleStaffCommand(parts[1:], s), true
 	case "/model":
 		return handleModel(parts[1:], s), true
 	default:
@@ -56,7 +56,8 @@ func handleHelp() string {
 /skills — 스킬 목록
 /run <name> — 스킬 실행
 /teach <설명> — 새 스킬 학습
-/staff <staff-id> — 기본 staff 변경
+/staff — staff 상태와 명령어 표시
+/staff use <staff-id> — 기본 staff 변경
 /model — 현재 LLM 정보 표시
 /model <id> — 채팅 중에 모델 변경 (재시작 시 기본값 복귀)`
 }
@@ -285,32 +286,214 @@ func formatModelInfo(current string, models []core.ModelConfig, s *Session) stri
 	return sb.String()
 }
 
-func handleStaff(id string, s *Session) string {
+func handleStaffCommand(args []string, s *Session) string {
+	if len(args) == 0 {
+		return handleStaffOverview(s)
+	}
+	subcmd := strings.ToLower(strings.TrimSpace(args[0]))
+	switch subcmd {
+	case "current":
+		return handleStaffCurrent(s)
+	case "list":
+		return handleStaffList(s)
+	case "show":
+		if len(args) < 2 {
+			return "사용법: /staff show <staff-id>"
+		}
+		return handleStaffShow(strings.Join(args[1:], " "), s)
+	case "use":
+		if len(args) < 2 {
+			return "사용법: /staff use <staff-id>"
+		}
+		return handleStaffUse(strings.Join(args[1:], " "), s)
+	case "hire":
+		if len(args) < 2 {
+			return "사용법: /staff hire <역할>"
+		}
+		return handleStaffHire(strings.Join(args[1:], " "), s)
+	case "cancel":
+		return handleStaffCancel(s)
+	default:
+		// Backward-compatible form: /staff <id> means /staff use <id>.
+		return handleStaffUse(strings.Join(args, " "), s)
+	}
+}
+
+func handleStaffOverview(s *Session) string {
+	var sb strings.Builder
+	sb.WriteString(handleStaffCurrent(s))
+	sb.WriteString("\n\n")
+	sb.WriteString(handleStaffList(s))
+	sb.WriteString("\n\n명령어: /staff current | list | show <id> | use <id> | hire <역할> | cancel")
+	return sb.String()
+}
+
+func handleStaffCurrent(s *Session) string {
+	if s == nil || s.Config == nil {
+		return "현재 staff 정보를 위한 세션이 준비되지 않았습니다."
+	}
+	current := s.Config.DefaultStaff
+	source := "default"
+	if current == "" {
+		current = "default"
+	}
+	if s.Store != nil {
+		key := fmt.Sprintf("active_staff:%s", conversationKey(s))
+		if val, ok, err := s.Store.GetUserContext(key); err == nil && ok && val != "" {
+			current = val
+			source = "conversation"
+		}
+	}
+	return fmt.Sprintf("current staff: %s (%s)", current, source)
+}
+
+func handleStaffList(s *Session) string {
 	if s == nil || s.Store == nil {
-		return "staff 변경을 위한 저장소가 준비되지 않았습니다."
+		return "staff 목록을 위한 저장소가 준비되지 않았습니다."
 	}
-	if err := core.ValidateStaffID(id); err != nil {
-		return fmt.Sprintf("staff id가 올바르지 않습니다: %s", err)
+	staff, err := s.Store.ListActiveStaff()
+	if err != nil {
+		return fmt.Sprintf("staff 목록 조회 실패: %s", err)
 	}
-	meta, ok, err := s.Store.GetStaffMeta(id)
+	if len(staff) == 0 {
+		return "staff 목록: 없음"
+	}
+	var sb strings.Builder
+	sb.WriteString("staff 목록:\n")
+	for _, meta := range staff {
+		label := meta.ID
+		if meta.DisplayName != "" {
+			label += " — " + meta.DisplayName
+		}
+		if meta.Description != "" {
+			label += " (" + meta.Description + ")"
+		}
+		sb.WriteString("- ")
+		sb.WriteString(label)
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleStaffShow(idOrAlias string, s *Session) string {
+	meta, ok, err := resolveActiveStaffMeta(idOrAlias, s)
 	if err != nil {
 		return fmt.Sprintf("staff 조회 실패: %s", err)
 	}
-	if ok && !meta.Active {
-		return fmt.Sprintf("staff %q는 비활성화되어 있습니다.", id)
+	if !ok {
+		return fmt.Sprintf("staff %q를 찾지 못했습니다.", strings.TrimSpace(idOrAlias))
+	}
+	aliases, err := s.Store.ListStaffAliases(meta.ID)
+	if err != nil {
+		return fmt.Sprintf("staff alias 조회 실패: %s", err)
+	}
+	hasSoul := false
+	base, err := core.ResolveBaseDir(s.BaseDir)
+	if err == nil {
+		if _, statErr := os.Stat(filepath.Join(base, "staff", meta.ID, "SOUL.md")); statErr == nil {
+			hasSoul = true
+		}
+	}
+	displayName := meta.DisplayName
+	if displayName == "" {
+		displayName = meta.ID
+	}
+	return fmt.Sprintf("staff: %s\n표시 이름: %s\n설명: %s\naliases: %s\nSOUL.md: %s",
+		meta.ID, displayName, meta.Description, strings.Join(aliases, ", "), yesNo(hasSoul))
+}
+
+func handleStaffUse(idOrAlias string, s *Session) string {
+	if s == nil || s.Store == nil {
+		return "staff 변경을 위한 저장소가 준비되지 않았습니다."
+	}
+	meta, ok, err := resolveActiveStaffMeta(idOrAlias, s)
+	if err != nil {
+		return fmt.Sprintf("staff 조회 실패: %s", err)
 	}
 	if !ok {
-		base, err := core.ResolveBaseDir(s.BaseDir)
-		if err != nil {
-			return fmt.Sprintf("staff 조회 실패: %s", err)
-		}
-		if _, err := core.LoadStaff(base, id); err != nil {
-			return fmt.Sprintf("staff %q를 찾지 못했습니다.", id)
-		}
+		return fmt.Sprintf("staff %q를 찾지 못했습니다.", strings.TrimSpace(idOrAlias))
 	}
 	key := fmt.Sprintf("active_staff:%s", conversationKey(s))
-	if err := s.Store.SetUserContext(key, id, "chat_command"); err != nil {
+	if err := s.Store.SetUserContext(key, meta.ID, "chat_command"); err != nil {
 		return fmt.Sprintf("staff 변경 실패: %s", err)
 	}
-	return fmt.Sprintf("기본 staff를 %q로 변경했습니다.", id)
+	return fmt.Sprintf("기본 staff를 %q로 변경했습니다.", meta.ID)
+}
+
+func handleStaffHire(role string, s *Session) string {
+	if s == nil || s.Store == nil {
+		return "staff 생성을 위한 저장소가 준비되지 않았습니다."
+	}
+	if existing, ok, err := loadPendingStaffDraft(s.Store, conversationKey(s)); err != nil {
+		return fmt.Sprintf("staff 초안 조회 실패: %s", err)
+	} else if ok {
+		return formatPendingStaffDraftNotice(existing)
+	}
+	draft := buildStaffDraft(role, "chat_command")
+	if _, ok, err := s.Store.GetStaffMeta(draft.ID); err != nil {
+		return fmt.Sprintf("staff 조회 실패: %s", err)
+	} else if ok {
+		return fmt.Sprintf("staff %q는 이미 존재합니다.", draft.ID)
+	}
+	if err := savePendingStaffDraft(s.Store, conversationKey(s), draft); err != nil {
+		return fmt.Sprintf("staff 초안 저장 실패: %s", err)
+	}
+	return formatStaffDraftPreview(draft)
+}
+
+func handleStaffCancel(s *Session) string {
+	if s == nil || s.Store == nil {
+		return "staff 초안을 위한 저장소가 준비되지 않았습니다."
+	}
+	if err := clearPendingStaffDraft(s.Store, conversationKey(s)); err != nil {
+		return fmt.Sprintf("staff 초안 취소 실패: %s", err)
+	}
+	if err := clearPendingStaffOffer(s.Store, conversationKey(s)); err != nil {
+		return fmt.Sprintf("staff 생성 제안 취소 실패: %s", err)
+	}
+	if err := clearPendingStaffSwitch(s.Store, conversationKey(s)); err != nil {
+		return fmt.Sprintf("staff 전환 제안 취소 실패: %s", err)
+	}
+	return "staff 초안을 취소했습니다."
+}
+
+func resolveActiveStaffMeta(idOrAlias string, s *Session) (*store.StaffMeta, bool, error) {
+	if s == nil || s.Store == nil {
+		return nil, false, nil
+	}
+	id, ok, err := s.Store.ResolveStaffID(idOrAlias)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	meta, ok, err := s.Store.GetStaffMeta(id)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if !meta.Active {
+		return nil, false, nil
+	}
+	return meta, true, nil
+}
+
+func formatStaffDraftPreview(draft StaffDraft) string {
+	return fmt.Sprintf(`%s staff 초안입니다.
+
+시스템 이름: %s
+표시 이름: %s
+역할: %s
+
+SOUL.md:
+%s
+이대로 생성할까요?`, draft.DisplayName, draft.ID, draft.DisplayName, draft.Description, draft.Soul)
+}
+
+func formatPendingStaffDraftNotice(draft StaffDraft) string {
+	return fmt.Sprintf("이미 생성 대기 중인 staff 초안이 있습니다: %s (%s)\n먼저 생성하거나 취소해 주세요.", draft.DisplayName, draft.ID)
+}
+
+func yesNo(v bool) string {
+	if v {
+		return "yes"
+	}
+	return "no"
 }
