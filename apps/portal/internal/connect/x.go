@@ -38,6 +38,36 @@ type XProvider struct {
 	client *http.Client
 }
 
+type XStatusError struct {
+	StatusCode int
+	Body       string
+	Type       string
+	Title      string
+	Detail     string
+}
+
+func (e *XStatusError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Body != "" {
+		return fmt.Sprintf("x response %d: %s", e.StatusCode, e.Body)
+	}
+	return fmt.Sprintf("x response %d", e.StatusCode)
+}
+
+func (e *XStatusError) CreditsDepleted() bool {
+	if e == nil || e.StatusCode != http.StatusPaymentRequired {
+		return false
+	}
+	title := strings.ToLower(e.Title)
+	typ := strings.ToLower(e.Type)
+	body := strings.ToLower(e.Body)
+	return strings.Contains(title, "creditsdepleted") ||
+		strings.Contains(typ, "/credits") ||
+		strings.Contains(body, "creditsdepleted")
+}
+
 func NewXProvider(cfg XConfig, client *http.Client) *XProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
@@ -377,7 +407,19 @@ func xStatusError(resp *http.Response) error {
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-	return fmt.Errorf("x response %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	raw := strings.TrimSpace(string(body))
+	err := &XStatusError{StatusCode: resp.StatusCode, Body: raw}
+	var parsed struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(body, &parsed) == nil {
+		err.Type = parsed.Type
+		err.Title = parsed.Title
+		err.Detail = parsed.Detail
+	}
+	return err
 }
 
 func (p *XProvider) redirectURL() string {

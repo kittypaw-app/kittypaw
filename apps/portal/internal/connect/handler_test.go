@@ -312,6 +312,64 @@ func TestXBrokerHomeTimelineRecordsUsage(t *testing.T) {
 	}
 }
 
+func TestXBrokerHomeTimelineReportsXCreditsDepleted(t *testing.T) {
+	fakeX := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer x-access" {
+			t.Errorf("Authorization = %q, want Bearer x-access", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/2/users/me":
+			fmt.Fprint(w, `{"data":{"id":"u1","username":"jaypark","name":"Jay Park"}}`)
+		case "/2/users/u1/timelines/reverse_chronological":
+			w.WriteHeader(http.StatusPaymentRequired)
+			fmt.Fprint(w, `{"title":"CreditsDepleted","detail":"Your enrolled account does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/problems/credits"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fakeX.Close)
+
+	tokenStore := NewMemoryTokenStore(time.Now())
+	if err := tokenStore.SaveProviderToken(context.Background(), ProviderTokenRecord{
+		UserID:      "user-1",
+		ProviderID:  XProviderID,
+		AccessToken: "x-access",
+		TokenType:   "Bearer",
+	}); err != nil {
+		t.Fatalf("SaveProviderToken: %v", err)
+	}
+
+	h, _, _, _ := testHandler(t)
+	h.X = NewXProvider(XConfig{APIBaseURL: fakeX.URL + "/2"}, fakeX.Client())
+	h.TokenStore = tokenStore
+	h.Entitlements = fakeQuotaEntitlementChecker{
+		allowed: true,
+		quota:   map[string]any{"monthly_post_reads": float64(5)},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/connect/x/broker/users/me/timelines/reverse_chronological?limit=10", nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1", Email: "alice@example.com"}))
+	w := httptest.NewRecorder()
+
+	h.HandleXBrokerHomeTimeline()(w, req)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402; body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code != "x_credits_depleted" || !strings.Contains(body.Error.Message, "X API credits depleted") {
+		t.Fatalf("body = %#v, want x_credits_depleted", body)
+	}
+}
+
 func TestXBrokerSearchRecentBlocksOverMonthlyQuota(t *testing.T) {
 	fakeX := newFakeXAPIServer(t, 2)
 	tokenStore := NewMemoryTokenStore(time.Now())

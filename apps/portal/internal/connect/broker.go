@@ -40,7 +40,7 @@ func (h *Handler) HandleXBrokerSearchRecent() http.HandlerFunc {
 		result, err := h.X.SearchRecent(r.Context(), token.AccessToken, query, limit)
 		if err != nil {
 			slog.Error("x broker search failed", "user_id", user.ID, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x search failed")
+			writeBrokerXError(w, err, "x search failed")
 			return
 		}
 		allowed, err := h.recordXPostReads(r.Context(), user.ID, "search_recent", len(result.Posts), quota, map[string]any{
@@ -74,7 +74,7 @@ func (h *Handler) HandleXBrokerUserByUsername() http.HandlerFunc {
 		user, err := h.X.UserByUsername(r.Context(), token.AccessToken, username)
 		if err != nil {
 			slog.Error("x broker user lookup failed", "username", username, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x user lookup failed")
+			writeBrokerXError(w, err, "x user lookup failed")
 			return
 		}
 		writeBrokerJSON(w, user)
@@ -95,14 +95,14 @@ func (h *Handler) HandleXBrokerUserPostsByUsername() http.HandlerFunc {
 		xUser, err := h.X.UserByUsername(r.Context(), token.AccessToken, username)
 		if err != nil {
 			slog.Error("x broker user lookup failed", "username", username, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x user lookup failed")
+			writeBrokerXError(w, err, "x user lookup failed")
 			return
 		}
 		limit := parseBrokerLimit(r, 10)
 		result, err := h.X.UserPosts(r.Context(), token.AccessToken, xUser.ID, limit)
 		if err != nil {
 			slog.Error("x broker user posts failed", "user_id", user.ID, "username", username, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x user posts failed")
+			writeBrokerXError(w, err, "x user posts failed")
 			return
 		}
 		allowed, err := h.recordXPostReads(r.Context(), user.ID, "user_posts", len(result.Posts), quota, map[string]any{
@@ -132,7 +132,7 @@ func (h *Handler) HandleXBrokerHomeTimeline() http.HandlerFunc {
 		xUser, err := h.X.Me(r.Context(), token.AccessToken)
 		if err != nil {
 			slog.Error("x broker me lookup failed", "user_id", user.ID, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x user lookup failed")
+			writeBrokerXError(w, err, "x user lookup failed")
 			return
 		}
 		if strings.TrimSpace(xUser.ID) == "" {
@@ -144,7 +144,7 @@ func (h *Handler) HandleXBrokerHomeTimeline() http.HandlerFunc {
 		result, err := h.X.HomeTimeline(r.Context(), token.AccessToken, xUser.ID, limit)
 		if err != nil {
 			slog.Error("x broker home timeline failed", "user_id", user.ID, "x_user_id", xUser.ID, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x home timeline failed")
+			writeBrokerXError(w, err, "x home timeline failed")
 			return
 		}
 		allowed, err := h.recordXPostReads(r.Context(), user.ID, "home_timeline", len(result.Posts), quota, map[string]any{
@@ -179,7 +179,7 @@ func (h *Handler) HandleXBrokerTweetByID() http.HandlerFunc {
 		post, err := h.X.TweetByID(r.Context(), token.AccessToken, tweetID)
 		if err != nil {
 			slog.Error("x broker tweet lookup failed", "user_id", user.ID, "tweet_id", tweetID, "err", err)
-			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x tweet lookup failed")
+			writeBrokerXError(w, err, "x tweet lookup failed")
 			return
 		}
 		quantity := 0
@@ -369,6 +369,24 @@ func parseBrokerLimit(r *http.Request, fallback int) int {
 func writeBrokerJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeBrokerXError(w http.ResponseWriter, err error, fallbackMessage string) {
+	var xErr *XStatusError
+	if errors.As(err, &xErr) {
+		switch {
+		case xErr.CreditsDepleted():
+			writeBrokerError(w, http.StatusPaymentRequired, "x_credits_depleted", "X API credits depleted. Refill the X developer account credits or wait until credits are available again.")
+		case xErr.StatusCode == http.StatusTooManyRequests:
+			writeBrokerError(w, http.StatusTooManyRequests, "x_rate_limited", "X API rate limit exceeded")
+		case xErr.StatusCode == http.StatusUnauthorized || xErr.StatusCode == http.StatusForbidden:
+			writeBrokerError(w, http.StatusForbidden, "x_reconnect_required", "x account must be reconnected")
+		default:
+			writeBrokerError(w, http.StatusBadGateway, "x_failed", fallbackMessage)
+		}
+		return
+	}
+	writeBrokerError(w, http.StatusBadGateway, "x_failed", fallbackMessage)
 }
 
 func writeBrokerError(w http.ResponseWriter, status int, code, message string) {
