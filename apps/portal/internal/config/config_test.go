@@ -107,6 +107,8 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 		"CONNECT_X_AUTH_URL":           "http://x-oauth.local/auth",
 		"CONNECT_X_TOKEN_URL":          "http://x-oauth.local/token",
 		"CONNECT_X_USERINFO_URL":       "http://x-oauth.local/users/me",
+		"CONNECT_X_API_BASE_URL":       "http://x-api.local/2/",
+		"CONNECT_TOKEN_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))),
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -146,6 +148,43 @@ func TestConfig_LoadConnectSettings(t *testing.T) {
 	}
 	if cfg.ConnectXUserInfoURL != "http://x-oauth.local/users/me" {
 		t.Fatalf("ConnectXUserInfoURL = %q", cfg.ConnectXUserInfoURL)
+	}
+	if cfg.ConnectXAPIBaseURL != "http://x-api.local/2" {
+		t.Fatalf("ConnectXAPIBaseURL = %q", cfg.ConnectXAPIBaseURL)
+	}
+	if len(cfg.ConnectTokenEncryptionKey) != 32 {
+		t.Fatalf("ConnectTokenEncryptionKey len = %d, want 32", len(cfg.ConnectTokenEncryptionKey))
+	}
+}
+
+func TestConfig_LoadConnectTokenEncryptionKeyRequiredForX(t *testing.T) {
+	pemStr := generatePEM(t, 2048)
+	b64 := base64.StdEncoding.EncodeToString([]byte(pemStr))
+
+	_, err := loadWithEnv(t, map[string]string{
+		"JWT_PRIVATE_KEY_PEM_B64": b64,
+		"CONNECT_BASE_URL":        "https://connect.kittypaw.app",
+		"CONNECT_X_CLIENT_ID":     "x-client-id",
+		"CONNECT_X_CLIENT_SECRET": "x-secret",
+	})
+	if err == nil || !strings.Contains(err.Error(), "CONNECT_TOKEN_ENCRYPTION_KEY") {
+		t.Fatalf("Load err = %v, want CONNECT_TOKEN_ENCRYPTION_KEY error", err)
+	}
+}
+
+func TestConfig_LoadConnectTokenEncryptionKeyRejectsMalformed(t *testing.T) {
+	pemStr := generatePEM(t, 2048)
+	b64 := base64.StdEncoding.EncodeToString([]byte(pemStr))
+
+	_, err := loadWithEnv(t, map[string]string{
+		"JWT_PRIVATE_KEY_PEM_B64":      b64,
+		"CONNECT_BASE_URL":             "https://connect.kittypaw.app",
+		"CONNECT_X_CLIENT_ID":          "x-client-id",
+		"CONNECT_X_CLIENT_SECRET":      "x-secret",
+		"CONNECT_TOKEN_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte("short")),
+	})
+	if err == nil || !strings.Contains(err.Error(), "32 bytes") {
+		t.Fatalf("Load err = %v, want key length error", err)
 	}
 }
 

@@ -94,7 +94,16 @@ func run() error {
 		return fmt.Errorf("seed connect policies: %w", err)
 	}
 
-	router, cleanup := NewRouter(cfg, userStore, refreshStore, deviceStore, connectAdminStore)
+	var connectTokenStore connect.BrokerTokenStore
+	if len(cfg.ConnectTokenEncryptionKey) > 0 {
+		cipher, err := connect.NewTokenCipher(cfg.ConnectTokenEncryptionKey)
+		if err != nil {
+			return fmt.Errorf("connect token cipher: %w", err)
+		}
+		connectTokenStore = connect.NewPostgresTokenStore(pool, cipher)
+	}
+
+	router, cleanup := NewRouter(cfg, userStore, refreshStore, deviceStore, connectAdminStore, WithConnectTokenStore(connectTokenStore))
 	defer cleanup()
 
 	go janitor.New(deviceStore, refreshStore, janitor.DefaultPolicy, nil).Run(ctx)
@@ -166,10 +175,26 @@ func serveHTTP(srv *http.Server, unixSocket string) error {
 	return srv.Serve(ln)
 }
 
+type RouterOptions struct {
+	ConnectTokenStore connect.BrokerTokenStore
+}
+
+type RouterOption func(*RouterOptions)
+
+func WithConnectTokenStore(store connect.BrokerTokenStore) RouterOption {
+	return func(opts *RouterOptions) {
+		opts.ConnectTokenStore = store
+	}
+}
+
 // NewRouter builds the portal router and returns it with a cleanup hook
 // for the in-memory state stores and rate limiter.
-func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model.RefreshTokenStore, deviceStore model.DeviceStore, connectAdminStore connectadmin.Store) (*chi.Mux, func()) {
+func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model.RefreshTokenStore, deviceStore model.DeviceStore, connectAdminStore connectadmin.Store, options ...RouterOption) (*chi.Mux, func()) {
 	r := chi.NewRouter()
+	var routerOpts RouterOptions
+	for _, option := range options {
+		option(&routerOpts)
+	}
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
@@ -261,6 +286,7 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 				ClientID:     cfg.ConnectXClientID,
 				ClientSecret: cfg.ConnectXClientSecret,
 				BaseURL:      cfg.ConnectBaseURL,
+				APIBaseURL:   cfg.ConnectXAPIBaseURL,
 				AuthURL:      cfg.ConnectXAuthURL,
 				TokenURL:     cfg.ConnectXTokenURL,
 				UserInfoURL:  cfg.ConnectXUserInfoURL,
@@ -269,6 +295,7 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			connectCodes,
 		)
 		connectHandler.PreauthStore = connect.NewPreauthStore(connect.PreauthStoreOptions{})
+		connectHandler.TokenStore = routerOpts.ConnectTokenStore
 		connectHandler.Entitlements = connectAdminStore
 		r.Group(func(r chi.Router) {
 			r.Use(connectOnly)
@@ -282,6 +309,10 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.Post("/connect/cli/exchange", connectHandler.HandleCLIExchange())
 			r.Post("/connect/gmail/refresh", connectHandler.HandleGmailRefresh())
 			r.Post("/connect/x/refresh", connectHandler.HandleXRefresh())
+			r.With(authMW).Get("/connect/x/broker/search/recent", connectHandler.HandleXBrokerSearchRecent())
+			r.With(authMW).Get("/connect/x/broker/users/by/username/{username}", connectHandler.HandleXBrokerUserByUsername())
+			r.With(authMW).Get("/connect/x/broker/users/by/username/{username}/tweets", connectHandler.HandleXBrokerUserPostsByUsername())
+			r.With(authMW).Get("/connect/x/broker/tweets/{id}", connectHandler.HandleXBrokerTweetByID())
 		})
 	}
 

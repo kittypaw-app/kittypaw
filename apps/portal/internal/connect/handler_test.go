@@ -91,6 +91,26 @@ func (c fakeEntitlementChecker) UserAllowed(context.Context, string, string) (bo
 	return c.allowed, nil
 }
 
+type fakeQuotaEntitlementChecker struct {
+	allowed bool
+	quota   map[string]any
+	err     error
+}
+
+func (c fakeQuotaEntitlementChecker) UserAllowed(context.Context, string, string) (bool, error) {
+	if c.err != nil {
+		return false, c.err
+	}
+	return c.allowed, nil
+}
+
+func (c fakeQuotaEntitlementChecker) UserQuotaJSON(context.Context, string, string) (map[string]any, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.quota, nil
+}
+
 func TestHandlerGmailLoginRedirectsToGoogle(t *testing.T) {
 	h, _, _, fakeGoogle := testHandler(t)
 
@@ -215,6 +235,85 @@ func TestHandlerRefresh(t *testing.T) {
 	}
 	if tokens.AccessToken != "gmail-access-2" || tokens.RefreshToken != "" {
 		t.Fatalf("tokens = %#v", tokens)
+	}
+}
+
+func TestXBrokerSearchRecentRecordsUsage(t *testing.T) {
+	fakeX := newFakeXAPIServer(t, 2)
+	tokenStore := NewMemoryTokenStore(time.Now())
+	if err := tokenStore.SaveProviderToken(context.Background(), ProviderTokenRecord{
+		UserID:      "user-1",
+		ProviderID:  XProviderID,
+		AccessToken: "x-access",
+		TokenType:   "Bearer",
+	}); err != nil {
+		t.Fatalf("SaveProviderToken: %v", err)
+	}
+
+	h, _, _, _ := testHandler(t)
+	h.X = NewXProvider(XConfig{APIBaseURL: fakeX.URL + "/2"}, fakeX.Client())
+	h.TokenStore = tokenStore
+	h.Entitlements = fakeQuotaEntitlementChecker{
+		allowed: true,
+		quota:   map[string]any{"monthly_post_reads": float64(5)},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/connect/x/broker/search/recent?query=kittypaw&limit=10", nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1", Email: "alice@example.com"}))
+	w := httptest.NewRecorder()
+
+	h.HandleXBrokerSearchRecent()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body.String())
+	}
+	var body XPostsResult
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Posts) != 2 {
+		t.Fatalf("posts len = %d, want 2", len(body.Posts))
+	}
+}
+
+func TestXBrokerSearchRecentBlocksOverMonthlyQuota(t *testing.T) {
+	fakeX := newFakeXAPIServer(t, 2)
+	tokenStore := NewMemoryTokenStore(time.Now())
+	if err := tokenStore.SaveProviderToken(context.Background(), ProviderTokenRecord{
+		UserID:      "user-1",
+		ProviderID:  XProviderID,
+		AccessToken: "x-access",
+		TokenType:   "Bearer",
+	}); err != nil {
+		t.Fatalf("SaveProviderToken: %v", err)
+	}
+
+	h, _, _, _ := testHandler(t)
+	h.X = NewXProvider(XConfig{APIBaseURL: fakeX.URL + "/2"}, fakeX.Client())
+	h.TokenStore = tokenStore
+	h.Entitlements = fakeQuotaEntitlementChecker{
+		allowed: true,
+		quota:   map[string]any{"monthly_post_reads": float64(1)},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/connect/x/broker/search/recent?query=kittypaw&limit=10", nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1", Email: "alice@example.com"}))
+	w := httptest.NewRecorder()
+
+	h.HandleXBrokerSearchRecent()(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestXBrokerSearchRecentRequiresAuthenticatedUser(t *testing.T) {
+	h, _, _, _ := testHandler(t)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/connect/x/broker/search/recent?query=kittypaw", nil)
+
+	h.HandleXBrokerSearchRecent()(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -464,4 +563,30 @@ func extractDisplayCode(t *testing.T, body string) string {
 		t.Fatalf("body missing data-code terminator: %s", body)
 	}
 	return body[start : start+end]
+}
+
+func newFakeXAPIServer(t *testing.T, postCount int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer x-access" {
+			t.Errorf("Authorization = %q, want Bearer x-access", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/2/tweets/search/recent", "/2/users/u1/tweets":
+			posts := make([]string, 0, postCount)
+			for i := 0; i < postCount; i++ {
+				posts = append(posts, fmt.Sprintf(`{"id":"p%d","text":"post %d","author_id":"u1"}`, i+1, i+1))
+			}
+			fmt.Fprintf(w, `{"data":[%s],"includes":{"users":[{"id":"u1","username":"jaypark","name":"Jay Park"}]}}`, strings.Join(posts, ","))
+		case "/2/users/by/username/jaypark":
+			fmt.Fprint(w, `{"data":{"id":"u1","username":"jaypark","name":"Jay Park"}}`)
+		case "/2/tweets/p1":
+			fmt.Fprint(w, `{"data":{"id":"p1","text":"post 1","author_id":"u1"},"includes":{"users":[{"id":"u1","username":"jaypark","name":"Jay Park"}]}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }

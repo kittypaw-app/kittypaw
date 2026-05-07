@@ -17,6 +17,7 @@ import (
 // MinJWTKeyBits is the lower bound for RSA signing keys. Below this is
 // not considered safe for production token signing in the present era.
 const MinJWTKeyBits = 2048
+const connectTokenEncryptionKeyBytes = 32
 
 type Config struct {
 	Port                      string
@@ -40,6 +41,8 @@ type Config struct {
 	ConnectXAuthURL           string
 	ConnectXTokenURL          string
 	ConnectXUserInfoURL       string
+	ConnectXAPIBaseURL        string
+	ConnectTokenEncryptionKey []byte
 	SpaceBaseURL              string
 	GitHubClientID            string
 	GitHubClientSecret        string
@@ -79,6 +82,7 @@ func Load() (*Config, error) {
 		ConnectXAuthURL:           os.Getenv("CONNECT_X_AUTH_URL"),
 		ConnectXTokenURL:          os.Getenv("CONNECT_X_TOKEN_URL"),
 		ConnectXUserInfoURL:       os.Getenv("CONNECT_X_USERINFO_URL"),
+		ConnectXAPIBaseURL:        strings.TrimRight(os.Getenv("CONNECT_X_API_BASE_URL"), "/"),
 		SpaceBaseURL:              strings.TrimRight(env("SPACE_BASE_URL", ""), "/"),
 		GitHubClientID:            os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:        os.Getenv("GITHUB_CLIENT_SECRET"),
@@ -133,6 +137,9 @@ func Load() (*Config, error) {
 	if c.APIBaseURL == "" {
 		c.APIBaseURL = c.BaseURL
 	}
+	if err := loadConnectTokenEncryptionKey(c); err != nil {
+		return nil, err
+	}
 
 	if allow := os.Getenv("WEB_REDIRECT_URI_ALLOWLIST"); allow != "" {
 		// Trim whitespace per entry — operators sometimes wrap CSVs across
@@ -169,6 +176,7 @@ func LoadForTest() *Config {
 		ConnectGoogleClientSecret: "connect-secret",
 		ConnectXClientID:          "x-connect-client-id",
 		ConnectXClientSecret:      "x-connect-secret",
+		ConnectTokenEncryptionKey: []byte("0123456789abcdef0123456789abcdef"),
 		SpaceBaseURL:              "https://space.kittypaw.app",
 		APIBaseURL:                env("BASE_URL", "http://localhost:8080"),
 		AllowedOrigins:            []string{"http://localhost:8080"},
@@ -203,6 +211,24 @@ func loadForTestKey() (*rsa.PrivateKey, string) {
 		loadForTestKeyKID = kid
 	})
 	return loadForTestKeyPriv, loadForTestKeyKID
+}
+
+func loadConnectTokenEncryptionKey(c *Config) error {
+	raw := strings.TrimSpace(os.Getenv("CONNECT_TOKEN_ENCRYPTION_KEY"))
+	if raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return fmt.Errorf("decode CONNECT_TOKEN_ENCRYPTION_KEY (base64): %w", err)
+		}
+		if len(key) != connectTokenEncryptionKeyBytes {
+			return fmt.Errorf("CONNECT_TOKEN_ENCRYPTION_KEY must decode to %d bytes, got %d", connectTokenEncryptionKeyBytes, len(key))
+		}
+		c.ConnectTokenEncryptionKey = key
+	}
+	if c.ConnectBaseURL != "" && c.ConnectXClientID != "" && c.ConnectXClientSecret != "" && len(c.ConnectTokenEncryptionKey) == 0 {
+		return fmt.Errorf("CONNECT_TOKEN_ENCRYPTION_KEY is required when Connect X is configured")
+	}
+	return nil
 }
 
 func env(key, fallback string) string {

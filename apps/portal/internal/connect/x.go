@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type XConfig struct {
 	ClientID     string
 	ClientSecret string
 	BaseURL      string
+	APIBaseURL   string
 	AuthURL      string
 	TokenURL     string
 	UserInfoURL  string
@@ -41,6 +43,7 @@ func NewXProvider(cfg XConfig, client *http.Client) *XProvider {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	cfg.APIBaseURL = strings.TrimRight(cfg.APIBaseURL, "/")
 	return &XProvider{cfg: cfg, client: client}
 }
 
@@ -154,8 +157,191 @@ func (p *XProvider) fetchUsername(ctx context.Context, accessToken string) (stri
 	return body.Data.Username, nil
 }
 
+type XUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	Verified bool   `json:"verified,omitempty"`
+}
+
+type XPost struct {
+	ID            string           `json:"id"`
+	Text          string           `json:"text"`
+	AuthorID      string           `json:"author_id,omitempty"`
+	CreatedAt     string           `json:"created_at,omitempty"`
+	Lang          string           `json:"lang,omitempty"`
+	PublicMetrics map[string]int64 `json:"public_metrics,omitempty"`
+	Author        *XUser           `json:"author,omitempty"`
+}
+
+type XPostsResult struct {
+	Posts []XPost `json:"posts"`
+}
+
+func (p *XProvider) SearchRecent(ctx context.Context, accessToken, query string, maxResults int) (XPostsResult, error) {
+	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/tweets/search/recent")
+	if err != nil {
+		return XPostsResult{}, err
+	}
+	q := req.URL.Query()
+	q.Set("query", strings.TrimSpace(query))
+	q.Set("max_results", strconv.Itoa(normalizeXMaxResults(maxResults)))
+	addXPostFields(q)
+	req.URL.RawQuery = q.Encode()
+	return p.doPosts(req)
+}
+
+func (p *XProvider) UserByUsername(ctx context.Context, accessToken, username string) (XUser, error) {
+	clean := strings.TrimPrefix(strings.TrimSpace(username), "@")
+	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/users/by/username/"+url.PathEscape(clean))
+	if err != nil {
+		return XUser{}, err
+	}
+	q := req.URL.Query()
+	q.Set("user.fields", "username,name,verified")
+	req.URL.RawQuery = q.Encode()
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return XUser{}, fmt.Errorf("x user request: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := xStatusError(resp); err != nil {
+		return XUser{}, err
+	}
+	var body struct {
+		Data XUser `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return XUser{}, fmt.Errorf("decode x user: %w", err)
+	}
+	return body.Data, nil
+}
+
+func (p *XProvider) UserPosts(ctx context.Context, accessToken, userID string, maxResults int) (XPostsResult, error) {
+	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/users/"+url.PathEscape(strings.TrimSpace(userID))+"/tweets")
+	if err != nil {
+		return XPostsResult{}, err
+	}
+	q := req.URL.Query()
+	q.Set("max_results", strconv.Itoa(normalizeXMaxResults(maxResults)))
+	addXPostFields(q)
+	req.URL.RawQuery = q.Encode()
+	return p.doPosts(req)
+}
+
+func (p *XProvider) TweetByID(ctx context.Context, accessToken, id string) (XPost, error) {
+	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/tweets/"+url.PathEscape(strings.TrimSpace(id)))
+	if err != nil {
+		return XPost{}, err
+	}
+	q := req.URL.Query()
+	addXPostFields(q)
+	req.URL.RawQuery = q.Encode()
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return XPost{}, fmt.Errorf("x tweet request: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := xStatusError(resp); err != nil {
+		return XPost{}, err
+	}
+	var body struct {
+		Data     XPost `json:"data"`
+		Includes struct {
+			Users []XUser `json:"users"`
+		} `json:"includes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return XPost{}, fmt.Errorf("decode x tweet: %w", err)
+	}
+	post := body.Data
+	for _, user := range body.Includes.Users {
+		if user.ID == post.AuthorID {
+			u := user
+			post.Author = &u
+			break
+		}
+	}
+	return post, nil
+}
+
+func (p *XProvider) newAPIRequest(ctx context.Context, accessToken, method, path string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, p.apiBaseURL()+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	return req, nil
+}
+
+func (p *XProvider) doPosts(req *http.Request) (XPostsResult, error) {
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return XPostsResult{}, fmt.Errorf("x posts request: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := xStatusError(resp); err != nil {
+		return XPostsResult{}, err
+	}
+	var body struct {
+		Data     []XPost `json:"data"`
+		Includes struct {
+			Users []XUser `json:"users"`
+		} `json:"includes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return XPostsResult{}, fmt.Errorf("decode x posts: %w", err)
+	}
+	attachXAuthors(body.Data, body.Includes.Users)
+	return XPostsResult{Posts: body.Data}, nil
+}
+
+func attachXAuthors(posts []XPost, users []XUser) {
+	byID := make(map[string]XUser, len(users))
+	for _, user := range users {
+		byID[user.ID] = user
+	}
+	for i := range posts {
+		if user, ok := byID[posts[i].AuthorID]; ok {
+			u := user
+			posts[i].Author = &u
+		}
+	}
+}
+
+func addXPostFields(q url.Values) {
+	q.Set("tweet.fields", "created_at,author_id,public_metrics,lang")
+	q.Set("expansions", "author_id")
+	q.Set("user.fields", "username,name,verified")
+}
+
+func normalizeXMaxResults(maxResults int) int {
+	if maxResults < 10 {
+		return 10
+	}
+	if maxResults > 100 {
+		return 100
+	}
+	return maxResults
+}
+
+func xStatusError(resp *http.Response) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return fmt.Errorf("x response %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
 func (p *XProvider) redirectURL() string {
 	return strings.TrimRight(p.cfg.BaseURL, "/") + "/connect/x/callback"
+}
+
+func (p *XProvider) apiBaseURL() string {
+	if p.cfg.APIBaseURL != "" {
+		return p.cfg.APIBaseURL
+	}
+	return "https://api.x.com/2"
 }
 
 func (p *XProvider) authURL() string {

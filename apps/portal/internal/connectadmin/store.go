@@ -287,6 +287,32 @@ func (s *PostgresStore) UserAllowed(ctx context.Context, userID, providerID stri
 	return status == EntitlementAllowed && !revoked, nil
 }
 
+func (s *PostgresStore) UserQuotaJSON(ctx context.Context, userID, providerID string) (map[string]any, error) {
+	var quotaJSON []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT quota_json
+		FROM connect_user_entitlements
+		WHERE user_id = $1 AND provider_id = $2 AND status = $3 AND revoked_at IS NULL
+	`, userID, providerID, EntitlementAllowed).Scan(&quotaJSON)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if len(quotaJSON) == 0 {
+		return map[string]any{}, nil
+	}
+	var quota map[string]any
+	if err := json.Unmarshal(quotaJSON, &quota); err != nil {
+		return nil, fmt.Errorf("decode entitlement quota: %w", err)
+	}
+	if quota == nil {
+		quota = map[string]any{}
+	}
+	return quota, nil
+}
+
 func (s *PostgresStore) AppendAuditEvent(ctx context.Context, e AuditEvent) error {
 	return appendAuditEvent(ctx, s.pool, e)
 }
