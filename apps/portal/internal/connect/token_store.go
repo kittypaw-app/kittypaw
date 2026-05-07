@@ -124,10 +124,14 @@ func (s *PostgresTokenStore) SaveProviderToken(ctx context.Context, record Provi
 			return err
 		}
 	}
+	var refreshArg any
+	if len(refreshCiphertext) > 0 {
+		refreshArg = refreshCiphertext
+	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO connect_provider_tokens
 			(user_id, provider_id, access_token_ciphertext, refresh_token_ciphertext, token_type, scope, username, expires_at, updated_at)
-		VALUES ($1, $2, $3, nullif($4, '')::bytea, $5, $6, $7, $8, now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
 		ON CONFLICT (user_id, provider_id)
 		DO UPDATE SET access_token_ciphertext = excluded.access_token_ciphertext,
 			refresh_token_ciphertext = excluded.refresh_token_ciphertext,
@@ -136,7 +140,7 @@ func (s *PostgresTokenStore) SaveProviderToken(ctx context.Context, record Provi
 			username = excluded.username,
 			expires_at = excluded.expires_at,
 			updated_at = now()
-	`, record.UserID, record.ProviderID, accessCiphertext, refreshCiphertext, nonEmpty(record.TokenType, "Bearer"), record.Scope, record.Username, record.ExpiresAt)
+	`, record.UserID, record.ProviderID, accessCiphertext, refreshArg, nonEmpty(record.TokenType, "Bearer"), record.Scope, record.Username, record.ExpiresAt)
 	return err
 }
 
