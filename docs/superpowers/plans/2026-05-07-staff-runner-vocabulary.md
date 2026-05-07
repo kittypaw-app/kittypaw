@@ -1202,6 +1202,7 @@ Expected: results remain only for these allowed cases:
 
 ```text
 HTTP User-Agent
+browser profile directories
 macOS LaunchAgent
 .agents/skills or upstream agent registry paths
 OAuth scope literal "profile"
@@ -1300,7 +1301,7 @@ Use `superpowers:requesting-code-review` after all tests pass. Ask the reviewer 
 
 ```text
 Breaking rename completeness
-Accidental removal of unrelated platform LaunchAgent/User-Agent terms
+Accidental removal of unrelated platform LaunchAgent/User-Agent/browser profile terms
 SQLite profile_meta to staff_meta migration correctness
 Staff filesystem migration from profiles/ to staff/
 Runner.observe behavior parity with the old observe flow

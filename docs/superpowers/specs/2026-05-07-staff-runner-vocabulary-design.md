@@ -19,8 +19,9 @@ use Staff and Runner after this change.
 
 - Do not keep pre-rename compatibility aliases in the public
   skill surface, API surface, or CLI command surface.
-- Do not rename unrelated platform terms such as HTTP User-Agent, macOS
-  LaunchAgent, or upstream .agents skill registry paths.
+- Do not rename unrelated platform terms such as HTTP User-Agent, browser
+  profile directories, macOS LaunchAgent, or upstream .agents skill registry
+  paths.
 - Do not change SOUL.md as a file name.
 - Do not expand Kanban behavior beyond naming updates required by this
   vocabulary change.
