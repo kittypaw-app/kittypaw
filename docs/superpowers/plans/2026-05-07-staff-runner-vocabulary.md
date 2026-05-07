@@ -403,7 +403,7 @@ func TestStaffMetaCRUD(t *testing.T) {
 }
 ```
 
-Add a migration test that seeds old `legacy_staff_meta` through migrations up to 023 and then opens the current store. Use the existing migration helpers in the file; if there is no helper, create the table manually before opening the store:
+Add a migration test that seeds old `profile_meta` through migrations up to 023 and then opens the current store. Use the existing migration helpers in the file; if there is no helper, create the table manually before opening the store:
 
 ```go
 func TestMigrationLegacyStaffMetaToStaffMeta(t *testing.T) {
@@ -412,7 +412,7 @@ func TestMigrationLegacyStaffMetaToStaffMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`CREATE TABLE legacy_staff_meta (
+	if _, err := db.Exec(`CREATE TABLE profile_meta (
 		id TEXT PRIMARY KEY,
 		description TEXT NOT NULL DEFAULT '',
 		equipped_skills TEXT NOT NULL DEFAULT '[]',
@@ -422,7 +422,7 @@ func TestMigrationLegacyStaffMetaToStaffMeta(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO legacy_staff_meta (id, description, equipped_skills, active, created_by, created_at)
+	if _, err := db.Exec(`INSERT INTO profile_meta (id, description, equipped_skills, active, created_by, created_at)
 		VALUES ('coder', 'Code staff', '["git"]', 1, 'test', '2026-05-07T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
@@ -470,9 +470,9 @@ CREATE TABLE IF NOT EXISTS staff_meta (
 
 INSERT OR IGNORE INTO staff_meta (id, description, equipped_skills, active, created_by, created_at)
 SELECT id, description, equipped_skills, active, created_by, created_at
-FROM legacy_staff_meta;
+FROM profile_meta;
 
-DROP TABLE IF EXISTS legacy_staff_meta;
+DROP TABLE IF EXISTS profile_meta;
 ```
 
 - [ ] **Step 4: Rename store types and methods**
@@ -1196,18 +1196,18 @@ git commit -m "refactor(api): rename public legacy_staff surface to staff"
 Run:
 
 ```sh
-rg -n '\b(LegacyStaff|legacy_staff|LegacyIdentity|legacy_identity|LegacyRunner|legacy_runner|legacy staff dirs|legacy_staff_meta|legacy_active_staff)\b' apps/kittypaw docs/superpowers/specs docs/superpowers/plans
+rg -n '\b(LegacyStaff|legacy_staff|LegacyIdentity|legacy_identity|LegacyRunner|legacy_runner|legacy staff dirs|profile_meta|legacy_active_staff)\b' apps/kittypaw docs/superpowers/specs docs/superpowers/plans
 ```
 
 Expected: results remain only for these allowed cases:
 
 ```text
 HTTP User-Agent
-macOS LaunchLegacyRunner
-.agents/skills or upstream legacy_runner registry paths
-OAuth scope literal "legacy_staff"
+macOS LaunchAgent
+.agents/skills or upstream agent registry paths
+OAuth scope literal "profile"
 historical migration comments that explicitly describe old data being moved
-root CLI tests asserting legacy_identity and legacy_runner commands are absent
+root CLI tests asserting persona and agent commands are absent
 ```
 
 - [ ] **Step 2: Update docs with Staff and Runner wording**
@@ -1259,7 +1259,7 @@ Expected: both PASS with no whitespace errors.
 Run:
 
 ```sh
-rg -n '\b(LegacyStaff|legacy_staff|LegacyIdentity|legacy_identity|LegacyRunner|legacy_runner|legacy staff dirs|legacy_staff_meta|legacy_active_staff)\b' apps/kittypaw docs/superpowers/specs docs/superpowers/plans
+rg -n '\b(LegacyStaff|legacy_staff|LegacyIdentity|legacy_identity|LegacyRunner|legacy_runner|legacy staff dirs|profile_meta|legacy_active_staff)\b' apps/kittypaw docs/superpowers/specs docs/superpowers/plans
 ```
 
 Expected: every remaining result fits the allowed list from Step 1. If a result describes KittyPaw identity or runtime behavior, replace it with Staff, Runner, Account, or Conversation before committing.
@@ -1305,8 +1305,8 @@ Use `superpowers:requesting-code-review` after all tests pass. Ask the reviewer 
 
 ```text
 Breaking rename completeness
-Accidental removal of unrelated platform LegacyRunner/User-Agent terms
-SQLite legacy_staff_meta to staff_meta migration correctness
-Staff filesystem migration from legacy staff dirs/ to staff/
+Accidental removal of unrelated platform LaunchAgent/User-Agent terms
+SQLite profile_meta to staff_meta migration correctness
+Staff filesystem migration from profiles/ to staff/
 Runner.observe behavior parity with the old observe flow
 ```

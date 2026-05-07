@@ -73,7 +73,7 @@ Hop-by-hop headers (`Host`, `Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, 
 
 SSRF validation (`validateHTTPTarget`): explicit `allowed_hosts` in `package.toml` takes priority over private IP blocking — packages can declare `allowed_hosts = ["localhost"]` to reach local API servers. The package resolver validates URLs against the package's AllowedHosts and stores the validated hostname in context; `executeHTTP` verifies the actual request hostname matches.
 
-## MoA (Mixture of Agents)
+## MoA (Multi-Model Aggregation)
 
 `Moa.query(prompt, options?)` JS skill runs parallel fan-out to multiple named models from config `[[models]]`, then synthesizes the responses via the Default model. Implemented in `engine/moa.go`. Public core: `QueryMoA(ctx, MoARequest, ProviderResolver, *SharedTokenBudget)`; the JS adapter `executeMoA` in the same file fills `MoARequest.Models` from `s.Config.Models` and `SynthesizerModel` from the `Default=true` entry when the caller omits them.
 

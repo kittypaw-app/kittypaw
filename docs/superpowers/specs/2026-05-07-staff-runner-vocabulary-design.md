@@ -20,7 +20,7 @@ use Staff and Runner after this change.
 - Do not keep LegacyStaff, LegacyIdentity, or LegacyRunner as compatibility aliases in the public
   skill surface, API surface, or CLI command surface.
 - Do not rename unrelated platform terms such as HTTP User-Agent, macOS
-  LaunchLegacyRunner, or upstream .agents skill registry paths.
+  LaunchAgent, or upstream .agents skill registry paths.
 - Do not change SOUL.md as a file name.
 - Do not expand Kanban behavior beyond naming updates required by this
   vocabulary change.
@@ -58,7 +58,7 @@ Core code:
 Store:
 
 - store.LegacyStaffMeta becomes store.StaffMeta.
-- legacy_staff_meta becomes staff_meta through a new SQLite migration.
+- profile_meta becomes staff_meta through a new SQLite migration.
 - Store methods are renamed to UpsertStaffMeta, GetStaffMeta,
   ListActiveStaff, SetStaffActive, and UpdateEquippedStaffSkills.
 - user_context keys change from legacy_active_staff:<conversation> to
@@ -116,12 +116,12 @@ Docs and Kanban:
 The rename is breaking at the API and code level, but existing local data should
 not be discarded.
 
-SQLite should receive a new migration that renames legacy_staff_meta to staff_meta
-or creates staff_meta from legacy_staff_meta and then drops the old table. Runtime
+SQLite should receive a new migration that renames profile_meta to staff_meta
+or creates staff_meta from profile_meta and then drops the old table. Runtime
 code must reference only staff_meta after the migration.
 
 Filesystem migration should run through the existing account migration path. If
-an account has legacy staff dirs/ and does not have staff/, rename legacy staff dirs/ to staff/.
+an account has legacy staff dirs/ and does not have staff/, rename profiles/ to staff/.
 If both exist, leave both untouched and prefer staff/ so the operator can
 resolve the conflict manually. The implementation should surface a clear log or
 error for this conflict where the existing migration pattern supports it.
@@ -150,7 +150,7 @@ Focused tests should cover:
 
 - staff directory loading, default staff creation, presets, dirty detection, and
   invalid StaffID validation.
-- account setup and account migration from legacy staff dirs/ to staff/.
+- account setup and account migration from profiles/ to staff/.
 - staff_meta migration and store CRUD methods.
 - Staff.switch and active_staff resolution.
 - Staff.create creates metadata and returns staff terminology.

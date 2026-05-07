@@ -5,8 +5,8 @@ Status: Approved for implementation by user design approval
 
 ## Goal
 
-Expose durable Kanban operations to the JavaScript skill sandbox so agents and
-future Kanban workers can inspect and update tasks without shelling out to the
+Expose durable Kanban operations to the JavaScript skill sandbox so runners and
+future Kanban staff runners can inspect and update tasks without shelling out to the
 CLI.
 
 ## Scope

@@ -8,7 +8,7 @@ browser servers remain out of scope for this feature.
 
 ## Goal
 
-Give KittyPaw agents a built-in `Browser` tool that can launch and control a
+Give KittyPaw runners a built-in `Browser` tool that can launch and control a
 local Chrome/Chromium instance through the Chrome DevTools Protocol (CDP).
 The user should not need to start Chrome with debugging flags by hand.
 

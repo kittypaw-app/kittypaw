@@ -1,6 +1,6 @@
 # KittyPaw
 
-Experimental Go framework for local AI agents. Single binary, goja JS sandbox,
+Experimental Go framework for local AI runners. Single binary, goja JS sandbox,
 5 channel adapters, skill registry. **Alpha** — honest status over polish.
 
 ## Status
