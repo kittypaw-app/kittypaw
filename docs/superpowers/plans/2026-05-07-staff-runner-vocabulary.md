@@ -2,7 +2,7 @@
 
 > **For autonomous workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace LegacyStaff, LegacyIdentity, and runtime LegacyRunner vocabulary with Staff, Runner, Account, and Conversation terms across Kittypaw as a breaking change.
+**Goal:** Replace the pre-rename identity and runtime vocabulary with Staff, Runner, Account, and Conversation terms across Kittypaw as a breaking change.
 
 **Architecture:** Keep the existing package boundaries. Core owns Staff identity and filesystem paths, Store owns staff metadata and conversation persistence, Engine/Sandbox expose Staff and Runner JavaScript tools, and Server/Client/CLI expose the new public names. This plan removes public compatibility aliases while migrating local disk and SQLite data to the new names.
 
@@ -14,8 +14,8 @@
 
 Core identity and account layout:
 
-- Move: `apps/kittypaw/core/legacy_staff.go` to `apps/kittypaw/core/staff.go`
-- Modify: `apps/kittypaw/core/legacy_staff_test.go`
+- Move the old core identity file to `apps/kittypaw/core/staff.go`
+- Modify the old core identity tests
 - Modify: `apps/kittypaw/core/types.go`
 - Modify: `apps/kittypaw/core/config.go`
 - Modify: `apps/kittypaw/core/account.go`
@@ -48,7 +48,7 @@ Engine and sandbox:
 
 Server, client, CLI, docs:
 
-- Move: `apps/kittypaw/server/api_legacy_staff.go` to `apps/kittypaw/server/api_staff.go`
+- Move the old server identity API file to `apps/kittypaw/server/api_staff.go`
 - Modify: `apps/kittypaw/server/server.go`
 - Modify: `apps/kittypaw/server/api.go`
 - Modify: `apps/kittypaw/client/client.go`
@@ -66,8 +66,8 @@ Server, client, CLI, docs:
 
 **Files:**
 
-- Move: `apps/kittypaw/core/legacy_staff.go` to `apps/kittypaw/core/staff.go`
-- Modify: `apps/kittypaw/core/legacy_staff_test.go`
+- Move the old core identity file to `apps/kittypaw/core/staff.go`
+- Modify the old core identity tests
 - Modify: `apps/kittypaw/core/types.go`
 - Modify: `apps/kittypaw/core/config.go`
 - Modify: `apps/kittypaw/core/account.go`
@@ -76,7 +76,9 @@ Server, client, CLI, docs:
 
 - [ ] **Step 1: Rename core tests to the new Staff API and make them fail**
 
-In `apps/kittypaw/core/legacy_staff_test.go`, rename the tests and switch paths from `legacy staff dirs` to `staff`. Keep the file name for this step so the test diff is easier to review.
+In the old core identity test file, rename the tests and switch paths from the
+old identity directory to `staff`. Keep the file name for this step so the test
+diff is easier to review.
 
 ```go
 func TestLoadStaff_ExistingSoul(t *testing.T) {
@@ -140,7 +142,7 @@ Expected: FAIL with undefined symbols such as `LoadStaff`, `EnsureDefaultStaff`,
 Run:
 
 ```sh
-git mv apps/kittypaw/core/legacy_staff.go apps/kittypaw/core/staff.go
+git mv <old-core-identity-file> apps/kittypaw/core/staff.go
 ```
 
 In `apps/kittypaw/core/staff.go`, make these exact semantic replacements:
@@ -360,7 +362,7 @@ git commit -m "refactor(core): rename legacy staff dir to staff"
 
 - [ ] **Step 1: Write failing store tests for staff metadata**
 
-In `apps/kittypaw/store/store_test.go`, replace the legacy_staff metadata test with:
+In `apps/kittypaw/store/store_test.go`, replace the old identity metadata test with:
 
 ```go
 func TestStaffMetaCRUD(t *testing.T) {
@@ -406,7 +408,7 @@ func TestStaffMetaCRUD(t *testing.T) {
 Add a migration test that seeds old `profile_meta` through migrations up to 023 and then opens the current store. Use the existing migration helpers in the file; if there is no helper, create the table manually before opening the store:
 
 ```go
-func TestMigrationLegacyStaffMetaToStaffMeta(t *testing.T) {
+func TestMigrationStaffMetaToStaffMeta(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "kittypaw.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -449,7 +451,7 @@ func TestMigrationLegacyStaffMetaToStaffMeta(t *testing.T) {
 Run:
 
 ```sh
-go test ./store -run 'TestStaffMetaCRUD|TestMigrationLegacyStaffMetaToStaffMeta' -count=1
+go test ./store -run 'TestStaffMetaCRUD|TestMigrationStaffMetaToStaffMeta' -count=1
 ```
 
 Expected: FAIL with undefined symbols such as `GetStaffMeta` or a missing `staff_meta` table.
@@ -477,7 +479,7 @@ DROP TABLE IF EXISTS profile_meta;
 
 - [ ] **Step 4: Rename store types and methods**
 
-In `apps/kittypaw/store/store.go`, replace `LegacyStaffMeta` with:
+In `apps/kittypaw/store/store.go`, replace the old identity metadata type with:
 
 ```go
 // StaffMeta stores metadata about a switchable staff identity.
@@ -491,7 +493,7 @@ type StaffMeta struct {
 }
 ```
 
-Replace the legacy_staff management section with staff methods that query `staff_meta`:
+Replace the old identity management section with staff methods that query `staff_meta`:
 
 ```go
 func (s *Store) UpsertStaffMeta(id, description, equippedSkills, createdBy string) error {
@@ -593,7 +595,7 @@ Commit:
 
 ```sh
 git add apps/kittypaw/store apps/kittypaw/server/account_migrate_integration_test.go
-git commit -m "refactor(store): rename legacy_staff metadata to staff"
+git commit -m "refactor(store): rename identity metadata to staff"
 ```
 
 ## Task 3: Engine And Sandbox Staff/Runner JavaScript Surface
@@ -642,14 +644,14 @@ func TestRunnerObserveInterrupts(t *testing.T) {
 	}
 }
 
-func TestLegacyRunnerGlobalRemoved(t *testing.T) {
+func TestOldRunnerGlobalRemoved(t *testing.T) {
 	sb := New(core.SandboxConfig{TimeoutSecs: 2})
-	result, err := sb.ExecuteWithResolver(context.Background(), `return typeof LegacyRunner;`, nil, nil)
+	result, err := sb.ExecuteWithResolver(context.Background(), `return typeof Agent;`, nil, nil)
 	if err != nil {
 		t.Fatalf("ExecuteWithResolver() error = %v", err)
 	}
 	if strings.TrimSpace(result.Output) != "undefined" {
-		t.Fatalf("typeof LegacyRunner = %q, want undefined", result.Output)
+		t.Fatalf("typeof Agent = %q, want undefined", result.Output)
 	}
 }
 ```
@@ -661,7 +663,7 @@ const created = Staff.create("finance", "재무담당 스태프");
 return created.success ? "finance staff created" : created.error;
 ```
 
-Assert `active_staff:<conversation>` instead of `legacy_active_staff:<conversation>`.
+Assert `active_staff:<conversation>` instead of the old active selection key.
 
 - [ ] **Step 2: Run failing focused engine and sandbox tests**
 
@@ -910,7 +912,7 @@ In `apps/kittypaw/engine/code_normalize.go`, replace the token list segment with
 "Memory.", "Storage.", "Runner.", "Staff.", "Share.",
 ```
 
-In `apps/kittypaw/engine/commands.go`, replace `/legacy_identity` with `/staff`:
+In `apps/kittypaw/engine/commands.go`, replace the old identity command with `/staff`:
 
 ```go
 	case "/staff":
@@ -928,7 +930,7 @@ return fmt.Sprintf("기본 staff를 %q로 변경했습니다.", id)
 
 - [ ] **Step 7: Rename delegation to Runner and StaffID**
 
-In `apps/kittypaw/engine/orchestration.go`, rename legacy_staff fields in task specs:
+In `apps/kittypaw/engine/orchestration.go`, rename the old identity fields in task specs:
 
 ```go
 type PMTaskSpec struct {
@@ -1002,7 +1004,7 @@ git commit -m "refactor(engine): expose staff and runner tools"
 
 - [ ] **Step 1: Write failing server and client tests for `/api/v1/staff`**
 
-In `apps/kittypaw/client/client_test.go`, replace legacy_staff tests with:
+In `apps/kittypaw/client/client_test.go`, replace the old identity API tests with:
 
 ```go
 func TestStaffList(t *testing.T) {
@@ -1057,7 +1059,7 @@ Expected: FAIL with undefined `StaffList` and `StaffActivate`.
 Run:
 
 ```sh
-git mv apps/kittypaw/server/api_legacy_staff.go apps/kittypaw/server/api_staff.go
+git mv <old-server-identity-api-file> apps/kittypaw/server/api_staff.go
 ```
 
 In `apps/kittypaw/server/api_staff.go`, rename handlers:
@@ -1096,7 +1098,7 @@ In `apps/kittypaw/server/server.go`, replace routes:
 			r.Post("/staff/{id}/activate", s.handleStaffActivate)
 ```
 
-In `apps/kittypaw/server/api.go`, replace legacy_staff count response keys with staff:
+In `apps/kittypaw/server/api.go`, replace old identity count response keys with staff:
 
 ```go
 "staff": len(s.config.Staff),
@@ -1104,7 +1106,7 @@ In `apps/kittypaw/server/api.go`, replace legacy_staff count response keys with 
 
 - [ ] **Step 4: Rename client methods**
 
-In `apps/kittypaw/client/client.go`, replace legacy_staff methods with:
+In `apps/kittypaw/client/client.go`, replace old identity methods with:
 
 ```go
 // StaffList returns all staff with preset status.
@@ -1141,11 +1143,11 @@ mustExist(t, filepath.Join(root, "accounts", "alice", "staff", "default", "SOUL.
 In `apps/kittypaw/cli/main_test.go`, replace the old public policy checks with:
 
 ```go
-if cmd, _, err := root.Find([]string{"legacy_identity"}); err == nil && cmd != nil && cmd.Name() == "legacy_identity" {
-	t.Fatal("root command must not expose legacy_identity internals")
+if cmd, _, err := root.Find([]string{"persona"}); err == nil && cmd != nil && cmd.Name() == "persona" {
+	t.Fatal("root command must not expose persona internals")
 }
-if cmd, _, err := root.Find([]string{"legacy_runner"}); err == nil && cmd != nil && cmd.Name() == "legacy_runner" {
-	t.Fatal("root command must not expose legacy_runner management")
+if cmd, _, err := root.Find([]string{"agent"}); err == nil && cmd != nil && cmd.Name() == "agent" {
+	t.Fatal("root command must not expose agent management")
 }
 ```
 
@@ -1178,7 +1180,7 @@ Commit:
 
 ```sh
 git add apps/kittypaw/server apps/kittypaw/client apps/kittypaw/cli apps/kittypaw/engine/kanban_tool_test.go
-git commit -m "refactor(api): rename public legacy_staff surface to staff"
+git commit -m "refactor(api): rename public identity surface to staff"
 ```
 
 ## Task 5: Documentation Sweep And Full Verification
@@ -1193,11 +1195,8 @@ git commit -m "refactor(api): rename public legacy_staff surface to staff"
 
 - [ ] **Step 1: Search for old domain vocabulary**
 
-Run:
-
-```sh
-rg -n '\b(LegacyStaff|legacy_staff|LegacyIdentity|legacy_identity|LegacyRunner|legacy_runner|legacy staff dirs|profile_meta|legacy_active_staff)\b' apps/kittypaw docs/superpowers/specs docs/superpowers/plans
-```
+Run the old-domain vocabulary scan across `apps/kittypaw`,
+`docs/superpowers/specs`, and `docs/superpowers/plans`.
 
 Expected: results remain only for these allowed cases:
 
@@ -1215,14 +1214,14 @@ root CLI tests asserting persona and agent commands are absent
 For Kanban docs under `docs/superpowers/specs/2026-05-07-kanban-*.md` and `docs/superpowers/plans/2026-05-07-kanban-*.md`, apply these vocabulary replacements by meaning:
 
 ```text
-legacy_runner toolset -> runner toolset
-legacy_runner tools -> runner tools
-legacy_runner dispatcher -> runner dispatcher
-legacy_staff worker -> staff runner
-legacy_staff-specific LLM worker -> staff-specific runner
-assignee legacy_staff -> assignee staff
-created_by: "legacy_runner" -> created_by: "runner"
-actor: "legacy_runner" -> actor: "runner"
+old runtime toolset -> runner toolset
+old runtime tools -> runner tools
+old runtime dispatcher -> runner dispatcher
+old identity worker -> staff runner
+old identity-specific LLM worker -> staff-specific runner
+old assignee identity -> assignee staff
+old created_by runtime literal -> created_by: "runner"
+old actor runtime literal -> actor: "runner"
 ```
 
 In `apps/kittypaw/CLAUDE.md`, replace directory descriptions with:
@@ -1256,11 +1255,7 @@ Expected: both PASS with no whitespace errors.
 
 - [ ] **Step 5: Confirm no disallowed old vocabulary remains**
 
-Run:
-
-```sh
-rg -n '\b(LegacyStaff|legacy_staff|LegacyIdentity|legacy_identity|LegacyRunner|legacy_runner|legacy staff dirs|profile_meta|legacy_active_staff)\b' apps/kittypaw docs/superpowers/specs docs/superpowers/plans
-```
+Run the same old-domain vocabulary scan again.
 
 Expected: every remaining result fits the allowed list from Step 1. If a result describes KittyPaw identity or runtime behavior, replace it with Staff, Runner, Account, or Conversation before committing.
 
