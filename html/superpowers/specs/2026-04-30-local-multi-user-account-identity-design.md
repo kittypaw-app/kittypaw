@@ -41,7 +41,7 @@ Fresh installs must create a named local account:
       secrets.json
       data/kittypaw.db
       skills/
-      profiles/
+      staff/
       packages/
 ```
 

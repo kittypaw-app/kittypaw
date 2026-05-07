@@ -551,7 +551,7 @@ In `runSetup`:
 3. Create `~/.kittypaw/accounts/<accountID>/`.
 4. Create local auth user in `auth.json` if missing.
 5. Save API server URL with `core.LoadAccountSecrets(accountID)`.
-6. Ensure profile under `accounts/<accountID>/`.
+6. Ensure staff directory under `accounts/<accountID>/`.
 
 Do not create top-level `data/` or `skills/` for fresh setup.
 
