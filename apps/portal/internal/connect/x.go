@@ -178,6 +178,31 @@ type XPostsResult struct {
 	Posts []XPost `json:"posts"`
 }
 
+func (p *XProvider) Me(ctx context.Context, accessToken string) (XUser, error) {
+	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/users/me")
+	if err != nil {
+		return XUser{}, err
+	}
+	q := req.URL.Query()
+	q.Set("user.fields", "username,name,verified")
+	req.URL.RawQuery = q.Encode()
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return XUser{}, fmt.Errorf("x me request: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := xStatusError(resp); err != nil {
+		return XUser{}, err
+	}
+	var body struct {
+		Data XUser `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return XUser{}, fmt.Errorf("decode x me: %w", err)
+	}
+	return body.Data, nil
+}
+
 func (p *XProvider) SearchRecent(ctx context.Context, accessToken, query string, maxResults int) (XPostsResult, error) {
 	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/tweets/search/recent")
 	if err != nil {
@@ -219,6 +244,18 @@ func (p *XProvider) UserByUsername(ctx context.Context, accessToken, username st
 
 func (p *XProvider) UserPosts(ctx context.Context, accessToken, userID string, maxResults int) (XPostsResult, error) {
 	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/users/"+url.PathEscape(strings.TrimSpace(userID))+"/tweets")
+	if err != nil {
+		return XPostsResult{}, err
+	}
+	q := req.URL.Query()
+	q.Set("max_results", strconv.Itoa(normalizeXMaxResults(maxResults)))
+	addXPostFields(q)
+	req.URL.RawQuery = q.Encode()
+	return p.doPosts(req)
+}
+
+func (p *XProvider) HomeTimeline(ctx context.Context, accessToken, userID string, maxResults int) (XPostsResult, error) {
+	req, err := p.newAPIRequest(ctx, accessToken, http.MethodGet, "/users/"+url.PathEscape(strings.TrimSpace(userID))+"/timelines/reverse_chronological")
 	if err != nil {
 		return XPostsResult{}, err
 	}

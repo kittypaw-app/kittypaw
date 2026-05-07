@@ -38,6 +38,34 @@ func TestXBrokerClientSearchRecentUsesBrokerEndpoint(t *testing.T) {
 	}
 }
 
+func TestXBrokerClientHomeTimelineUsesBrokerEndpoint(t *testing.T) {
+	var gotAuth, gotPath, gotLimit string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		gotLimit = r.URL.Query().Get("limit")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"posts":[{"id":"post-1","text":"home x","author_id":"u1","author":{"id":"u1","username":"alice","name":"Alice"}}]}`)
+	}))
+	defer ts.Close()
+
+	client := NewXBrokerClient(ts.URL, ts.Client())
+	result, err := client.HomeTimeline(context.Background(), "kitty-token", 50)
+	if err != nil {
+		t.Fatalf("HomeTimeline: %v", err)
+	}
+	if gotAuth != "Bearer kitty-token" {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	if gotPath != "/connect/x/broker/users/me/timelines/reverse_chronological" || gotLimit != "10" {
+		t.Fatalf("path/limit = %q/%q", gotPath, gotLimit)
+	}
+	if len(result.Posts) != 1 || result.Posts[0].Author == nil || result.Posts[0].Author.Username != "alice" {
+		b, _ := json.Marshal(result)
+		t.Fatalf("result = %s", b)
+	}
+}
+
 func TestXBrokerClientStatusError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

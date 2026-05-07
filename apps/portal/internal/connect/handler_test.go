@@ -275,6 +275,43 @@ func TestXBrokerSearchRecentRecordsUsage(t *testing.T) {
 	}
 }
 
+func TestXBrokerHomeTimelineRecordsUsage(t *testing.T) {
+	fakeX := newFakeXAPIServer(t, 2)
+	tokenStore := NewMemoryTokenStore(time.Now())
+	if err := tokenStore.SaveProviderToken(context.Background(), ProviderTokenRecord{
+		UserID:      "user-1",
+		ProviderID:  XProviderID,
+		AccessToken: "x-access",
+		TokenType:   "Bearer",
+	}); err != nil {
+		t.Fatalf("SaveProviderToken: %v", err)
+	}
+
+	h, _, _, _ := testHandler(t)
+	h.X = NewXProvider(XConfig{APIBaseURL: fakeX.URL + "/2"}, fakeX.Client())
+	h.TokenStore = tokenStore
+	h.Entitlements = fakeQuotaEntitlementChecker{
+		allowed: true,
+		quota:   map[string]any{"monthly_post_reads": float64(5)},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/connect/x/broker/users/me/timelines/reverse_chronological?limit=10", nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &model.User{ID: "user-1", Email: "alice@example.com"}))
+	w := httptest.NewRecorder()
+
+	h.HandleXBrokerHomeTimeline()(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body.String())
+	}
+	var body XPostsResult
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Posts) != 2 || body.Posts[0].Author == nil || body.Posts[0].Author.Username != "jaypark" {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
 func TestXBrokerSearchRecentBlocksOverMonthlyQuota(t *testing.T) {
 	fakeX := newFakeXAPIServer(t, 2)
 	tokenStore := NewMemoryTokenStore(time.Now())
@@ -573,12 +610,14 @@ func newFakeXAPIServer(t *testing.T, postCount int) *httptest.Server {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/2/tweets/search/recent", "/2/users/u1/tweets":
+		case "/2/tweets/search/recent", "/2/users/u1/tweets", "/2/users/u1/timelines/reverse_chronological":
 			posts := make([]string, 0, postCount)
 			for i := 0; i < postCount; i++ {
 				posts = append(posts, fmt.Sprintf(`{"id":"p%d","text":"post %d","author_id":"u1"}`, i+1, i+1))
 			}
 			fmt.Fprintf(w, `{"data":[%s],"includes":{"users":[{"id":"u1","username":"jaypark","name":"Jay Park"}]}}`, strings.Join(posts, ","))
+		case "/2/users/me":
+			fmt.Fprint(w, `{"data":{"id":"u1","username":"jaypark","name":"Jay Park"}}`)
 		case "/2/users/by/username/jaypark":
 			fmt.Fprint(w, `{"data":{"id":"u1","username":"jaypark","name":"Jay Park"}}`)
 		case "/2/tweets/p1":

@@ -312,6 +312,7 @@ func NewRouter(cfg *config.Config, userStore model.UserStore, refreshStore model
 			r.With(authMW).Get("/connect/x/broker/search/recent", connectHandler.HandleXBrokerSearchRecent())
 			r.With(authMW).Get("/connect/x/broker/users/by/username/{username}", connectHandler.HandleXBrokerUserByUsername())
 			r.With(authMW).Get("/connect/x/broker/users/by/username/{username}/tweets", connectHandler.HandleXBrokerUserPostsByUsername())
+			r.With(authMW).Get("/connect/x/broker/users/me/timelines/reverse_chronological", connectHandler.HandleXBrokerHomeTimeline())
 			r.With(authMW).Get("/connect/x/broker/tweets/{id}", connectHandler.HandleXBrokerTweetByID())
 		})
 	}

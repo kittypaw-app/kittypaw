@@ -91,6 +91,17 @@ func (c *XBrokerClient) UserPostsByUsername(ctx context.Context, accessToken, us
 	return c.doPosts(req)
 }
 
+func (c *XBrokerClient) HomeTimeline(ctx context.Context, accessToken string, maxResults int) (XPostsResult, error) {
+	req, err := c.newRequest(ctx, accessToken, http.MethodGet, "/connect/x/broker/users/me/timelines/reverse_chronological")
+	if err != nil {
+		return XPostsResult{}, err
+	}
+	q := req.URL.Query()
+	q.Set("limit", strconv.Itoa(brokerSkillLimit(maxResults)))
+	req.URL.RawQuery = q.Encode()
+	return c.doPosts(req)
+}
+
 func (c *XBrokerClient) TweetByID(ctx context.Context, accessToken, id string) (XPost, error) {
 	req, err := c.newRequest(ctx, accessToken, http.MethodGet, "/connect/x/broker/tweets/"+url.PathEscape(strings.TrimSpace(id)))
 	if err != nil {

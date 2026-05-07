@@ -123,6 +123,48 @@ func (h *Handler) HandleXBrokerUserPostsByUsername() http.HandlerFunc {
 	}
 }
 
+func (h *Handler) HandleXBrokerHomeTimeline() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, token, quota, ok := h.prepareXBrokerRequest(w, r)
+		if !ok {
+			return
+		}
+		xUser, err := h.X.Me(r.Context(), token.AccessToken)
+		if err != nil {
+			slog.Error("x broker me lookup failed", "user_id", user.ID, "err", err)
+			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x user lookup failed")
+			return
+		}
+		if strings.TrimSpace(xUser.ID) == "" {
+			slog.Error("x broker me lookup returned empty id", "user_id", user.ID)
+			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x user lookup failed")
+			return
+		}
+		limit := parseBrokerLimit(r, 10)
+		result, err := h.X.HomeTimeline(r.Context(), token.AccessToken, xUser.ID, limit)
+		if err != nil {
+			slog.Error("x broker home timeline failed", "user_id", user.ID, "x_user_id", xUser.ID, "err", err)
+			writeBrokerError(w, http.StatusBadGateway, "x_failed", "x home timeline failed")
+			return
+		}
+		allowed, err := h.recordXPostReads(r.Context(), user.ID, "home_timeline", len(result.Posts), quota, map[string]any{
+			"x_user_id": xUser.ID,
+			"username":  xUser.Username,
+			"limit":     limit,
+		})
+		if err != nil {
+			slog.Error("x broker usage record failed", "user_id", user.ID, "err", err)
+			writeBrokerError(w, http.StatusInternalServerError, "usage_failed", "usage record failed")
+			return
+		}
+		if !allowed {
+			writeBrokerError(w, http.StatusTooManyRequests, "quota_exceeded", "monthly post read quota exceeded")
+			return
+		}
+		writeBrokerJSON(w, result)
+	}
+}
+
 func (h *Handler) HandleXBrokerTweetByID() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, token, quota, ok := h.prepareXBrokerRequest(w, r)

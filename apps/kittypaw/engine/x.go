@@ -46,6 +46,18 @@ func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, err
 			"count": len(result.Posts),
 			"posts": result.Posts,
 		})
+	case "homeTimeline":
+		limit := clampXSkillLimit(parseXHomeTimelineArgs(call.Args))
+		result, err := client.HomeTimeline(ctx, accessToken, limit)
+		if err != nil {
+			return jsonResult(map[string]any{"error": xBrokerErrorMessage(err, s)})
+		}
+		return jsonResult(map[string]any{
+			"timeline": "home",
+			"limit":    limit,
+			"count":    len(result.Posts),
+			"posts":    result.Posts,
+		})
 	case "user":
 		username := parseXUsernameArgs(call.Args)
 		if username == "" {
@@ -201,6 +213,22 @@ func parseXUserPostsArgs(args []json.RawMessage) (string, int) {
 		}
 	}
 	return username, limit
+}
+
+func parseXHomeTimelineArgs(args []json.RawMessage) int {
+	limit := 10
+	if len(args) == 0 {
+		return limit
+	}
+	var rawLimit int
+	if json.Unmarshal(args[0], &rawLimit) == nil && rawLimit != 0 {
+		return rawLimit
+	}
+	var opts xOptions
+	if json.Unmarshal(args[0], &opts) == nil && opts.Limit != 0 {
+		return opts.Limit
+	}
+	return limit
 }
 
 func parseXPostArgs(args []json.RawMessage) string {
