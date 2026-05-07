@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -79,6 +81,82 @@ func TestApplyDiscoveryFallsBackOnDiscoveryError(t *testing.T) {
 
 	if got := applyDiscovery(apiURL, mgr); got != apiURL {
 		t.Fatalf("applyDiscovery returned %q, want fallback %q", got, apiURL)
+	}
+}
+
+func TestLoginCommandStoresTokensInSelectedAccount(t *testing.T) {
+	rootDir := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", rootDir)
+	if _, err := core.InitAccount(filepath.Join(rootDir, "accounts"), "bob", core.AccountOpts{}); err != nil {
+		t.Fatalf("InitAccount: %v", err)
+	}
+
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/discovery":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"api_base_url":%q}`, ts.URL)
+		case "/auth/cli/exchange":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode exchange body: %v", err)
+			}
+			if body["code"] != "cli-code" {
+				t.Fatalf("code = %q, want cli-code", body["code"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"access-bob","refresh_token":"refresh-bob"}`)
+		case "/auth/me":
+			if got := r.Header.Get("Authorization"); got != "Bearer access-bob" {
+				t.Fatalf("Authorization = %q, want bearer access-bob", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"email":"bob@example.com","name":"Bob"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdinW.WriteString("cli-code\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdinW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = stdinR
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = stdinR.Close()
+	})
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"login", "--account", "bob", "--code", "--api-url", ts.URL})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("login command: %v", err)
+	}
+
+	bobSecrets, err := core.LoadAccountSecrets("bob")
+	if err != nil {
+		t.Fatalf("LoadAccountSecrets bob: %v", err)
+	}
+	ns := core.NamespaceForURL(ts.URL)
+	if got, ok := bobSecrets.Get(ns, "access_token"); !ok || got != "access-bob" {
+		t.Fatalf("bob access_token = (%q, %v), want access-bob true", got, ok)
+	}
+
+	defaultSecrets, err := core.LoadAccountSecrets(core.DefaultAccountID)
+	if err != nil {
+		t.Fatalf("LoadAccountSecrets default: %v", err)
+	}
+	if got, ok := defaultSecrets.Get(ns, "access_token"); ok || got != "" {
+		t.Fatalf("default access_token = (%q, %v), want empty false", got, ok)
 	}
 }
 

@@ -35,7 +35,11 @@ func newLoginCmd() *cobra.Command {
 			}
 			apiURL = strings.TrimRight(apiURL, "/")
 
-			secrets, err := core.LoadAccountSecrets(core.DefaultAccountID)
+			accountID, err := resolveCLIAccountWithContext(flagAccount)
+			if err != nil {
+				return err
+			}
+			secrets, err := core.LoadAccountSecrets(accountID)
 			if err != nil {
 				return fmt.Errorf("load secrets: %w", err)
 			}
@@ -53,6 +57,7 @@ func newLoginCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&flagCode, "code", false, "use code-paste mode (for SSH/remote)")
 	cmd.Flags().StringVar(&flagAPIURL, "api-url", "", "API server URL (default "+core.DefaultAPIServerURL+")")
+	addAccountFlag(cmd)
 	return cmd
 }
 
