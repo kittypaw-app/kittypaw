@@ -504,7 +504,7 @@ func (o *OpenAIProvider) parseJSONResponse(r io.Reader) (*Response, error) {
 }
 
 // mapStopReason translates OpenAI Chat finish_reason into the Anthropic-
-// flavored stop-reason vocabulary the agent loop already recognizes.
+// flavored stop-reason vocabulary the runner loop already recognizes.
 // Unknown values pass through verbatim — forward-compat: a new finish_reason
 // reaches the caller as raw evidence, not as a guessed translation. Caller
 // contract: anything outside {"end_turn", "tool_use", "max_tokens"} should

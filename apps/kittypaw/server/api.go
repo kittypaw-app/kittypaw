@@ -484,16 +484,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfigCheck(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"channels":       len(s.config.Channels),
-		"agents":         len(s.config.Agents),
+		"runners":        len(s.config.Runners),
 		"models":         len(s.config.Models),
 		"mcp_servers":    len(s.config.MCPServers),
-		"profiles":       len(s.config.Profiles),
+		"staff":          len(s.config.Staff),
 		"autonomy_level": string(s.config.AutonomyLevel),
 		"features": map[string]any{
 			"progressive_retry":  s.config.Features.ProgressiveRetry,
 			"context_compaction": s.config.Features.ContextCompaction,
 			"model_routing":      s.config.Features.ModelRouting,
-			"background_agents":  s.config.Features.BackgroundAgents,
+			"background_runners": s.config.Features.BackgroundRunners,
 			"daily_token_limit":  s.config.Features.DailyTokenLimit,
 		},
 	})

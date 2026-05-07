@@ -10,15 +10,15 @@ import (
 	"path/filepath"
 )
 
-// Profile holds the loaded persona data for a single profile.
-type Profile struct {
-	ID     string // profile directory name
-	Nick   string // display name (from config, set by caller)
+// Staff holds the loaded identity data for one staff member.
+type Staff struct {
+	ID     string // staff directory name
+	Nick   string // display name from config
 	Soul   string // SOUL.md content
-	UserMD string // USER.md content (optional)
+	UserMD string // USER.md content, optional
 }
 
-// PresetInfo describes a built-in persona preset.
+// PresetInfo describes a built-in staff identity preset.
 type PresetInfo struct {
 	ID          string
 	Name        string
@@ -26,7 +26,7 @@ type PresetInfo struct {
 	Soul        string
 }
 
-// Presets contains the built-in persona presets.
+// Presets contains the built-in staff identity presets.
 var Presets = map[string]PresetInfo{
 	"default-assistant": {
 		ID:          "default-assistant",
@@ -83,42 +83,42 @@ var Presets = map[string]PresetInfo{
 	},
 }
 
-// LoadProfile reads a profile's SOUL.md and USER.md from disk.
+// LoadStaff reads a staff member's SOUL.md and USER.md from disk.
 // If SOUL.md is missing, falls back to the default-assistant preset with a warning log.
-// Returns an error only for invalid profile IDs.
-func LoadProfile(base, name string) (*Profile, error) {
-	if err := ValidateProfileID(name); err != nil {
-		return nil, fmt.Errorf("load profile: %w", err)
+// Returns an error only for invalid staff IDs.
+func LoadStaff(base, name string) (*Staff, error) {
+	if err := ValidateStaffID(name); err != nil {
+		return nil, fmt.Errorf("load staff: %w", err)
 	}
 
-	p := &Profile{ID: name}
-	profDir := filepath.Join(base, "profiles", name)
+	staff := &Staff{ID: name}
+	staffDir := filepath.Join(base, "staff", name)
 
-	soulData, err := os.ReadFile(filepath.Join(profDir, "SOUL.md"))
+	soulData, err := os.ReadFile(filepath.Join(staffDir, "SOUL.md"))
 	if err != nil {
 		slog.Warn("SOUL.md not found, using default preset",
-			"profile", name, "path", profDir)
-		p.Soul = Presets["default-assistant"].Soul
+			"staff", name, "path", staffDir)
+		staff.Soul = Presets["default-assistant"].Soul
 	} else {
-		p.Soul = string(soulData)
+		staff.Soul = string(soulData)
 	}
 
-	if userData, err := os.ReadFile(filepath.Join(profDir, "USER.md")); err == nil {
-		p.UserMD = string(userData)
+	if userData, err := os.ReadFile(filepath.Join(staffDir, "USER.md")); err == nil {
+		staff.UserMD = string(userData)
 	}
 
-	return p, nil
+	return staff, nil
 }
 
-// EnsureDefaultProfile creates the default profile directory and SOUL.md
+// EnsureDefaultStaff creates the default staff identity directory and SOUL.md
 // if they don't already exist. Existing files are never overwritten.
-func EnsureDefaultProfile(base string) error {
-	profDir := filepath.Join(base, "profiles", "default")
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
-		return fmt.Errorf("create default profile dir: %w", err)
+func EnsureDefaultStaff(base string) error {
+	staffDir := filepath.Join(base, "staff", "default")
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
+		return fmt.Errorf("create default staff dir: %w", err)
 	}
 
-	soulPath := filepath.Join(profDir, "SOUL.md")
+	soulPath := filepath.Join(staffDir, "SOUL.md")
 	if _, err := os.Stat(soulPath); err == nil {
 		return nil // already exists, don't overwrite
 	}
@@ -136,23 +136,23 @@ type presetMeta struct {
 	Hash     string `json:"hash"`
 }
 
-// ApplyPreset writes a preset's SOUL.md and records the hash in .preset_meta.
-func ApplyPreset(base, profileName, presetID string) error {
+// ApplyStaffPreset writes a preset's SOUL.md and records the hash in .preset_meta.
+func ApplyStaffPreset(base, staffID, presetID string) error {
 	preset, ok := Presets[presetID]
 	if !ok {
 		return fmt.Errorf("unknown preset ID: %q", presetID)
 	}
-	if err := ValidateProfileID(profileName); err != nil {
+	if err := ValidateStaffID(staffID); err != nil {
 		return err
 	}
 
-	profDir := filepath.Join(base, "profiles", profileName)
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
-		return fmt.Errorf("create profile dir: %w", err)
+	staffDir := filepath.Join(base, "staff", staffID)
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
+		return fmt.Errorf("create staff dir: %w", err)
 	}
 
 	// Write SOUL.md.
-	soulPath := filepath.Join(profDir, "SOUL.md")
+	soulPath := filepath.Join(staffDir, "SOUL.md")
 	if err := os.WriteFile(soulPath, []byte(preset.Soul), 0o644); err != nil {
 		return fmt.Errorf("write SOUL.md: %w", err)
 	}
@@ -167,20 +167,20 @@ func ApplyPreset(base, profileName, presetID string) error {
 	if err != nil {
 		return fmt.Errorf("marshal preset meta: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(profDir, ".preset_meta"), metaData, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(staffDir, ".preset_meta"), metaData, 0o644); err != nil {
 		return fmt.Errorf("write .preset_meta: %w", err)
 	}
 	return nil
 }
 
-// DetectDirty reports whether SOUL.md has been modified since the last ApplyPreset.
+// DetectStaffDirty reports whether SOUL.md has been modified since the last ApplyStaffPreset.
 // Returns false if there's no .preset_meta (no baseline to compare).
-func DetectDirty(base, profileName string) (bool, error) {
-	status := PresetStatus(base, profileName)
+func DetectStaffDirty(base, staffID string) (bool, error) {
+	status := StaffPresetStatus(base, staffID)
 	return status.Kind == StatusCustom, nil
 }
 
-// PresetStatusKind describes the preset state of a profile.
+// PresetStatusKind describes the preset state of a staff identity.
 type PresetStatusKind int
 
 const (
@@ -189,17 +189,17 @@ const (
 	StatusUnknown                         // no preset metadata
 )
 
-// PresetStatusResult holds the result of PresetStatus.
+// PresetStatusResult holds the result of StaffPresetStatus.
 type PresetStatusResult struct {
 	Kind     PresetStatusKind
 	PresetID string // set for StatusPreset and StatusCustom
 }
 
-// PresetStatus determines whether a profile's SOUL.md matches its original preset.
-func PresetStatus(base, profileName string) PresetStatusResult {
-	profDir := filepath.Join(base, "profiles", profileName)
+// StaffPresetStatus determines whether a staff member's SOUL.md matches its original preset.
+func StaffPresetStatus(base, staffID string) PresetStatusResult {
+	staffDir := filepath.Join(base, "staff", staffID)
 
-	metaData, err := os.ReadFile(filepath.Join(profDir, ".preset_meta"))
+	metaData, err := os.ReadFile(filepath.Join(staffDir, ".preset_meta"))
 	if err != nil {
 		return PresetStatusResult{Kind: StatusUnknown}
 	}
@@ -208,7 +208,7 @@ func PresetStatus(base, profileName string) PresetStatusResult {
 		return PresetStatusResult{Kind: StatusUnknown}
 	}
 
-	soulData, err := os.ReadFile(filepath.Join(profDir, "SOUL.md"))
+	soulData, err := os.ReadFile(filepath.Join(staffDir, "SOUL.md"))
 	if err != nil {
 		return PresetStatusResult{Kind: StatusCustom, PresetID: meta.PresetID}
 	}

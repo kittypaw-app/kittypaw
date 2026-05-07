@@ -11,7 +11,7 @@ the durable Kanban API already mounted under `/api/v1`.
 
 This phase is a browser client over the existing API. It does not add a
 dispatcher, live WebSocket updates, drag-and-drop transitions, bulk actions,
-agent tools, or new server routes.
+runner tools, or new server routes.
 
 ## Research Notes
 

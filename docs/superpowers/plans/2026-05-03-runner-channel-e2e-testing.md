@@ -1,4 +1,4 @@
-# Agent Channel E2E Testing Implementation Plan
+# Runner Channel E2E Testing Implementation Plan
 
 > Historical plan snapshot. This document records the implementation plan or design state at the time it was written; use repository README, ARCHITECTURE.md, and app README/DEPLOY docs for the current live shape.
 
@@ -12,7 +12,7 @@
 
 **Status 2026-05-03:** Fast deterministic coverage is in place for registry
 seams, chat-driven exchange-rate/weather install flows, Telegram/Kakao captured
-fixtures, `/persona`, assistant mention routing, chat-created personas, and
+fixtures, `/staff`, assistant mention routing, chat-created staff identities, and
 reflection/evolution over `conversation_turns`. The Docker-backed
 `make e2e-local` harness now also covers Portal fake-Google login, device
 pairing, browser cookie session auth, Chat relay routing to a real Kittypaw
@@ -35,7 +35,7 @@ Chat BFF. The remaining real-use scenario backlog is tracked in
 - [ ] Run `go test ./core -run 'TestNewRegistryClient|TestRegistryClient' -count=1`.
 - [ ] Commit as `test(kittypaw): allow explicit local registry tests`.
 
-### Task 2: Deterministic Agent Skill Install Flows
+### Task 2: Deterministic Runner Skill Install Flows
 
 **Files:**
 - Create or modify: `apps/kittypaw/engine/install_flow_integration_test.go`
@@ -71,9 +71,9 @@ Chat BFF. The remaining real-use scenario backlog is tracked in
 - [ ] Add a fast deterministic Kittypaw install-flow command to `smoke-local`.
 - [ ] Document which tests are deterministic and which remain LLM-judged manual/nightly evals.
 - [ ] Run `bash -n scripts/smoke-local.sh` and the added Go test commands.
-- [ ] Commit as `test: wire agent install flows into smoke tier`.
+- [ ] Commit as `test: wire runner install flows into smoke tier`.
 
-### Task 5: Reflection and Persona Conversation Flows
+### Task 5: Reflection and Staff Conversation Flows
 
 **Files:**
 - Modify: `apps/kittypaw/engine/session_test.go`
@@ -82,21 +82,21 @@ Chat BFF. The remaining real-use scenario backlog is tracked in
 - Modify: `apps/kittypaw/engine/evolution_test.go`
 - Modify: `apps/kittypaw/TASKS.md`
 
-- [ ] Add an in-chat `/persona <profile-id>` regression test and implementation.
-- [ ] Add a `@profile` assistant-mention test proving the mention is stripped from stored `conversation_turns` and the mentioned profile's SOUL reaches the prompt.
-- [ ] Add a conversation request test proving `Profile.create` can create a server-side persona from chat.
+- [ ] Add an in-chat `/staff <staff-id>` regression test and implementation.
+- [ ] Add a `@staff` assistant-mention test proving the mention is stripped from stored `conversation_turns` and the mentioned staff member's SOUL reaches the prompt.
+- [ ] Add a conversation request test proving `Staff.create` can create a server-side staff identity from chat.
 - [ ] Add reflection and evolution tests over `v2_conversation_turns`.
 - [ ] If evolution approval/reject surface is absent, keep CI on pending proposal creation and add the missing approval UX to `apps/kittypaw/TASKS.md`.
-- [ ] Commit as `test(kittypaw): cover persona and reflection conversation flows`.
+- [ ] Commit as `test(kittypaw): cover staff and reflection conversation flows`.
 
 ### Task 6: Compose E2E Follow-up Design
 
 **Files:**
-- Create or modify: `docs/superpowers/specs/2026-05-03-compose-agent-channel-e2e-design.md`
+- Create or modify: `docs/superpowers/specs/2026-05-03-compose-runner-channel-e2e-design.md`
 
 - [ ] Document the next heavier phase: Portal, Chat, Kittyapi, Kakao relay, fake Kakao, fake registry, and Kittypaw daemon runner.
 - [ ] Keep this out of the first implementation unless the deterministic tests uncover service-level seams that must be fixed now.
-- [ ] Commit as `docs(test): plan compose agent channel e2e`.
+- [ ] Commit as `docs(test): plan compose runner channel e2e`.
 
 ### Final Verification
 

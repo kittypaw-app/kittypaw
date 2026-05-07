@@ -29,8 +29,8 @@ run bash -n "$ROOT/apps/kakao/deploy/smoke.sh"
 section "deploy python syntax"
 run python3 -m py_compile "$ROOT/apps/kittyapi/fabfile.py" "$ROOT/apps/portal/fabfile.py" "$ROOT/apps/chat/fabfile.py" "$ROOT/apps/space/fabfile.py" "$ROOT/apps/kakao/fabfile.py"
 
-section "kittypaw agent/channel critical flows"
-run go test ./apps/kittypaw/engine -run 'Test(InstallConsent|InstalledExchangeRate|SlashPersona|RunAtMention|RunCanCreatePersona|RunReflectionCycle|TriggerEvolution)' -count=1
+section "kittypaw runner/channel critical flows"
+run go test ./apps/kittypaw/engine -run 'Test(InstallConsent|InstalledExchangeRate|SlashStaff|RunAtMention|RunCanCreateStaff|RunReflectionCycle|TriggerEvolution)' -count=1
 run go test ./apps/kittypaw/channel -run 'Test(TelegramTextUpdateFixtureBuildsEvent|KakaoIncomingFixtureBuildsEvent)' -count=1
 
 section "go tests"

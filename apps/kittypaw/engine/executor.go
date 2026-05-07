@@ -21,22 +21,23 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/store"
 )
 
 type contextKey string
 
-const ctxKeyAgentID contextKey = "agentID"
+const ctxKeyConversationID contextKey = "conversationID"
 const ctxKeyEvent contextKey = "event"
 const ctxKeyPackageParams contextKey = "packageParams"
 
-// ContextWithAgentID stores the agent ID in context for use by skill handlers.
-func ContextWithAgentID(ctx context.Context, agentID string) context.Context {
-	return context.WithValue(ctx, ctxKeyAgentID, agentID)
+// ContextWithConversationID stores the conversation ID in context for use by skill handlers.
+func ContextWithConversationID(ctx context.Context, conversationID string) context.Context {
+	return context.WithValue(ctx, ctxKeyConversationID, conversationID)
 }
 
-// AgentIDFromContext retrieves the agent ID from context.
-func AgentIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(ctxKeyAgentID).(string); ok {
+// ConversationIDFromContext retrieves the conversation ID from context.
+func ConversationIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyConversationID).(string); ok {
 		return v
 	}
 	return ""
@@ -143,6 +144,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeMemory(ctx, call, s)
 	case "Todo":
 		return executeTodo(ctx, call, s)
+	case "Kanban":
+		return executeKanban(ctx, call, s)
 	case "Env":
 		return executeEnv(call)
 	case "Telegram":
@@ -157,8 +160,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeX(ctx, call, s)
 	case "Skill":
 		return executeSkillMgmt(ctx, call, s)
-	case "Profile":
-		return executeProfile(ctx, call, s)
+	case "Staff":
+		return executeStaff(ctx, call, s)
 	case "Tts":
 		return executeTTS(ctx, call, s)
 	case "Image":
@@ -172,8 +175,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 			return jsonResult(map[string]any{"error": "browser not configured"})
 		}
 		return s.BrowserController.Execute(ctx, call)
-	case "Agent":
-		return executeDelegate(ctx, call, s)
+	case "Runner":
+		return executeRunner(ctx, call, s)
 	case "Share":
 		return executeShare(ctx, call, s)
 	case "Fanout":
@@ -186,7 +189,7 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 }
 
 // codeExecTimeout caps a single Code.exec call so a runaway loop in
-// LLM-generated arithmetic cannot stall the agent loop. 1s is far more
+// LLM-generated arithmetic cannot stall the runner loop. 1s is far more
 // than any honest unit-conversion / scope-filter / fmt task needs.
 const codeExecTimeout = 1 * time.Second
 
@@ -204,7 +207,7 @@ const codeExecMaxOutputBytes = 8000
 // are too one-off to live in a permanent JS skill but too error-prone
 // to entrust to LLM paraphrase.
 //
-// Functionally close to the main agent loop's JS-as-response contract
+// Functionally close to the main runner loop's JS-as-response contract
 // (every LLM reply already runs in goja). The marginal value is the
 // affordance signal — a named tool tells the model "you can self-trigger
 // computation when uncertain about a number" — and the lockdown: no IO
@@ -1094,7 +1097,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *Session) (string, 
 		_ = json.Unmarshal(call.Args[0], &key)
 		var value string
 		_ = json.Unmarshal(call.Args[1], &value)
-		if err := s.Store.SetUserContext(key, value, "agent"); err != nil {
+		if err := s.Store.SetUserContext(key, value, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"success": true})
@@ -1185,6 +1188,284 @@ func executeTodo(_ context.Context, call core.SkillCall, s *Session) (string, er
 
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Todo method: %s", call.Method)})
+	}
+}
+
+// --- Kanban ---
+
+type kanbanCreateToolOptions struct {
+	Project   string `json:"project"`
+	Board     string `json:"board"`
+	Milestone string `json:"milestone"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Status    string `json:"status"`
+	Priority  int    `json:"priority"`
+	Assignee  string `json:"assignee"`
+	CreatedBy string `json:"created_by"`
+}
+
+type kanbanRunToolOptions struct {
+	Actor    string          `json:"actor"`
+	WorkDir  string          `json:"work_dir"`
+	Summary  string          `json:"summary"`
+	Reason   string          `json:"reason"`
+	Author   string          `json:"author"`
+	Body     string          `json:"body"`
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+func executeKanban(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+	if s.Store == nil {
+		return jsonResult(map[string]any{"error": "kanban store not configured"})
+	}
+	switch call.Method {
+	case "show":
+		taskID, err := kanbanToolStringArg(call, 0, "task id")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		task, err := s.Store.GetKanbanTask(taskID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		comments, err := s.Store.ListKanbanComments(taskID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		runs, err := s.Store.ListKanbanRuns(taskID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		events, err := s.Store.ListKanbanEvents(taskID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"task": task, "comments": comments, "runs": runs, "events": events})
+	case "create":
+		return executeKanbanCreate(call, s)
+	case "claim":
+		return executeKanbanClaim(call, s)
+	case "complete":
+		return executeKanbanComplete(call, s)
+	case "block":
+		return executeKanbanBlock(call, s)
+	case "comment":
+		return executeKanbanComment(call, s)
+	case "link":
+		parentID, err := kanbanToolStringArg(call, 0, "parent task id")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		childID, err := kanbanToolStringArg(call, 1, "child task id")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if err := s.Store.LinkKanbanTasks(parentID, childID); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"success": true})
+	case "heartbeat":
+		return executeKanbanHeartbeat(call, s)
+	default:
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Kanban method: %s", call.Method)})
+	}
+}
+
+func executeKanbanCreate(call core.SkillCall, s *Session) (string, error) {
+	if len(call.Args) == 0 {
+		return jsonResult(map[string]any{"error": "options required"})
+	}
+	var opts kanbanCreateToolOptions
+	if err := json.Unmarshal(call.Args[0], &opts); err != nil {
+		return jsonResult(map[string]any{"error": "invalid options argument"})
+	}
+	status, err := normalizeKanbanToolStatus(opts.Status, true)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	if strings.TrimSpace(opts.Project) == "" {
+		return jsonResult(map[string]any{"error": "project required"})
+	}
+	project, err := s.Store.GetKanbanProject(opts.Project)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	task, err := s.Store.CreateKanbanTask(store.CreateKanbanTaskRequest{
+		ProjectID:   project.ID,
+		BoardID:     strings.TrimSpace(opts.Board),
+		MilestoneID: strings.TrimSpace(opts.Milestone),
+		Title:       strings.TrimSpace(opts.Title),
+		Body:        opts.Body,
+		Status:      status,
+		Priority:    opts.Priority,
+		Assignee:    strings.TrimSpace(opts.Assignee),
+		CreatedBy:   strings.TrimSpace(opts.CreatedBy),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"task": task})
+}
+
+func executeKanbanClaim(call core.SkillCall, s *Session) (string, error) {
+	taskID, err := kanbanToolStringArg(call, 0, "task id")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := kanbanToolOptionsArg(call, 1)
+	provider := ""
+	if strings.TrimSpace(opts.WorkDir) != "" {
+		provider = store.KanbanWorkDirManual
+	}
+	run, err := s.Store.ClaimKanbanTask(taskID, store.ClaimKanbanTaskRequest{
+		Actor:           strings.TrimSpace(opts.Actor),
+		WorkDir:         strings.TrimSpace(opts.WorkDir),
+		WorkDirProvider: provider,
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"run": run})
+}
+
+func executeKanbanComplete(call core.SkillCall, s *Session) (string, error) {
+	taskID, err := kanbanToolStringArg(call, 0, "task id")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := kanbanToolOptionsArg(call, 1)
+	metadata, err := kanbanToolMetadataJSON(opts.Metadata)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	if err := s.Store.CompleteKanbanTask(taskID, store.CompleteKanbanTaskRequest{
+		Actor:        strings.TrimSpace(opts.Actor),
+		Summary:      strings.TrimSpace(opts.Summary),
+		MetadataJSON: metadata,
+	}); err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"success": true})
+}
+
+func executeKanbanBlock(call core.SkillCall, s *Session) (string, error) {
+	taskID, err := kanbanToolStringArg(call, 0, "task id")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := kanbanToolOptionsArg(call, 1)
+	reason := strings.TrimSpace(opts.Reason)
+	if reason == "" && len(call.Args) > 1 {
+		_ = json.Unmarshal(call.Args[1], &reason)
+		reason = strings.TrimSpace(reason)
+	}
+	if reason == "" {
+		return jsonResult(map[string]any{"error": "reason required"})
+	}
+	if err := s.Store.BlockKanbanTask(taskID, store.BlockKanbanTaskRequest{
+		Actor:  strings.TrimSpace(opts.Actor),
+		Reason: reason,
+	}); err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"success": true})
+}
+
+func executeKanbanComment(call core.SkillCall, s *Session) (string, error) {
+	taskID, err := kanbanToolStringArg(call, 0, "task id")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := kanbanToolOptionsArg(call, 1)
+	body := strings.TrimSpace(opts.Body)
+	if body == "" && len(call.Args) > 1 {
+		_ = json.Unmarshal(call.Args[1], &body)
+		body = strings.TrimSpace(body)
+	}
+	comment, err := s.Store.AddKanbanTaskComment(taskID, strings.TrimSpace(opts.Author), body)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"comment": comment})
+}
+
+func executeKanbanHeartbeat(call core.SkillCall, s *Session) (string, error) {
+	taskID, err := kanbanToolStringArg(call, 0, "task id")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := kanbanToolOptionsArg(call, 1)
+	run, err := s.Store.HeartbeatKanbanTask(taskID, store.HeartbeatKanbanTaskRequest{
+		Actor: strings.TrimSpace(opts.Actor),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"run": run})
+}
+
+func kanbanToolStringArg(call core.SkillCall, index int, label string) (string, error) {
+	if len(call.Args) <= index {
+		return "", fmt.Errorf("%s required", label)
+	}
+	var value string
+	if err := json.Unmarshal(call.Args[index], &value); err != nil {
+		return "", fmt.Errorf("invalid %s argument", label)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s required", label)
+	}
+	return value, nil
+}
+
+func kanbanToolOptionsArg(call core.SkillCall, index int) kanbanRunToolOptions {
+	if len(call.Args) <= index {
+		return kanbanRunToolOptions{}
+	}
+	var opts kanbanRunToolOptions
+	_ = json.Unmarshal(call.Args[index], &opts)
+	return opts
+}
+
+func kanbanToolMetadataJSON(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		asString = strings.TrimSpace(asString)
+		if asString == "" {
+			return "", nil
+		}
+		if !json.Valid([]byte(asString)) {
+			return "", fmt.Errorf("metadata string must contain valid JSON")
+		}
+		return asString, nil
+	}
+	if !json.Valid(raw) {
+		return "", fmt.Errorf("metadata must be valid JSON")
+	}
+	return string(raw), nil
+}
+
+func normalizeKanbanToolStatus(status string, allowEmpty bool) (string, error) {
+	status = strings.TrimSpace(status)
+	if status == "" && allowEmpty {
+		return "", nil
+	}
+	switch status {
+	case store.KanbanStatusTriage,
+		store.KanbanStatusTodo,
+		store.KanbanStatusReady,
+		store.KanbanStatusRunning,
+		store.KanbanStatusBlocked,
+		store.KanbanStatusDone,
+		store.KanbanStatusArchived:
+		return status, nil
+	default:
+		return "", fmt.Errorf("invalid status %q", status)
 	}
 }
 
@@ -1846,46 +2127,48 @@ func unwrapHTTPBody(jsonStr string) string {
 	return wrapper.Body
 }
 
-// --- Profile Management ---
+// --- Staff Management ---
 
-func executeProfile(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	switch call.Method {
 	case "list":
-		profiles, err := s.Store.ListActiveProfiles()
+		staff, err := s.Store.ListActiveStaff()
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"profiles": profiles})
+		return jsonResult(map[string]any{"staff": staff})
 
 	case "switch":
 		if len(call.Args) == 0 {
-			return jsonResult(map[string]any{"error": "profile id required"})
+			return jsonResult(map[string]any{"error": "staff id required"})
 		}
 		var id string
 		if err := json.Unmarshal(call.Args[0], &id); err != nil {
-			return jsonResult(map[string]any{"error": "invalid profile id argument"})
+			return jsonResult(map[string]any{"error": "invalid staff id argument"})
 		}
-		if err := core.ValidateProfileID(id); err != nil {
+		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		// Verify profile exists on disk.
-		base, err := core.ResolveBaseDir(s.BaseDir)
+		meta, ok, err := s.Store.GetStaffMeta(id)
 		if err != nil {
-			return jsonResult(map[string]any{"error": "config dir: " + err.Error()})
+			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
 		}
-		if _, err := core.LoadProfile(base, id); err != nil {
-			return jsonResult(map[string]any{"error": fmt.Sprintf("profile %q not found", id)})
+		if !ok {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q not found", id)})
 		}
-		// Store active_profile:{agentID} so next message uses this profile.
-		agentID := AgentIDFromContext(ctx)
-		if agentID == "" {
-			agentID = "default"
+		if !meta.Active {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q is inactive", id)})
 		}
-		key := fmt.Sprintf("active_profile:%s", agentID)
-		if err := s.Store.SetUserContext(key, id, "agent"); err != nil {
+		// Store active_staff:{conversationID} so next message uses this staff member.
+		conversationID := ConversationIDFromContext(ctx)
+		if conversationID == "" {
+			conversationID = "default"
+		}
+		key := fmt.Sprintf("active_staff:%s", conversationID)
+		if err := s.Store.SetUserContext(key, id, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"success": true, "profile": id})
+		return jsonResult(map[string]any{"success": true, "staff": id})
 
 	case "create":
 		if len(call.Args) < 2 {
@@ -1898,16 +2181,41 @@ func executeProfile(ctx context.Context, call core.SkillCall, s *Session) (strin
 		if err := json.Unmarshal(call.Args[1], &desc); err != nil {
 			return jsonResult(map[string]any{"error": "invalid description argument"})
 		}
-		if err := core.ValidateProfileID(id); err != nil {
+		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		if err := s.Store.UpsertProfileMeta(id, desc, "[]", "agent"); err != nil {
+		if err := s.Store.UpsertStaffMeta(id, desc, "[]", "runner"); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"success": true})
+
+	case "update":
+		if len(call.Args) < 2 {
+			return jsonResult(map[string]any{"error": "id and description required"})
+		}
+		var id, desc string
+		if err := json.Unmarshal(call.Args[0], &id); err != nil {
+			return jsonResult(map[string]any{"error": "invalid id argument"})
+		}
+		if err := json.Unmarshal(call.Args[1], &desc); err != nil {
+			return jsonResult(map[string]any{"error": "invalid description argument"})
+		}
+		if err := core.ValidateStaffID(id); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		equippedSkills := "[]"
+		if meta, ok, err := s.Store.GetStaffMeta(id); err != nil {
+			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
+		} else if ok {
+			equippedSkills = meta.EquippedSkills
+		}
+		if err := s.Store.UpsertStaffMeta(id, desc, equippedSkills, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"success": true})
 
 	default:
-		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Profile method: %s", call.Method)})
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Staff method: %s", call.Method)})
 	}
 }
 
@@ -1984,19 +2292,19 @@ func executeMCP(ctx context.Context, call core.SkillCall, s *Session) (string, e
 	}
 }
 
-func executeDelegate(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeRunner(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	switch call.Method {
 	case "delegate":
-		// Agent.delegate(task, profileId, background)
+		// Runner.delegate(staffId, task, background)
 		if len(call.Args) < 2 {
-			return jsonResult(map[string]any{"error": "Agent.delegate requires (task, profileId)"})
+			return jsonResult(map[string]any{"error": "Runner.delegate requires (staffId, task)"})
 		}
-		var task, profileID string
-		if err := json.Unmarshal(call.Args[0], &task); err != nil {
+		var staffID, task string
+		if err := json.Unmarshal(call.Args[0], &staffID); err != nil {
+			return jsonResult(map[string]any{"error": "invalid staffId argument"})
+		}
+		if err := json.Unmarshal(call.Args[1], &task); err != nil {
 			return jsonResult(map[string]any{"error": "invalid task argument"})
-		}
-		if err := json.Unmarshal(call.Args[1], &profileID); err != nil {
-			return jsonResult(map[string]any{"error": "invalid profileId argument"})
 		}
 		var background bool
 		if len(call.Args) > 2 {
@@ -2011,7 +2319,7 @@ func executeDelegate(ctx context.Context, call core.SkillCall, s *Session) (stri
 		}
 
 		// Execute delegation.
-		spec := PMTaskSpec{ProfileID: profileID, Task: task, Background: background}
+		spec := PMTaskSpec{StaffID: staffID, Task: task, Background: background}
 		maxDepth := 3
 		if s.Config.Orchestration.MaxDepth > 0 {
 			maxDepth = int(s.Config.Orchestration.MaxDepth)
@@ -2025,7 +2333,7 @@ func executeDelegate(ctx context.Context, call core.SkillCall, s *Session) (stri
 		})
 
 	default:
-		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Agent method: %s", call.Method)})
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Runner method: %s", call.Method)})
 	}
 }
 

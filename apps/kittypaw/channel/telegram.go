@@ -180,7 +180,7 @@ type TelegramChannel struct {
 	// typing indicator state — typingCancels[chatID] cancels the in-flight
 	// typingLoop for that chat. Started at message-receive (Start loop) and
 	// canceled at SendResponse so the "..." dots stay visible across the
-	// entire agent-loop window, not just the post-LLM send window.
+	// entire runner-loop window, not just the post-LLM send window.
 	typingMu      sync.Mutex
 	typingCancels map[int64]context.CancelFunc
 }
@@ -298,7 +298,7 @@ func (t *TelegramChannel) Start(ctx context.Context, eventCh chan<- core.Event) 
 
 			select {
 			case eventCh <- event:
-				// Start typing as early as possible — before the agent loop
+				// Start typing as early as possible — before the runner loop
 				// even begins. SendResponse will cancel this when it's time
 				// to deliver the actual reply.
 				t.startTyping(ctx, chatID)
@@ -483,7 +483,7 @@ func (t *TelegramChannel) stopTyping(chatID int64) {
 
 // telegramTypingRefresh is the cadence for resending the typing indicator.
 // Telegram's chat action expires ~5s after each call, so we refresh slightly
-// faster to keep the "..." dots visible during long agent loops.
+// faster to keep the "..." dots visible during long runner loops.
 const telegramTypingRefresh = 4 * time.Second
 
 // SendResponse sends a text response to a Telegram chat.
@@ -499,7 +499,7 @@ func (t *TelegramChannel) SendResponse(ctx context.Context, chatIDStr, response,
 
 	// Stop any event-time typingLoop now that we have a real reply ready —
 	// otherwise the dots would briefly linger after the message arrives.
-	// startTyping at message-receive (Start loop) covers the agent-loop window;
+	// startTyping at message-receive (Start loop) covers the runner-loop window;
 	// this stopTyping closes that window cleanly.
 	t.stopTyping(chatID)
 
@@ -936,7 +936,7 @@ func (t *TelegramChannel) AskConfirmation(ctx context.Context, chatID, descripti
 // in the pending map and sending the approval/denial to the waiting goroutine.
 //
 // NOTE: Currently does not verify query.From against the original requester.
-// This is acceptable for personal-agent 1:1 chats (design assumption).
+// This is acceptable for personal-runner 1:1 chats (design assumption).
 // If group-chat support is added, verify query.From.ID matches the requester
 // to prevent unauthorized approvals.
 func (t *TelegramChannel) resolveCallback(ctx context.Context, query *telegramCallbackQuery) {

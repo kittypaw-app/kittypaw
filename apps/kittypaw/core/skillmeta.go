@@ -101,6 +101,16 @@ var SkillRegistry = []SkillMeta{
 		{Name: "update", Signature: "Todo.update(id, text)"},
 		{Name: "delete", Signature: "Todo.delete(id)"},
 	}},
+	{Name: "Kanban", Methods: []SkillMethodMeta{
+		{Name: "show", Signature: "Kanban.show(taskId) — returns {task, comments, runs, events}"},
+		{Name: "create", Signature: "Kanban.create({project, title, body?, status?, priority?, assignee?, milestone?, created_by?}) — creates a task and returns {task}"},
+		{Name: "claim", Signature: "Kanban.claim(taskId, options?) — starts a Run; options: {actor, work_dir}. Returns {run}"},
+		{Name: "complete", Signature: "Kanban.complete(taskId, options?) — completes a running task; options: {actor, summary, metadata}. Returns {success}"},
+		{Name: "block", Signature: "Kanban.block(taskId, reasonOrOptions) — blocks a task; options: {actor, reason}. Returns {success}"},
+		{Name: "comment", Signature: "Kanban.comment(taskId, bodyOrOptions) — adds a comment; options: {author, body}. Returns {comment}"},
+		{Name: "link", Signature: "Kanban.link(parentTaskId, childTaskId) — marks parent as blocking child. Returns {success}"},
+		{Name: "heartbeat", Signature: "Kanban.heartbeat(taskId, options?) — refreshes a running Run heartbeat. Returns {run}"},
+	}},
 	{Name: "Env", Methods: []SkillMethodMeta{
 		{Name: "get", Signature: "Env.get(name)"},
 	}},
@@ -128,15 +138,15 @@ var SkillRegistry = []SkillMeta{
 		{Name: "call", Signature: "Mcp.call(server, tool, args) — calls an MCP tool"},
 		{Name: "listTools", Signature: "Mcp.listTools(server) — lists tools on an MCP server"},
 	}},
-	{Name: "Agent", Methods: []SkillMethodMeta{
-		{Name: "delegate", Signature: "Agent.delegate(profileId, task) — delegates task to another agent"},
-		{Name: "observe", Signature: "Agent.observe({data, label}) — pauses execution and sends data back for analysis. Engine re-calls LLM with observations in context."},
+	{Name: "Runner", Methods: []SkillMethodMeta{
+		{Name: "delegate", Signature: "Runner.delegate(staffId, task) — delegates task to another staff member"},
+		{Name: "observe", Signature: "Runner.observe({data, label}) — pauses execution and sends data back for analysis. Engine re-calls LLM with observations in context."},
 	}},
-	{Name: "Profile", Methods: []SkillMethodMeta{
-		{Name: "list", Signature: "Profile.list()"},
-		{Name: "switch", Signature: "Profile.switch(id)"},
-		{Name: "create", Signature: "Profile.create(id, desc)"},
-		{Name: "update", Signature: "Profile.update(id, desc)"},
+	{Name: "Staff", Methods: []SkillMethodMeta{
+		{Name: "list", Signature: "Staff.list()"},
+		{Name: "switch", Signature: "Staff.switch(id)"},
+		{Name: "create", Signature: "Staff.create(id, desc)"},
+		{Name: "update", Signature: "Staff.update(id, desc)"},
 	}},
 	{Name: "Web", Methods: []SkillMethodMeta{
 		{Name: "search", Signature: "Web.search(query) — returns {results: [{title, url, snippet}]}"},

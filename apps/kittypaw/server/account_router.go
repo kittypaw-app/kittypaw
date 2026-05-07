@@ -14,7 +14,7 @@ import (
 // Lookup is strict by design: events with an empty AccountID or a AccountID
 // that does not match a registered session are dropped. There is NO default
 // fallback — a silent fallback in a multi-account deployment would route
-// another user's messages into the default account's agent state (privacy
+// another user's messages into the default account's runner state (privacy
 // leak). See the account-routing privacy constraint.
 type AccountRouter struct {
 	mu        sync.RWMutex

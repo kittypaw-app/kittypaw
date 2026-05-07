@@ -45,7 +45,7 @@ type turnState struct {
 	err    error
 }
 
-// PermissionCallback is called when the agent needs user permission for an action.
+// PermissionCallback is called when the runner needs user permission for an action.
 type PermissionCallback func(ctx context.Context, description, resource string) (bool, error)
 
 // BrowserController executes built-in Browser.* calls. It is an interface so
@@ -292,7 +292,7 @@ func (s *Session) runTurnOwner(ctx context.Context, turnID string, state *turnSt
 	state.result, state.err = exec(ownerCtx)
 }
 
-// Run processes a single event through the agent loop.
+// Run processes a single event through the runner loop.
 func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
 	// Fast path: slash commands
 	eventText := FormatEvent(&event)
@@ -301,7 +301,7 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 		return response, nil
 	}
 
-	// Pipeline dispatch — deterministic branches before the LLM agent
+	// Pipeline dispatch — deterministic branches before the LLM runner
 	// loop. Legacy fallback when classifyIntent returns
 	// IntentLegacyFallback or a branch errors.
 	if s.Pipeline == nil {
@@ -319,7 +319,7 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 		// graceful.
 		//
 		// First-turn proactive suggestion is appended BEFORE the turn
-		// record. The agent-loop path lets the LLM weave suggestions
+		// record. The runner-loop path lets the LLM weave suggestions
 		// into its reply via system-prompt augmentation; the branch
 		// path returns a deterministic skill output with no LLM in the
 		// response loop, so we surface the suggestion as a literal
@@ -499,7 +499,7 @@ func pickActiveSuggestion(st *store.Store) (label, hash string) {
 // / etc) response when this is the account conversation's first turn AND there is an
 // active reflection candidate outside the silence window. Branch paths
 // don't run an LLM after the skill executes, so the
-// system-prompt-augmentation path used by the agent loop has no effect
+// system-prompt-augmentation path used by the runner loop has no effect
 // here — we have to compose the proposal text ourselves.
 //
 // First-turn detection probes the account-wide store: zero prior assistant
@@ -593,9 +593,9 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 		// First-ever turn for this account — runAgentLoop creates the row
 		// lazily on the same path. Mirror that here so a branch dispatch
 		// is allowed to be the account's very first interaction.
-		state = &core.AgentState{
-			AgentID:      convKey,
-			SystemPrompt: SystemPrompt,
+		state = &core.ConversationState{
+			ConversationID: convKey,
+			SystemPrompt:   SystemPrompt,
 		}
 		if err := s.Store.SaveConversationState(state); err != nil {
 			return fmt.Errorf("save initial state: %w", err)
@@ -643,7 +643,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	}
 
 	// Store the account conversation key and event in context for downstream handlers.
-	ctx = ContextWithAgentID(ctx, convKey)
+	ctx = ContextWithConversationID(ctx, convKey)
 	ctx = ContextWithEvent(ctx, &event)
 
 	// Load or create account conversation state.
@@ -652,9 +652,9 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 		return "", fmt.Errorf("load state: %w", err)
 	}
 	if state == nil {
-		state = &core.AgentState{
-			AgentID:      convKey,
-			SystemPrompt: SystemPrompt,
+		state = &core.ConversationState{
+			ConversationID: convKey,
+			SystemPrompt:   SystemPrompt,
 		}
 		if err := s.Store.SaveConversationState(state); err != nil {
 			return "", fmt.Errorf("save initial state: %w", err)
@@ -666,11 +666,11 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	// Parse @mention routing
 	var mentionOverride string
 	eventText := rawEventText
-	if pid, remaining, matched := ParseAtMention(rawEventText); matched {
-		meta, ok, _ := s.Store.GetProfileMeta(pid)
+	if staffID, remaining, matched := ParseAtMention(rawEventText); matched {
+		meta, ok, _ := s.Store.GetStaffMeta(staffID)
 		if ok && meta.Active {
-			slog.Info("@mention routing", "profile_id", pid)
-			mentionOverride = pid
+			slog.Info("@mention routing", "staff_id", staffID)
+			mentionOverride = staffID
 			eventText = remaining
 		}
 	}
@@ -699,7 +699,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 		}
 	}
 
-	// Orchestration gate: PM agent may delegate to profiles.
+	// Orchestration gate: PM runner may delegate to staff.
 	if response, handled, orchErr := OrchestrateRequest(
 		ctx, eventText, s.Provider, s.Store, &s.Config.Orchestration, s.Budget, s.BaseDir,
 	); orchErr != nil {
@@ -734,7 +734,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	}
 
 	// Observe + retry loop.
-	// Outer loop: observe rounds (Agent.observe() re-invokes LLM with observations).
+	// Outer loop: observe rounds (Runner.observe() re-invokes LLM with observations).
 	// Inner loop: retry on execution errors.
 	// When observe is not used, observeRound stays 0 and behavior is unchanged.
 	maxObserveRounds := s.Config.Features.MaxObserveRounds
@@ -767,12 +767,12 @@ observeLoop:
 			// Build compaction config based on attempt and feature flags
 			compaction := s.compactionForAttempt(attempt)
 
-			// Resolve and load profile.
-			profileName := ResolveProfileName(s.Config, channelName, convKey, mentionOverride, s.Store)
-			profile := loadProfileForPrompt(profileName, s.Config, s.BaseDir)
+			// Resolve and load staff.
+			staffID := ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store)
+			staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
 
 			// Build prompt (observations are volatile — replaced each observe round)
-			messages := BuildPrompt(state, eventText, compaction, s.Config, channelName, profile, memoryContext, mcpToolsSection, observations, s.BaseDir)
+			messages := BuildPrompt(state, eventText, compaction, s.Config, channelName, staff, memoryContext, mcpToolsSection, observations, s.BaseDir)
 
 			// Cross-turn augmentation — short follow-up + recent skill output.
 			// The conversation transcript already carries the prior assistant
@@ -887,7 +887,7 @@ observeLoop:
 				return "", fmt.Errorf("sandbox execute: %w", err)
 			}
 
-			// Agent.observe() — re-invoke LLM with observations
+			// Runner.observe() — re-invoke LLM with observations
 			if execResult.Observe {
 				observations = execResult.Observations
 				if observeRound < maxObserveRounds {
@@ -1081,12 +1081,12 @@ func (s *Session) resolveProvider(model string) llm.Provider {
 	return NewUsageRecordingProvider(p, s.Store, mc.Provider)
 }
 
-// ResolveProfileName determines which profile to use for this request.
+// ResolveStaffName determines which staff member to use for this request.
 // Priority: mentionOverride > session override > channel binding > default.
-func ResolveProfileName(
+func ResolveStaffName(
 	config *core.Config,
 	channelType string,
-	agentID string,
+	conversationID string,
 	mentionOverride string,
 	st *store.Store,
 ) string {
@@ -1095,51 +1095,51 @@ func ResolveProfileName(
 		return mentionOverride
 	}
 
-	// 2. Session override from Profile.switch (stored in user_context).
+	// 2. Session override from Staff.switch (stored in user_context).
 	if st != nil {
-		key := fmt.Sprintf("active_profile:%s", agentID)
+		key := fmt.Sprintf("active_staff:%s", conversationID)
 		if val, ok, err := st.GetUserContext(key); err == nil && ok && val != "" {
 			return val
 		}
 	}
 
 	// 3. Channel binding from config.
-	for _, pc := range config.Profiles {
-		for _, ch := range pc.Channels {
+	for _, sc := range config.Staff {
+		for _, ch := range sc.Channels {
 			if ch == channelType {
-				return pc.ID
+				return sc.ID
 			}
 		}
 	}
 
-	// 4. Default profile.
-	if config.DefaultProfile != "" {
-		return config.DefaultProfile
+	// 4. Default staff.
+	if config.DefaultStaff != "" {
+		return config.DefaultStaff
 	}
 	return "default"
 }
 
-// loadProfileForPrompt loads a profile from disk and enriches it with config nick.
+// loadStaffForPrompt loads staff from disk and enriches it with config nick.
 // baseDir is the account's base directory; falls back to ConfigDir() if empty.
-func loadProfileForPrompt(profileName string, config *core.Config, baseDir string) *core.Profile {
+func loadStaffForPrompt(staffID string, config *core.Config, baseDir string) *core.Staff {
 	base, err := core.ResolveBaseDir(baseDir)
 	if err != nil {
-		slog.Warn("failed to get config dir for profile", "error", err)
-		return &core.Profile{ID: profileName, Soul: core.Presets["default-assistant"].Soul}
+		slog.Warn("failed to get config dir for staff", "error", err)
+		return &core.Staff{ID: staffID, Soul: core.Presets["default-assistant"].Soul}
 	}
-	p, err := core.LoadProfile(base, profileName)
+	staff, err := core.LoadStaff(base, staffID)
 	if err != nil {
-		slog.Warn("failed to load profile", "name", profileName, "error", err)
-		return &core.Profile{ID: profileName, Soul: core.Presets["default-assistant"].Soul}
+		slog.Warn("failed to load staff", "id", staffID, "error", err)
+		return &core.Staff{ID: staffID, Soul: core.Presets["default-assistant"].Soul}
 	}
 	// Enrich with nick from config.
-	for _, pc := range config.Profiles {
-		if pc.ID == profileName {
-			p.Nick = pc.Nick
+	for _, sc := range config.Staff {
+		if sc.ID == staffID {
+			staff.Nick = sc.Nick
 			break
 		}
 	}
-	return p
+	return staff
 }
 
 type conversationTurnMetadata struct {

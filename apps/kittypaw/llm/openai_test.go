@@ -1062,7 +1062,7 @@ func TestExtractContent_UnknownType_EmptyFallback(t *testing.T) {
 
 func TestExtractContent_NotStringNotArray(t *testing.T) {
 	// Numbers/objects are wire violations from the provider's side. Surface
-	// loudly rather than coerce — the agent loop has no graceful policy for
+	// loudly rather than coerce — the runner loop has no graceful policy for
 	// "the LLM returned 42 as content".
 	cases := []any{
 		42,

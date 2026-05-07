@@ -1,12 +1,12 @@
 # KittyPaw
 
-Experimental Go framework for local AI agents. Single binary, goja JS sandbox,
+Experimental Go framework for local AI runners. Single binary, goja JS sandbox,
 5 channel adapters, skill registry. **Alpha** — honest status over polish.
 
 ## Status
 
 - ✅ **Working** — CLI + local server, registry install, sandbox + permission, 5 channel adapters (Telegram/Slack/Discord/Kakao/WS)
-- ✅ **Working** — Telegram/Kakao inbound media metadata; attached images are available to the agent through `Vision.analyzeAttachment(...)`
+- ✅ **Working** — Telegram/Kakao inbound media metadata; attached images are available to the runner through `Vision.analyzeAttachment(...)`
 - 🚧 **Partial** — Reflection candidate surface (verified), `skill create` syntax (5/5 measured), Web search source quality
 - 🔬 **Experimental** — Team space, MoA, live workspace indexing
 - ❌ **Not / retired** — Windows GUI signing, "learns the more you use it" auto-adaptation, self-healing (retired)
@@ -96,7 +96,7 @@ connected chat channel:
 /skills               list local user-created skills
 /run <name>           run an installed skill or package by id/name
 /teach <description>  create and save a draft skill from chat
-/persona <profile-id> set the default assistant profile for this account
+/staff <staff-id> set the default staff identity for this account
 ```
 
 ## Accounts

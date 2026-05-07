@@ -15,14 +15,14 @@ make smoke-local
 ```
 
 It validates contracts, checks deploy script syntax, runs deterministic
-Kittypaw agent/channel critical flows early, runs Go/Rust package tests, and
+Kittypaw runner/channel critical flows early, runs Go/Rust package tests, and
 runs the Chat in-process e2e smoke. It intentionally does not run production
 endpoint smoke scripts, DB-backed integration tests, or LLM-judged evals.
 
 The early Kittypaw flow checks are deterministic engine/channel regressions,
-not CLI workflow tests. They cover chat-driven skill install/run, assistant
-mention routing, in-chat `/persona`, reflection over `conversation_turns`,
-persona evolution pending proposals, and captured-shape Telegram/Kakao channel
+not CLI workflow tests. They cover chat-driven skill install/run, staff
+mention routing, in-chat `/staff`, reflection over `conversation_turns`,
+staff evolution pending proposals, and captured-shape Telegram/Kakao channel
 fixtures.
 
 ## `e2e-local.sh`
@@ -38,7 +38,7 @@ Go harness, starts real Portal and Chat binaries, uses a fake Google OAuth
 server, connects Kittypaw chat relay connectors, and verifies the Chat BFF
 session can reach `/app/api/*` without a browser `Authorization` header.
 
-The harness also runs a heavier local agent flow: browser chat -> Chat relay ->
+The harness also runs a heavier local runner flow: browser chat -> Chat relay ->
 real Kittypaw dispatcher -> fake skill registry. It verifies that a user can ask
 for exchange rates, receive an install offer, approve it, and get the installed
 skill result back through the Chat BFF. It also verifies an installed

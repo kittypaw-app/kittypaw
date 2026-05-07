@@ -75,7 +75,7 @@ func TestParseAtMention(t *testing.T) {
 		wantMatch bool
 	}{
 		{"@bot hello", "bot", "hello", true},
-		{"@my-agent do something", "my-agent", "do something", true},
+		{"@my-runner do something", "my-runner", "do something", true},
 		{"@agent_1", "agent_1", "", true},
 		{"hello @bot", "", "hello @bot", false},       // not at start
 		{"@", "", "@", false},                         // bare @
@@ -356,12 +356,12 @@ func TestChannelHint_KakaoTalkCurrentChatAndImages(t *testing.T) {
 	}
 }
 
-// --- BuildPrompt with Profile ---
+// --- BuildPrompt with Staff ---
 
 func TestBuildPrompt_WithSoul(t *testing.T) {
-	state := &core.AgentState{AgentID: "test", SystemPrompt: SystemPrompt}
-	profile := &core.Profile{ID: "mybot", Soul: "I am a cheerful assistant."}
-	msgs := BuildPrompt(state, "hello", CompactionConfig{RecentWindow: 5}, &core.Config{}, "telegram", profile, "", "", nil, "")
+	state := &core.ConversationState{ConversationID: "test", SystemPrompt: SystemPrompt}
+	staff := &core.Staff{ID: "mybot", Soul: "I am a cheerful assistant."}
+	msgs := BuildPrompt(state, "hello", CompactionConfig{RecentWindow: 5}, &core.Config{}, "telegram", staff, "", "", nil, "")
 
 	sys := msgs[0].Content
 	if !strings.Contains(sys, "## Your Identity (SOUL.md)") {
@@ -373,9 +373,9 @@ func TestBuildPrompt_WithSoul(t *testing.T) {
 }
 
 func TestBuildPrompt_SoulBeforeIdentity(t *testing.T) {
-	state := &core.AgentState{AgentID: "test"}
-	profile := &core.Profile{ID: "mybot", Soul: "I am the soul."}
-	msgs := BuildPrompt(state, "hi", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", profile, "", "", nil, "")
+	state := &core.ConversationState{ConversationID: "test"}
+	staff := &core.Staff{ID: "mybot", Soul: "I am the soul."}
+	msgs := BuildPrompt(state, "hi", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", staff, "", "", nil, "")
 
 	sys := msgs[0].Content
 	soulIdx := strings.Index(sys, "## Your Identity (SOUL.md)")
@@ -389,20 +389,20 @@ func TestBuildPrompt_SoulBeforeIdentity(t *testing.T) {
 }
 
 func TestBuildPrompt_WithNickAndUserMD(t *testing.T) {
-	state := &core.AgentState{AgentID: "test", SystemPrompt: SystemPrompt}
-	profile := &core.Profile{
+	state := &core.ConversationState{ConversationID: "test", SystemPrompt: SystemPrompt}
+	staff := &core.Staff{
 		ID:     "bot",
 		Nick:   "Paw",
 		Soul:   "soul",
 		UserMD: "User likes hiking.",
 	}
-	msgs := BuildPrompt(state, "hi", CompactionConfig{RecentWindow: 5}, &core.Config{}, "slack", profile, "", "", nil, "")
+	msgs := BuildPrompt(state, "hi", CompactionConfig{RecentWindow: 5}, &core.Config{}, "slack", staff, "", "", nil, "")
 
 	sys := msgs[0].Content
 	if !strings.Contains(sys, "Your name/nickname is: Paw") {
 		t.Error("nick not injected")
 	}
-	if !strings.Contains(sys, "## User Profile (USER.md)") {
+	if !strings.Contains(sys, "## User Notes (USER.md)") {
 		t.Error("missing USER.md header")
 	}
 	if !strings.Contains(sys, "User likes hiking.") {
@@ -410,18 +410,18 @@ func TestBuildPrompt_WithNickAndUserMD(t *testing.T) {
 	}
 }
 
-func TestBuildPrompt_NilProfile(t *testing.T) {
-	state := &core.AgentState{AgentID: "test", SystemPrompt: SystemPrompt}
+func TestBuildPrompt_NilStaff(t *testing.T) {
+	state := &core.ConversationState{ConversationID: "test", SystemPrompt: SystemPrompt}
 	msgs := BuildPrompt(state, "hey", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", nil, "", "", nil, "")
 
 	sys := msgs[0].Content
 	if strings.Contains(sys, "## Your Identity (SOUL.md)") {
-		t.Error("nil profile should not inject SOUL.md section")
+		t.Error("nil staff should not inject SOUL.md section")
 	}
 }
 
 func TestBuildPrompt_BlockPresence(t *testing.T) {
-	state := &core.AgentState{AgentID: "test"}
+	state := &core.ConversationState{ConversationID: "test"}
 	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "telegram", nil, "", "", nil, "")
 
 	sys := msgs[0].Content
@@ -444,7 +444,7 @@ func TestBuildPrompt_BlockPresence(t *testing.T) {
 }
 
 func TestBuildPrompt_ChannelHintInjected(t *testing.T) {
-	state := &core.AgentState{AgentID: "test"}
+	state := &core.ConversationState{ConversationID: "test"}
 	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "telegram", nil, "", "", nil, "")
 	sys := msgs[0].Content
 	if !strings.Contains(sys, "## Output format (Telegram)") {
@@ -453,7 +453,7 @@ func TestBuildPrompt_ChannelHintInjected(t *testing.T) {
 }
 
 func TestBuildPrompt_NoChannelHintForUnknown(t *testing.T) {
-	state := &core.AgentState{AgentID: "test"}
+	state := &core.ConversationState{ConversationID: "test"}
 	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "unknown", nil, "", "", nil, "")
 	sys := msgs[0].Content
 	if strings.Contains(sys, "## Output format") {
@@ -462,7 +462,7 @@ func TestBuildPrompt_NoChannelHintForUnknown(t *testing.T) {
 }
 
 func TestBuildPrompt_WithObservations(t *testing.T) {
-	state := &core.AgentState{AgentID: "test"}
+	state := &core.ConversationState{ConversationID: "test"}
 	obs := []core.Observation{
 		{Label: "search_results", Data: "Found 3 articles about AI."},
 		{Label: "page_content", Data: "Article body text here."},
@@ -485,7 +485,7 @@ func TestBuildPrompt_WithObservations(t *testing.T) {
 
 func TestBuildPrompt_NilObservations(t *testing.T) {
 	// AC #10: When observations is nil, the prompt should be identical to before.
-	state := &core.AgentState{AgentID: "test"}
+	state := &core.ConversationState{ConversationID: "test"}
 	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", nil, "", "", nil, "")
 	sys := msgs[0].Content
 	if strings.Contains(sys, "## Current Observations") {
@@ -494,7 +494,7 @@ func TestBuildPrompt_NilObservations(t *testing.T) {
 }
 
 func TestBuildPrompt_EmptyObservations(t *testing.T) {
-	state := &core.AgentState{AgentID: "test"}
+	state := &core.ConversationState{ConversationID: "test"}
 	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", nil, "", "", []core.Observation{}, "")
 	sys := msgs[0].Content
 	if strings.Contains(sys, "## Current Observations") {

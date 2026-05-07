@@ -25,7 +25,7 @@ const backgroundTokenCap = 2048
 // PM decision types (JSON format)
 // ---------------------------------------------------------------------------
 
-// PMDecision is the JSON response from the PM agent.
+// PMDecision is the JSON response from the PM runner.
 type PMDecision struct {
 	Kind   string       `json:"kind"`   // "direct" or "delegate"
 	Reason string       `json:"reason"` // why this routing was chosen
@@ -34,12 +34,12 @@ type PMDecision struct {
 
 // PMTaskSpec describes a single delegation target.
 type PMTaskSpec struct {
-	ProfileID  string `json:"profile_id"`
+	StaffID    string `json:"staff_id"`
 	Task       string `json:"task"`
 	Background bool   `json:"background,omitempty"`
 }
 
-// DelegateCtx holds context for agent delegation within the skill executor.
+// DelegateCtx holds context for runner delegation within the skill executor.
 type DelegateCtx struct {
 	Provider llm.Provider
 	Store    *store.Store
@@ -51,7 +51,7 @@ type DelegateCtx struct {
 
 // DelegateResult holds the outcome of a single delegation.
 type DelegateResult struct {
-	ProfileID  string `json:"profile_id"`
+	StaffID    string `json:"staff_id"`
 	Task       string `json:"task"`
 	Result     string `json:"result"`
 	Success    bool   `json:"success"`
@@ -63,9 +63,9 @@ type DelegateResult struct {
 // ---------------------------------------------------------------------------
 
 // OrchestrateRequest routes a user message through the PM (Project Manager)
-// agent which decides whether to handle directly or delegate to profiles.
+// runner which decides whether to handle directly or delegate to staff.
 // Returns (response, handled, error). When handled is false, the caller
-// should fall through to the default agent loop.
+// should fall through to the default runner loop.
 func OrchestrateRequest(
 	ctx context.Context,
 	text string,
@@ -79,13 +79,13 @@ func OrchestrateRequest(
 		return "", false, nil
 	}
 
-	profiles, err := st.ListActiveProfiles()
-	if err != nil || len(profiles) == 0 {
+	staff, err := st.ListActiveStaff()
+	if err != nil || len(staff) == 0 {
 		return "", false, nil
 	}
 
 	// PM decision.
-	decision, err := pmDecide(ctx, text, profiles, provider)
+	decision, err := pmDecide(ctx, text, staff, provider)
 	if err != nil {
 		slog.Warn("orchestration: PM decision failed", "error", err)
 		return "", false, nil
@@ -126,27 +126,27 @@ func OrchestrateRequest(
 func pmDecide(
 	ctx context.Context,
 	text string,
-	profiles []store.ProfileMeta,
+	staff []store.StaffMeta,
 	provider llm.Provider,
 ) (*PMDecision, error) {
-	var profileList strings.Builder
-	for _, p := range profiles {
-		profileList.WriteString(fmt.Sprintf("- %s: %s\n", p.ID, p.Description))
+	var staffList strings.Builder
+	for _, s := range staff {
+		staffList.WriteString(fmt.Sprintf("- %s: %s\n", s.ID, s.Description))
 	}
 
-	pmPrompt := fmt.Sprintf(`You are a PM (Project Manager) agent. A user sent this message:
+	pmPrompt := fmt.Sprintf(`You are a PM (Project Manager) runner. A user sent this message:
 
 "%s"
 
-Available specialist profiles:
+Available specialist staff:
 %s
 Respond with a JSON object (no markdown fences):
 - If the request is simple or doesn't need a specialist:
   {"kind":"direct","reason":"..."}
 - If one or more specialists should handle it:
-  {"kind":"delegate","reason":"...","tasks":[{"profile_id":"...","task":"..."}]}
+  {"kind":"delegate","reason":"...","tasks":[{"staff_id":"...","task":"..."}]}
 
-Output ONLY valid JSON.`, text, profileList.String())
+Output ONLY valid JSON.`, text, staffList.String())
 
 	messages := []core.LlmMessage{
 		{Role: core.RoleUser, Content: pmPrompt},
@@ -210,7 +210,7 @@ func fanOutDelegations(
 
 			// If budget exhausted, cancel all remaining siblings.
 			if budget != nil && budget.Remaining() == 0 {
-				slog.Warn("orchestration: budget exhausted, canceling remaining", "profile", task.ProfileID)
+				slog.Warn("orchestration: budget exhausted, canceling remaining", "staff", task.StaffID)
 				cancelAll()
 			}
 
@@ -222,7 +222,7 @@ func fanOutDelegations(
 	return results, nil
 }
 
-// executeDelegateTask runs a single delegation against a profile.
+// executeDelegateTask runs a single delegation against a staff member.
 func executeDelegateTask(
 	ctx context.Context,
 	task PMTaskSpec,
@@ -233,13 +233,13 @@ func executeDelegateTask(
 	baseDir string,
 ) DelegateResult {
 	result := DelegateResult{
-		ProfileID: task.ProfileID,
-		Task:      task.Task,
+		StaffID: task.StaffID,
+		Task:    task.Task,
 	}
 
 	// Validate inputs.
-	if err := core.ValidateProfileID(task.ProfileID); err != nil {
-		result.Result = fmt.Sprintf("invalid profile ID: %s", err)
+	if err := core.ValidateStaffID(task.StaffID); err != nil {
+		result.Result = fmt.Sprintf("invalid staff ID: %s", err)
 		return result
 	}
 	if len(task.Task) > maxDelegateTaskLen {
@@ -251,17 +251,25 @@ func executeDelegateTask(
 		return result
 	}
 
-	// Load profile.
-	meta, ok, err := st.GetProfileMeta(task.ProfileID)
-	if err != nil || !ok {
-		result.Result = fmt.Sprintf("profile %q not found", task.ProfileID)
+	// Load staff.
+	meta, ok, err := st.GetStaffMeta(task.StaffID)
+	if err != nil {
+		result.Result = fmt.Sprintf("staff lookup error: %s", err)
+		return result
+	}
+	if !ok {
+		result.Result = fmt.Sprintf("staff %q not found", task.StaffID)
+		return result
+	}
+	if !meta.Active {
+		result.Result = fmt.Sprintf("staff %q is inactive", task.StaffID)
 		return result
 	}
 
 	// Build system prompt: try SOUL.md, fallback to description.
-	systemPrompt := loadSOUL(baseDir, task.ProfileID)
+	systemPrompt := loadSOUL(baseDir, task.StaffID)
 	if systemPrompt == "" {
-		systemPrompt = fmt.Sprintf("You are the %q profile. %s", meta.ID, meta.Description)
+		systemPrompt = fmt.Sprintf("You are the %q staff member. %s", meta.ID, meta.Description)
 	}
 
 	if provider == nil {
@@ -301,18 +309,18 @@ func executeDelegateTask(
 	return result
 }
 
-// loadSOUL reads ~/.kittypaw/profiles/{id}/SOUL.md via core.LoadProfile.
+// loadSOUL reads ~/.kittypaw/staff/{id}/SOUL.md via core.LoadStaff.
 // Returns "" on any failure.
-func loadSOUL(baseDir, profileID string) string {
+func loadSOUL(baseDir, staffID string) string {
 	base, err := core.ResolveBaseDir(baseDir)
 	if err != nil {
 		return ""
 	}
-	p, err := core.LoadProfile(base, profileID)
+	staff, err := core.LoadStaff(base, staffID)
 	if err != nil {
 		return ""
 	}
-	return p.Soul
+	return staff.Soul
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +346,7 @@ func pmSynthesize(
 	if successCount == 0 {
 		var errs strings.Builder
 		for _, r := range results {
-			errs.WriteString(fmt.Sprintf("[%s] %s\n", r.ProfileID, r.Result))
+			errs.WriteString(fmt.Sprintf("[%s] %s\n", r.StaffID, r.Result))
 		}
 		return fmt.Sprintf("All delegations failed:\n%s", errs.String()), nil
 	}
@@ -356,7 +364,7 @@ func pmSynthesize(
 			marker = " [FAILED]"
 		}
 		sections.WriteString(fmt.Sprintf("--- %s (%s)%s ---\n%s\n\n",
-			r.ProfileID, r.Task, marker, r.Result))
+			r.StaffID, r.Task, marker, r.Result))
 	}
 
 	synthPrompt := fmt.Sprintf(`You are synthesizing results from multiple specialists.

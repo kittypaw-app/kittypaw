@@ -17,9 +17,9 @@
 - [x] Add `apps/kittypaw` release workflow plan for `kittypaw/v*` tags.
 - [ ] Add initial CI path-filter strategy.
 
-## Candidate: Agent Loop / Channel Safety Backlog
+## Candidate: Runner Loop / Channel Safety Backlog
 
-> Input: Hermes Agent / OpenClaw comparison thread. Treat as product-direction
+> Input: Hermes / OpenClaw comparison thread. Treat as product-direction
 > inspiration only; verify claims against upstream docs/repos before designing.
 
 - [ ] **Session search / recall**: Persist searchable conversation history and

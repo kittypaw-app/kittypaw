@@ -30,8 +30,9 @@ This phase adds:
 - focused tests for cutoff, project filtering, ordering, validation, and command
   wiring
 
-This phase does not add a dispatcher, automatic reclaim, retries, profile worker
-launch, Web UI controls, WebSocket updates, schema migrations, or a new Run
+This phase does not add a dispatcher, automatic reclaim, retries,
+staff-assigned runner launch, Web UI controls, WebSocket updates, schema
+migrations, or a new Run
 work-dir provider.
 
 ## Stale Definition

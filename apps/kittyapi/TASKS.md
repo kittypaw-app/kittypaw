@@ -468,7 +468,7 @@
 > 직전 머지: PR-A `c75c238` (JWKS 인프라).
 > 후속: PR-C (devices DB) → PR-D (endpoints) — 본 PR 머지 후 별도 ina:plan.
 
-**검증 결과** (Plan agent ITERATE 4 high concerns 박제 반영):
+**검증 결과** (Plan review ITERATE 4 high concerns 박제 반영):
 - fixture helper 시그니처: `IssueTestJWT(t, key, kid, userID, ttl)` — testfixture가 config import 회피 (cycle)
 - `Verify(token, jwks, audience)` — caller가 audience 지정
 - JWT_SECRET dead path 동시 제거 체크리스트 (silly-wiggling-balloon.md PR-B step 14 참고)

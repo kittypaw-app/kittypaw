@@ -33,7 +33,7 @@ const (
 	// EventTeamSpacePush is emitted by ChannelFanout when a team-space account
 	// pushes a message to a member account. AccountRouter dispatches to the
 	// target Session the same way it dispatches inbound chat events, so the
-	// member agent can treat it as a normal observation.
+	// member runner can treat it as a normal observation.
 	EventTeamSpacePush EventType = "team_space.push"
 
 	// EventFamilyPush is retained as a compile-time compatibility alias while
@@ -49,7 +49,7 @@ func IsTeamSpacePushEvent(t EventType) bool {
 	return t == EventTeamSpacePush || t == legacyTeamSpacePushEventType
 }
 
-// LoopPhase tracks the agent loop state machine position.
+// LoopPhase tracks the runner loop state machine position.
 type LoopPhase string
 
 const (
@@ -60,11 +60,11 @@ const (
 	PhaseFinish   LoopPhase = "finish"
 )
 
-// AgentState holds the mutable runtime state for the account conversation.
-type AgentState struct {
-	AgentID      string             `json:"conversation_id,omitempty"`
-	SystemPrompt string             `json:"system_prompt"`
-	Turns        []ConversationTurn `json:"turns"`
+// ConversationState holds the mutable runtime state for the account conversation.
+type ConversationState struct {
+	ConversationID string             `json:"conversation_id,omitempty"`
+	SystemPrompt   string             `json:"system_prompt"`
+	Turns          []ConversationTurn `json:"turns"`
 }
 
 // ConversationTurn is a single message in a conversation.
@@ -218,7 +218,7 @@ type SkillCall struct {
 	Args      []json.RawMessage `json:"args"`
 }
 
-// Observation holds data from an Agent.observe() call in the sandbox.
+// Observation holds data from a Runner.observe() call in the sandbox.
 type Observation struct {
 	Label string `json:"label"`
 	Data  string `json:"data"`
@@ -312,16 +312,16 @@ func ValidateSkillName(name string) error {
 	return nil
 }
 
-// ValidateProfileID checks that a profile ID contains only safe characters.
-func ValidateProfileID(id string) error {
+// ValidateStaffID checks that a staff ID contains only safe characters.
+func ValidateStaffID(id string) error {
 	if id == "" {
-		return fmt.Errorf("profile ID is empty")
+		return fmt.Errorf("staff ID is empty")
 	}
 	if strings.Contains(id, "..") || strings.ContainsAny(id, `/\`) {
-		return fmt.Errorf("profile ID contains path traversal characters: %q", id)
+		return fmt.Errorf("staff ID contains path traversal characters: %q", id)
 	}
 	if !validSkillName.MatchString(id) {
-		return fmt.Errorf("profile ID contains invalid characters: %q (allowed: a-z, A-Z, 0-9, _, -)", id)
+		return fmt.Errorf("staff ID contains invalid characters: %q (allowed: a-z, A-Z, 0-9, _, -)", id)
 	}
 	return nil
 }

@@ -171,8 +171,8 @@ type GlobalPath struct {
 	CreatedAt  string
 }
 
-// ProfileMeta stores metadata about a switchable agent profile.
-type ProfileMeta struct {
+// StaffMeta stores metadata about a switchable staff identity.
+type StaffMeta struct {
 	ID             string
 	Description    string
 	EquippedSkills string
@@ -335,7 +335,7 @@ type sqlExecer interface {
 // SaveConversationState upserts account-level runtime metadata. When the conversation is
 // empty, provided turns seed the account-wide timeline; existing turns are not
 // replaced, because AddConversationTurn owns durable history writes.
-func (s *Store) SaveConversationState(state *core.AgentState) error {
+func (s *Store) SaveConversationState(state *core.ConversationState) error {
 	if state == nil {
 		return nil
 	}
@@ -378,7 +378,7 @@ func (s *Store) SaveConversationState(state *core.AgentState) error {
 
 // LoadConversationState retrieves account metadata and the most recent
 // conversation turns.
-func (s *Store) LoadConversationState() (*core.AgentState, error) {
+func (s *Store) LoadConversationState() (*core.ConversationState, error) {
 	var sysPrompt string
 	stateExists := true
 	err := s.db.QueryRow(
@@ -397,10 +397,10 @@ func (s *Store) LoadConversationState() (*core.AgentState, error) {
 	if !stateExists && len(turns) == 0 {
 		return nil, nil
 	}
-	return &core.AgentState{
-		AgentID:      "account",
-		SystemPrompt: sysPrompt,
-		Turns:        turns,
+	return &core.ConversationState{
+		ConversationID: "account",
+		SystemPrompt:   sysPrompt,
+		Turns:          turns,
 	}, nil
 }
 
@@ -1588,13 +1588,13 @@ func (s *Store) RevokeCapability(capability string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Profile Management
+// Staff Management
 // ---------------------------------------------------------------------------
 
-// UpsertProfileMeta creates or updates a profile's metadata.
-func (s *Store) UpsertProfileMeta(id, description, equippedSkills, createdBy string) error {
+// UpsertStaffMeta creates or updates a staff identity's metadata.
+func (s *Store) UpsertStaffMeta(id, description, equippedSkills, createdBy string) error {
 	_, err := s.db.Exec(`
-		INSERT INTO profile_meta (id, description, equipped_skills, created_by)
+		INSERT INTO staff_meta (id, description, equipped_skills, created_by)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			description     = excluded.description,
@@ -1604,29 +1604,29 @@ func (s *Store) UpsertProfileMeta(id, description, equippedSkills, createdBy str
 	return err
 }
 
-// GetProfileMeta retrieves a single profile by ID.
-func (s *Store) GetProfileMeta(id string) (*ProfileMeta, bool, error) {
-	var p ProfileMeta
+// GetStaffMeta retrieves a single staff identity by ID.
+func (s *Store) GetStaffMeta(id string) (*StaffMeta, bool, error) {
+	var staff StaffMeta
 	var active int
 	err := s.db.QueryRow(`
 		SELECT id, description, equipped_skills, active, created_by, created_at
-		FROM profile_meta WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Description, &p.EquippedSkills, &active, &p.CreatedBy, &p.CreatedAt)
+		FROM staff_meta WHERE id = ?`, id,
+	).Scan(&staff.ID, &staff.Description, &staff.EquippedSkills, &active, &staff.CreatedBy, &staff.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	p.Active = active != 0
-	return &p, true, nil
+	staff.Active = active != 0
+	return &staff, true, nil
 }
 
-// ListActiveProfiles returns all profiles where active = 1.
-func (s *Store) ListActiveProfiles() ([]ProfileMeta, error) {
+// ListActiveStaff returns all staff identities where active = 1.
+func (s *Store) ListActiveStaff() ([]StaffMeta, error) {
 	rows, err := s.db.Query(`
 		SELECT id, description, equipped_skills, active, created_by, created_at
-		FROM profile_meta
+		FROM staff_meta
 		WHERE active = 1
 		ORDER BY created_at`)
 	if err != nil {
@@ -1634,31 +1634,31 @@ func (s *Store) ListActiveProfiles() ([]ProfileMeta, error) {
 	}
 	defer rows.Close()
 
-	var out []ProfileMeta
+	var out []StaffMeta
 	for rows.Next() {
-		var p ProfileMeta
+		var staff StaffMeta
 		var active int
-		if err := rows.Scan(&p.ID, &p.Description, &p.EquippedSkills, &active, &p.CreatedBy, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&staff.ID, &staff.Description, &staff.EquippedSkills, &active, &staff.CreatedBy, &staff.CreatedAt); err != nil {
 			return nil, err
 		}
-		p.Active = active != 0
-		out = append(out, p)
+		staff.Active = active != 0
+		out = append(out, staff)
 	}
 	return out, rows.Err()
 }
 
-// SetProfileActive enables or disables a profile.
-func (s *Store) SetProfileActive(id string, active bool) error {
+// SetStaffActive enables or disables a staff identity.
+func (s *Store) SetStaffActive(id string, active bool) error {
 	_, err := s.db.Exec(
-		"UPDATE profile_meta SET active = ? WHERE id = ?",
+		"UPDATE staff_meta SET active = ? WHERE id = ?",
 		boolToInt(active), id)
 	return err
 }
 
-// UpdateEquippedSkills replaces the equipped skills JSON for a profile.
-func (s *Store) UpdateEquippedSkills(id, skills string) error {
+// UpdateEquippedStaffSkills replaces the equipped skills JSON for a staff identity.
+func (s *Store) UpdateEquippedStaffSkills(id, skills string) error {
 	_, err := s.db.Exec(
-		"UPDATE profile_meta SET equipped_skills = ? WHERE id = ?",
+		"UPDATE staff_meta SET equipped_skills = ? WHERE id = ?",
 		skills, id)
 	return err
 }

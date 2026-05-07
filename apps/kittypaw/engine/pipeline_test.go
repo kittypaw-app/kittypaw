@@ -673,7 +673,7 @@ return "📈 환율 (2026-04-30)\n\n1 USD = 0.85383 EUR\n1 USD = 156.56 JPY\n1 U
 
 func TestExchangeRateDisplayPreferenceCandidateReadsLegacyMemory(t *testing.T) {
 	st := openTestStore(t)
-	if err := st.SetUserContext("currency_display_preference", "1000원 기준으로 표시", "agent"); err != nil {
+	if err := st.SetUserContext("currency_display_preference", "1000원 기준으로 표시", "runner"); err != nil {
 		t.Fatal(err)
 	}
 	pref, ok := exchangeRateDisplayPreferenceCandidate(&Session{Store: st})

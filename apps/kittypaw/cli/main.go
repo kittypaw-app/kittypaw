@@ -1,4 +1,4 @@
-// Command kittypaw is the CLI for the KittyPaw AI agent platform.
+// Command kittypaw is the CLI for the KittyPaw AI runner platform.
 package main
 
 import (
@@ -48,9 +48,13 @@ var (
 
 func main() {
 	root := newRootCmd()
-	if err := root.Execute(); err != nil {
+	if err := executeRootCommand(root); err != nil {
 		os.Exit(1)
 	}
+}
+
+func executeRootCommand(root *cobra.Command) error {
+	return root.Execute()
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +118,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "kittypaw",
-		Short:        "KittyPaw — AI agent platform",
+		Short:        "KittyPaw — AI runner platform",
 		Version:      version,
 		SilenceUsage: true,
 	}
@@ -358,8 +362,8 @@ func runSetup(cmd *cobra.Command, flags *setupFlags) error {
 		}
 	}
 
-	if err := core.EnsureDefaultProfile(accountDir); err != nil {
-		return fmt.Errorf("ensure default profile: %w", err)
+	if err := core.EnsureDefaultStaff(accountDir); err != nil {
+		return fmt.Errorf("ensure default staff: %w", err)
 	}
 
 	// Ask a live server to reload before we display the completion box — a
@@ -1602,7 +1606,7 @@ func runConfigCheck(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("Provider:   %s\n", cfg.LLM.Provider)
 	fmt.Printf("Model:      %s\n", cfg.LLM.Model)
 	fmt.Printf("Channels:   %d\n", len(cfg.Channels))
-	fmt.Printf("Agents:     %d\n", len(cfg.Agents))
+	fmt.Printf("Runners:    %d\n", len(cfg.Runners))
 	fmt.Printf("Models:     %d\n", len(cfg.Models))
 	fmt.Printf("Autonomy:   %s\n", cfg.AutonomyLevel)
 
@@ -1610,7 +1614,7 @@ func runConfigCheck(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  progressive_retry:  %v\n", cfg.Features.ProgressiveRetry)
 	fmt.Printf("  context_compaction: %v\n", cfg.Features.ContextCompaction)
 	fmt.Printf("  model_routing:      %v\n", cfg.Features.ModelRouting)
-	fmt.Printf("  background_agents:  %v\n", cfg.Features.BackgroundAgents)
+	fmt.Printf("  background_runners: %v\n", cfg.Features.BackgroundRunners)
 	if cfg.Features.DailyTokenLimit > 0 {
 		fmt.Printf("  daily_token_limit:  %d\n", cfg.Features.DailyTokenLimit)
 	}

@@ -39,9 +39,9 @@ func TestLegacyMigration_PreservesDBRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open legacy db: %v", err)
 	}
-	seed := &core.AgentState{
-		AgentID:      "legacy-agent",
-		SystemPrompt: "legacy system prompt",
+	seed := &core.ConversationState{
+		ConversationID: "legacy-runner",
+		SystemPrompt:   "legacy system prompt",
 		Turns: []core.ConversationTurn{
 			{Role: core.RoleUser, Content: "pre-migration message", Timestamp: "1"},
 			{Role: core.RoleAssistant, Content: "pre-migration reply", Timestamp: "2"},
@@ -81,7 +81,7 @@ func TestLegacyMigration_PreservesDBRows(t *testing.T) {
 		t.Fatalf("LoadConversationState post-migration: %v", err)
 	}
 	if got == nil {
-		t.Fatal("LoadState returned nil — the seeded agent row was lost in migration")
+		t.Fatal("LoadState returned nil — the seeded runner row was lost in migration")
 	}
 	if got.SystemPrompt != "legacy system prompt" {
 		t.Errorf("SystemPrompt = %q, want preserved seed", got.SystemPrompt)

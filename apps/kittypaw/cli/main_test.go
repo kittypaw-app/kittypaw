@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,45 @@ import (
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/server"
 )
+
+func TestRootCommandPropagatesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	root := newRootCmd()
+	var sawCanceled bool
+	root.AddCommand(&cobra.Command{
+		Use: "context-probe",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sawCanceled = errors.Is(cmd.Context().Err(), context.Canceled)
+			return nil
+		},
+	})
+	root.SetArgs([]string{"context-probe"})
+	if err := root.ExecuteContext(ctx); err != nil {
+		t.Fatalf("ExecuteContext: %v", err)
+	}
+	if !sawCanceled {
+		t.Fatal("command did not observe canceled context")
+	}
+}
+
+func TestExecuteRootCommandDoesNotInstallGlobalSignalContext(t *testing.T) {
+	var done <-chan struct{}
+	root := &cobra.Command{
+		Use: "root",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			done = cmd.Context().Done()
+			return nil
+		},
+	}
+	if err := executeRootCommand(root); err != nil {
+		t.Fatalf("executeRootCommand: %v", err)
+	}
+	if done != nil {
+		t.Fatal("root command installed a cancelable global context")
+	}
+}
 
 func TestIsTransportDropErr_StringMatches(t *testing.T) {
 	cases := []string{
@@ -225,7 +265,7 @@ func TestPersonaCommandRejected(t *testing.T) {
 
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("kittypaw persona must fail after persona management moves to chat")
+		t.Fatal("kittypaw persona must fail after staff management moves to chat")
 	}
 	if !strings.Contains(err.Error(), `unknown command "persona" for "kittypaw"`) {
 		t.Fatalf("unexpected error: %v", err)
@@ -329,7 +369,7 @@ func TestRunSkillDryRunUsesSelectedAccount(t *testing.T) {
 		Format:      core.SkillFormatNative,
 		Trigger:     core.SkillTrigger{Type: "manual"},
 	}
-	if err := core.SaveSkillTo(filepath.Join(root, "accounts", "bob"), skill, "Agent.respond('bob')"); err != nil {
+	if err := core.SaveSkillTo(filepath.Join(root, "accounts", "bob"), skill, `return "bob"`); err != nil {
 		t.Fatalf("SaveSkillTo: %v", err)
 	}
 

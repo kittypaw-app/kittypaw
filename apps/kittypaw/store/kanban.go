@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 )
+
+var ErrKanbanRunNotRunning = errors.New("kanban run is not running")
 
 // KanbanProject is a local account-owned workstream.
 type KanbanProject struct {
@@ -570,24 +573,31 @@ func (s *Store) ClaimKanbanTask(taskID string, req ClaimKanbanTaskRequest) (*Kan
 }
 
 func (s *Store) CompleteKanbanTask(taskID string, req CompleteKanbanTaskRequest) error {
+	run, err := s.latestRunningKanbanRun(taskID)
+	if err != nil {
+		return fmt.Errorf("task %s has no running run", taskID)
+	}
+	return s.CompleteKanbanRun(run.ID, req)
+}
+
+func (s *Store) CompleteKanbanRun(runID string, req CompleteKanbanTaskRequest) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
+	run, err := requireRunningKanbanRunTx(tx, runID)
+	if err != nil {
+		return err
+	}
 	now := kanbanNow()
 	metadata := normalizeKanbanJSON(req.MetadataJSON)
 	res, err := tx.Exec(`
 		UPDATE kanban_task_runs
 		SET outcome = ?, summary = ?, metadata_json = ?, finished_at = ?, heartbeat_at = ?
-		WHERE id = (
-			SELECT id FROM kanban_task_runs
-			WHERE task_id = ? AND outcome = ?
-			ORDER BY started_at DESC
-			LIMIT 1
-		)`,
-		KanbanRunCompleted, req.Summary, metadata, now, now, taskID, KanbanRunRunning)
+		WHERE id = ? AND outcome = ?`,
+		KanbanRunCompleted, req.Summary, metadata, now, now, run.ID, KanbanRunRunning)
 	if err != nil {
 		return err
 	}
@@ -596,25 +606,33 @@ func (s *Store) CompleteKanbanTask(taskID string, req CompleteKanbanTaskRequest)
 		return err
 	}
 	if changed == 0 {
-		return fmt.Errorf("task %s has no running run", taskID)
+		return fmt.Errorf("%w: %s", ErrKanbanRunNotRunning, run.ID)
 	}
 	if _, err := tx.Exec(`
 		UPDATE kanban_tasks
 		SET status = ?, completed_at = ?, updated_at = ?
 		WHERE id = ?`,
-		KanbanStatusDone, now, now, taskID); err != nil {
+		KanbanStatusDone, now, now, run.TaskID); err != nil {
 		return err
 	}
-	if err := recordKanbanEventTx(tx, taskID, req.Actor, "completed", req.Summary, metadata); err != nil {
+	if err := recordKanbanEventTx(tx, run.TaskID, req.Actor, "completed", req.Summary, metadata); err != nil {
 		return err
 	}
-	if err := s.promoteUnblockedChildren(tx, taskID, req.Actor); err != nil {
+	if err := s.promoteUnblockedChildren(tx, run.TaskID, req.Actor); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) FailKanbanTask(taskID string, req FailKanbanTaskRequest) error {
+	run, err := s.latestRunningKanbanRun(taskID)
+	if err != nil {
+		return fmt.Errorf("task %s has no running run", taskID)
+	}
+	return s.FailKanbanRun(run.ID, req)
+}
+
+func (s *Store) FailKanbanRun(runID string, req FailKanbanTaskRequest) error {
 	errorText := strings.TrimSpace(req.Error)
 	if errorText == "" {
 		return fmt.Errorf("error is required")
@@ -625,18 +643,17 @@ func (s *Store) FailKanbanTask(taskID string, req FailKanbanTaskRequest) error {
 	}
 	defer tx.Rollback()
 
+	run, err := requireRunningKanbanRunTx(tx, runID)
+	if err != nil {
+		return err
+	}
 	now := kanbanNow()
 	metadata := normalizeKanbanJSON(req.MetadataJSON)
 	res, err := tx.Exec(`
 		UPDATE kanban_task_runs
 		SET outcome = ?, summary = ?, error = ?, metadata_json = ?, finished_at = ?, heartbeat_at = ?
-		WHERE id = (
-			SELECT id FROM kanban_task_runs
-			WHERE task_id = ? AND outcome = ?
-			ORDER BY started_at DESC
-			LIMIT 1
-		)`,
-		KanbanRunFailed, strings.TrimSpace(req.Summary), errorText, metadata, now, now, taskID, KanbanRunRunning)
+		WHERE id = ? AND outcome = ?`,
+		KanbanRunFailed, strings.TrimSpace(req.Summary), errorText, metadata, now, now, run.ID, KanbanRunRunning)
 	if err != nil {
 		return err
 	}
@@ -645,39 +662,55 @@ func (s *Store) FailKanbanTask(taskID string, req FailKanbanTaskRequest) error {
 		return err
 	}
 	if changed == 0 {
-		return fmt.Errorf("task %s has no running run", taskID)
+		return fmt.Errorf("%w: %s", ErrKanbanRunNotRunning, run.ID)
 	}
 	if _, err := tx.Exec(`
 		UPDATE kanban_tasks
 		SET status = ?, updated_at = ?
 		WHERE id = ?`,
-		KanbanStatusTodo, now, taskID); err != nil {
+		KanbanStatusTodo, now, run.TaskID); err != nil {
 		return err
 	}
 	detail := strings.TrimSpace(req.Summary)
 	if detail == "" {
 		detail = errorText
 	}
-	if err := recordKanbanEventTx(tx, taskID, req.Actor, "failed", detail, metadata); err != nil {
+	if err := recordKanbanEventTx(tx, run.TaskID, req.Actor, "failed", detail, metadata); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Store) HeartbeatKanbanTask(taskID string, req HeartbeatKanbanTaskRequest) (*KanbanRun, error) {
+	run, err := s.latestRunningKanbanRun(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("task %s has no running run", taskID)
+	}
+	return s.HeartbeatKanbanRun(run.ID, req)
+}
+
+func (s *Store) HeartbeatKanbanRun(runID string, req HeartbeatKanbanTaskRequest) (*KanbanRun, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	run, err := latestRunningKanbanRunTx(tx, taskID)
+	run, err := requireRunningKanbanRunTx(tx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("task %s has no running run", taskID)
+		return nil, err
 	}
 	now := kanbanNow()
-	if _, err := tx.Exec(`UPDATE kanban_task_runs SET heartbeat_at = ? WHERE id = ?`, now, run.ID); err != nil {
+	res, err := tx.Exec(`UPDATE kanban_task_runs SET heartbeat_at = ? WHERE id = ? AND outcome = ?`, now, run.ID, KanbanRunRunning)
+	if err != nil {
 		return nil, err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if changed == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrKanbanRunNotRunning, run.ID)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -726,6 +759,14 @@ func (s *Store) CancelKanbanTask(taskID string, req CancelKanbanTaskRequest) (*K
 }
 
 func (s *Store) ReclaimKanbanTask(taskID string, req ReclaimKanbanTaskRequest) (*KanbanRun, error) {
+	run, err := s.latestRunningKanbanRun(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("task %s has no running run", taskID)
+	}
+	return s.ReclaimKanbanRun(run.ID, req)
+}
+
+func (s *Store) ReclaimKanbanRun(runID string, req ReclaimKanbanTaskRequest) (*KanbanRun, error) {
 	actor := strings.TrimSpace(req.Actor)
 	if actor == "" {
 		return nil, fmt.Errorf("actor is required")
@@ -740,18 +781,26 @@ func (s *Store) ReclaimKanbanTask(taskID string, req ReclaimKanbanTaskRequest) (
 	}
 	defer tx.Rollback()
 
-	run, err := latestRunningKanbanRunTx(tx, taskID)
+	run, err := requireRunningKanbanRunTx(tx, runID)
 	if err != nil {
-		return nil, fmt.Errorf("task %s has no running run", taskID)
+		return nil, err
 	}
 	now := kanbanNow()
 	metadata := normalizeKanbanJSON(req.MetadataJSON)
-	if _, err := tx.Exec(`
+	res, err := tx.Exec(`
 		UPDATE kanban_task_runs
 		SET outcome = ?, summary = ?, metadata_json = ?, finished_at = ?, heartbeat_at = ?
-		WHERE id = ?`,
-		KanbanRunReclaimed, reason, metadata, now, now, run.ID); err != nil {
+		WHERE id = ? AND outcome = ?`,
+		KanbanRunReclaimed, reason, metadata, now, now, run.ID, KanbanRunRunning)
+	if err != nil {
 		return nil, err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if changed == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrKanbanRunNotRunning, run.ID)
 	}
 
 	workDir := strings.TrimSpace(req.WorkDir)
@@ -768,17 +817,17 @@ func (s *Store) ReclaimKanbanTask(taskID string, req ReclaimKanbanTaskRequest) (
 			id, task_id, actor, work_dir, work_dir_provider, outcome,
 			started_at, heartbeat_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		newRunID, taskID, actor, workDir, provider, KanbanRunRunning, now, now); err != nil {
+		newRunID, run.TaskID, actor, workDir, provider, KanbanRunRunning, now, now); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(`
 		UPDATE kanban_tasks
 		SET status = ?, updated_at = ?
 		WHERE id = ?`,
-		KanbanStatusRunning, now, taskID); err != nil {
+		KanbanStatusRunning, now, run.TaskID); err != nil {
 		return nil, err
 	}
-	if err := recordKanbanEventTx(tx, taskID, actor, "reclaimed", reason, metadata); err != nil {
+	if err := recordKanbanEventTx(tx, run.TaskID, actor, "reclaimed", reason, metadata); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1224,6 +1273,38 @@ func latestRunningKanbanRunTx(tx *sql.Tx, taskID string) (*KanbanRun, error) {
 		WHERE task_id = ? AND outcome = ?
 		ORDER BY started_at DESC
 		LIMIT 1`, strings.TrimSpace(taskID), KanbanRunRunning))
+}
+
+func (s *Store) latestRunningKanbanRun(taskID string) (*KanbanRun, error) {
+	return scanKanbanRun(s.db.QueryRow(`
+		SELECT id, task_id, actor, work_dir, work_dir_provider, outcome,
+			summary, metadata_json, error, started_at, heartbeat_at, finished_at
+		FROM kanban_task_runs
+		WHERE task_id = ? AND outcome = ?
+		ORDER BY started_at DESC
+		LIMIT 1`, strings.TrimSpace(taskID), KanbanRunRunning))
+}
+
+func requireRunningKanbanRunTx(tx *sql.Tx, runID string) (*KanbanRun, error) {
+	run, err := scanKanbanRun(tx.QueryRow(`
+		SELECT id, task_id, actor, work_dir, work_dir_provider, outcome,
+			summary, metadata_json, error, started_at, heartbeat_at, finished_at
+		FROM kanban_task_runs
+		WHERE id = ?`, strings.TrimSpace(runID)))
+	if err != nil {
+		return nil, err
+	}
+	if run.Outcome != KanbanRunRunning {
+		return nil, fmt.Errorf("%w: %s", ErrKanbanRunNotRunning, run.ID)
+	}
+	latest, err := latestRunningKanbanRunTx(tx, run.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if latest.ID != run.ID {
+		return nil, fmt.Errorf("%w: %s", ErrKanbanRunNotRunning, run.ID)
+	}
+	return run, nil
 }
 
 type sqlScanner interface {

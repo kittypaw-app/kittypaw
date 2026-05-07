@@ -16,15 +16,15 @@ type EvolutionProposal struct {
 	Reason  string `json:"reason"`
 }
 
-// TriggerEvolution checks conditions and generates a persona evolution
-// proposal for the given profile.
+// TriggerEvolution checks conditions and generates a staff identity evolution
+// proposal for the given staff member.
 func TriggerEvolution(
 	ctx context.Context,
-	profileID string,
+	staffID string,
 	s *Session,
 	config *core.EvolutionConfig,
 ) error {
-	if err := core.ValidateProfileID(profileID); err != nil {
+	if err := core.ValidateStaffID(staffID); err != nil {
 		return err
 	}
 	if !config.Enabled {
@@ -42,19 +42,19 @@ func TriggerEvolution(
 	}
 	if msgCount < threshold {
 		slog.Debug("evolution: below observation threshold",
-			"profile", profileID, "count", msgCount, "threshold", threshold)
+			"staff", staffID, "count", msgCount, "threshold", threshold)
 		return nil
 	}
 
 	// Check for existing pending evolution.
-	pendingKey := fmt.Sprintf("evolution:pending:%s", profileID)
+	pendingKey := fmt.Sprintf("evolution:pending:%s", staffID)
 	if _, exists, _ := s.Store.GetUserContext(pendingKey); exists {
-		slog.Debug("evolution: pending proposal exists", "profile", profileID)
+		slog.Debug("evolution: pending proposal exists", "staff", staffID)
 		return nil
 	}
 
 	// Load current SOUL.md.
-	currentSOUL := loadSOUL(s.BaseDir, profileID)
+	currentSOUL := loadSOUL(s.BaseDir, staffID)
 	if currentSOUL == "" {
 		currentSOUL = "(no SOUL.md found)"
 	}
@@ -74,8 +74,8 @@ func TriggerEvolution(
 	}
 
 	// LLM analysis.
-	prompt := fmt.Sprintf(`현재 페르소나 정의(SOUL.md)와 사용자 패턴 데이터를 분석하여,
-페르소나를 더 맞춤화할 수 있는 진화 제안을 만들어주세요.
+	prompt := fmt.Sprintf(`현재 스태프 정체성 정의(SOUL.md)와 사용자 패턴 데이터를 분석하여,
+스태프 정체성을 더 맞춤화할 수 있는 진화 제안을 만들어주세요.
 
 현재 SOUL.md:
 %s
@@ -86,7 +86,7 @@ func TriggerEvolution(
 JSON으로 응답하세요 (마크다운 펜스 없이):
 {"new_soul": "새로운 SOUL.md 전체 내용", "reason": "변경 이유"}
 
-- 기존 페르소나의 핵심은 유지하면서 사용자 패턴에 맞게 조정하세요.
+- 기존 스태프 정체성의 핵심은 유지하면서 사용자 패턴에 맞게 조정하세요.
 - JSON만 출력하세요.`, currentSOUL, patterns.String())
 
 	resp, err := s.Provider.Generate(WithLLMCallKind(ctx, "evolution"), []core.LlmMessage{
@@ -109,6 +109,6 @@ JSON으로 응답하세요 (마크다운 펜스 없이):
 	data, _ := json.Marshal(proposal)
 	_ = s.Store.SetUserContext(pendingKey, string(data), "evolution")
 
-	slog.Info("evolution: proposal stored for review", "profile", profileID)
+	slog.Info("evolution: proposal stored for review", "staff", staffID)
 	return nil
 }

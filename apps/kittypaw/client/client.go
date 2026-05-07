@@ -184,18 +184,18 @@ func (c *Client) ChannelsList() (map[string]any, error) {
 	return c.get("/api/v1/channels")
 }
 
-// ProfileList returns all profiles with preset status.
-func (c *Client) ProfileList() (map[string]any, error) {
-	return c.get("/api/v1/profiles")
+// StaffList returns all staff with preset status.
+func (c *Client) StaffList() (map[string]any, error) {
+	return c.get("/api/v1/staff")
 }
 
-// ProfileActivate activates a profile by ID, optionally applying a preset first.
-func (c *Client) ProfileActivate(id, presetID string) (map[string]any, error) {
+// StaffActivate activates a staff identity by ID, optionally applying a preset first.
+func (c *Client) StaffActivate(id, presetID string) (map[string]any, error) {
 	var body any
 	if presetID != "" {
 		body = map[string]string{"preset_id": presetID}
 	}
-	return c.post("/api/v1/profiles/"+url.PathEscape(id)+"/activate", body)
+	return c.post("/api/v1/staff/"+url.PathEscape(id)+"/activate", body)
 }
 
 // TeachApprove saves a generated skill after user approval.

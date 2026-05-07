@@ -5,7 +5,7 @@
 > ARCHITECTURE.md, and app README/DEPLOY docs for the current live shape.
 
 > **조사 시점**: 2026-04-30
-> **조사 범위**: KittyPaw 내부 (`../skills` 14개 + 현재 KittyAPI proxy) + 경쟁사 (hermes-agent, openclaw) + AI agent 일반 카탈로그 + proxy 적합성 framework
+> **조사 범위**: KittyPaw 내부 (`../skills` 14개 + 현재 KittyAPI proxy) + 경쟁사 (hermes-agent, openclaw) + AI automation 일반 카탈로그 + proxy 적합성 framework
 > **산출 목적**: KittyAPI proxy 가 *추가로* 지원할 외부 API 결정의 근거 자료
 
 ---
@@ -115,7 +115,7 @@ LLM 카탈로그 (코어): Anthropic, OpenAI, Google Gemini, xAI Grok, MiniMax, 
 
 ---
 
-## P3 — AI Agent 일반 외부 API 카탈로그
+## P3 — AI Automation 일반 외부 API 카탈로그
 
 > 18 카테고리 × 카테고리별 top 3 추천 (자세한 표는 Appendix A).
 
@@ -235,11 +235,11 @@ LLM 카탈로그 (코어): Anthropic, OpenAI, Google Gemini, xAI Grok, MiniMax, 
 
 ## Appendix A — P3 자세한 18 카테고리 표
 
-(생략. 자세한 free tier / rate limit / API key / ROI 정보는 P3 agent 보고서 원본 참고.)
+(생략. 자세한 free tier / rate limit / API key / ROI 정보는 P3 research report 원본 참고.)
 
 ## Appendix B — Hermes/OpenClaw 통합 전체 표
 
-(생략. P2 agent 보고서 원본 참고.)
+(생략. P2 research report 원본 참고.)
 
 ---
 
@@ -263,7 +263,7 @@ LLM 카탈로그 (코어): Anthropic, OpenAI, Google Gemini, xAI Grok, MiniMax, 
 ### Pricing / rate limit references (2026-04 snapshot)
 - Open-Meteo, OpenWeatherMap, Brave Search, SerpAPI, Google Custom Search, Frankfurter, ExchangeRate.host, NewsAPI, GNews, Mediastack, Mapbox, HERE, Nominatim, TimeAPI.io, Nager.Date, DeepL Free, Microsoft Translator, Papago, Spoonacular, Edamam, Unsplash, Pexels, Pixabay, Giphy, TMDB, OMDB, GitHub REST, Stack Exchange, Resend, SendGrid, Twilio, Hugging Face Inference, AfterShip, EasyPost, AviationStack, Amadeus, OpenSky, CoinGecko, CoinMarketCap, Binance, Kraken, Alpha Vantage, Finnhub, Polygon.io, IEX Cloud, Tiingo, yfinance, data.go.kr, ECOS, KOSIS, AirKorea, KIS API, Naver Open API, Kakao API.
 
-(URLs 전부는 P3 agent 원본 보고서 sources 섹션 참고.)
+(URLs 전부는 P3 research report sources 섹션 참고.)
 
 ### Vendored sources
 - `competitors/hermes-agent/skills/**/SKILL.md` (default-on skills)

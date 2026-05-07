@@ -8,9 +8,9 @@ sanity-checked with one command.
 
 Deterministic regressions for the same product surface live in Go tests and run
 from the repository smoke tier first. Those tests exercise engine/channel
-behavior, not removed standalone CLI persona/reflection commands: skill
+behavior, not removed standalone CLI staff/reflection commands: skill
 install/run, installed-skill reuse, assistant mention routing, in-chat
-`/persona`, reflection over `conversation_turns`, persona evolution pending
+`/staff`, reflection over `conversation_turns`, staff identity evolution pending
 proposals, and Telegram/Kakao fixture conversion. This eval remains the slower
 behavior-quality check with an LLM judge.
 

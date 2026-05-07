@@ -419,7 +419,7 @@ func TestSetupWritesNamedAccount(t *testing.T) {
 	if ok, err := auth.VerifyPassword("alice", "secret-password"); err != nil || !ok {
 		t.Fatalf("VerifyPassword alice = (%v, %v), want true nil", ok, err)
 	}
-	mustExist(t, filepath.Join(root, "accounts", "alice", "profiles", "default", "SOUL.md"))
+	mustExist(t, filepath.Join(root, "accounts", "alice", "staff", "default", "SOUL.md"))
 	mustExist(t, filepath.Join(root, "accounts", "alice", "data", "kittypaw.db"))
 	mustNotExist(t, filepath.Join(root, "data"))
 	mustNotExist(t, filepath.Join(root, "skills"))

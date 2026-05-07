@@ -8,7 +8,7 @@ browser servers remain out of scope for this feature.
 
 ## Goal
 
-Give KittyPaw agents a built-in `Browser` tool that can launch and control a
+Give KittyPaw runners a built-in `Browser` tool that can launch and control a
 local Chrome/Chromium instance through the Chrome DevTools Protocol (CDP).
 The user should not need to start Chrome with debugging flags by hand.
 
@@ -97,10 +97,10 @@ Wire it into the existing app:
 
 ## Browser Lifecycle
 
-Managed launch uses an account-local profile:
+Managed launch uses an account-local user data:
 
 ```text
-<account BaseDir>/data/browser/profile/
+<account BaseDir>/data/browser/user-data/
 <account BaseDir>/data/browser/screenshots/
 ```
 
@@ -108,13 +108,13 @@ The launcher starts Chrome with:
 
 - `--remote-debugging-port=0`
 - `--remote-debugging-address=127.0.0.1`
-- `--user-data-dir=<account profile dir>`
+- `--user-data-dir=<account user-data dir>`
 - `--no-first-run`
 - `--no-default-browser-check`
 - `--headless=new` when configured
 
 After launch, the controller reads Chrome's `DevToolsActivePort` file from the
-profile directory, calls `/json/version`, and connects to the browser
+user-data directory, calls `/json/version`, and connects to the browser
 `webSocketDebuggerUrl`.
 
 The controller creates tabs with `Target.createTarget`, attaches with

@@ -7,11 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
 
-// AutonomyLevel controls how much freedom the agent has.
+// AutonomyLevel controls how much freedom the runner has.
 type AutonomyLevel string
 
 const (
@@ -71,7 +72,7 @@ type Config struct {
 	Version          int                 `toml:"version"`
 	LLM              LLMConfig           `toml:"llm"`
 	Sandbox          SandboxConfig       `toml:"sandbox"`
-	Agents           []AgentConfig       `toml:"agents"`
+	Runners          []RunnerConfig      `toml:"runners"`
 	Channels         []ChannelConfig     `toml:"channels"`
 	AllowedChatIDs   []string            `toml:"-"`
 	FreeformFallback bool                `toml:"freeform_fallback"`
@@ -82,8 +83,8 @@ type Config struct {
 	AutonomyLevel    AutonomyLevel       `toml:"autonomy_level"`
 	PairedChatIDs    []string            `toml:"paired_chat_ids"`
 	Server           ServerConfig        `toml:"server"`
-	Profiles         []ProfileConfig     `toml:"profiles"`
-	DefaultProfile   string              `toml:"default_profile"`
+	Staff            []StaffConfig       `toml:"staff"`
+	DefaultStaff     string              `toml:"default_staff"`
 	Reflection       ReflectionConfig    `toml:"reflection"`
 	Evolution        EvolutionConfig     `toml:"evolution"`
 	Orchestration    OrchestrationConfig `toml:"orchestration"`
@@ -243,7 +244,7 @@ type FeatureFlags struct {
 	ProgressiveRetry  bool   `toml:"progressive_retry"`
 	ContextCompaction bool   `toml:"context_compaction"`
 	ModelRouting      bool   `toml:"model_routing"`
-	BackgroundAgents  bool   `toml:"background_agents"`
+	BackgroundRunners bool   `toml:"background_runners"`
 	DailyTokenLimit   uint64 `toml:"daily_token_limit"`
 	MaxObserveRounds  int    `toml:"max_observe_rounds"` // default 5
 }
@@ -264,7 +265,7 @@ type EvolutionConfig struct {
 	ObservationThreshold uint32 `toml:"observation_threshold"`
 }
 
-// OrchestrationConfig controls multi-agent PM pattern.
+// OrchestrationConfig controls multi-runner PM pattern.
 type OrchestrationConfig struct {
 	Enabled      bool   `toml:"enabled"`
 	MaxDepth     uint32 `toml:"max_depth"`
@@ -380,8 +381,8 @@ func InjectChannelSecrets(accountID string, channels []ChannelConfig) {
 	}
 }
 
-// AgentConfig defines a single agent's behavior.
-type AgentConfig struct {
+// RunnerConfig defines one runner's execution behavior.
+type RunnerConfig struct {
 	ID            string            `toml:"id"`
 	Name          string            `toml:"name"`
 	SystemPrompt  string            `toml:"system_prompt"`
@@ -389,18 +390,23 @@ type AgentConfig struct {
 	AllowedSkills []SkillPermission `toml:"allowed_skills"`
 }
 
-// SkillPermission controls per-skill access for an agent.
+// SkillPermission controls per-skill access for a runner.
 type SkillPermission struct {
 	Skill              string   `toml:"skill"`
 	Methods            []string `toml:"methods"`
 	RateLimitPerMinute uint32   `toml:"rate_limit_per_minute"`
 }
 
-// ProfileConfig defines a switchable persona.
-type ProfileConfig struct {
+// StaffConfig defines a switchable staff identity.
+type StaffConfig struct {
 	ID       string   `toml:"id"`
 	Nick     string   `toml:"nick"`
 	Channels []string `toml:"channels"`
+}
+
+type legacyProfileConfig struct {
+	DefaultProfile string        `toml:"default_profile"`
+	Profiles       []StaffConfig `toml:"profiles"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -423,8 +429,8 @@ func DefaultConfig() Config {
 			TimeoutSecs:   30,
 			MemoryLimitMB: 64,
 		},
-		AutonomyLevel:  AutonomyFull,
-		DefaultProfile: "default",
+		AutonomyLevel: AutonomyFull,
+		DefaultStaff:  "default",
 		STT: STTConfig{
 			Language: "ko",
 		},
@@ -467,11 +473,32 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if err := applyLegacyProfileConfig(&cfg, data, md); err != nil {
+		return nil, fmt.Errorf("parse legacy profile config: %w", err)
 	}
 	cfg.NormalizeRuntimeFields()
 	return &cfg, nil
+}
+
+func applyLegacyProfileConfig(cfg *Config, data []byte, md toml.MetaData) error {
+	var legacy legacyProfileConfig
+	if err := toml.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+
+	if !md.IsDefined("default_staff") {
+		if defaultProfile := strings.TrimSpace(legacy.DefaultProfile); defaultProfile != "" {
+			cfg.DefaultStaff = defaultProfile
+		}
+	}
+	if !md.IsDefined("staff") && len(legacy.Profiles) > 0 {
+		cfg.Staff = append([]StaffConfig(nil), legacy.Profiles...)
+	}
+	return nil
 }
 
 // ConfigDir returns the user's .kittypaw config directory, creating it if needed.
@@ -547,22 +574,22 @@ func ConfigPath() (string, error) {
 	return ConfigPathForAccount(DefaultAccountID)
 }
 
-// FindAgent returns the agent config matching the given ID, or nil.
-func (c *Config) FindAgent(id string) *AgentConfig {
-	for i := range c.Agents {
-		if c.Agents[i].ID == id {
-			return &c.Agents[i]
+// FindRunner returns the runner config matching the given ID, or nil.
+func (c *Config) FindRunner(id string) *RunnerConfig {
+	for i := range c.Runners {
+		if c.Runners[i].ID == id {
+			return &c.Runners[i]
 		}
 	}
 	return nil
 }
 
-// DefaultAgent returns the first agent, or nil if none configured.
-func (c *Config) DefaultAgent() *AgentConfig {
-	if len(c.Agents) == 0 {
+// DefaultRunner returns the first runner, or nil if none configured.
+func (c *Config) DefaultRunner() *RunnerConfig {
+	if len(c.Runners) == 0 {
 		return nil
 	}
-	return &c.Agents[0]
+	return &c.Runners[0]
 }
 
 func (c *Config) NormalizeRuntimeFields() {

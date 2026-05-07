@@ -242,7 +242,7 @@ func TestGroqSupportsReasoningFormat(t *testing.T) {
 
 // TestNewProviderGroq_QwenAutoReasoningFormat: registry case "groq" with
 // a thinking model ID auto-applies WithReasoningFormat("parsed"). Without
-// this the agent loop sees raw <think> tokens in content and exposes them
+// this the runner loop sees raw <think> tokens in content and exposes them
 // to the chat user (UX broken). § 5.13 measurement evidence.
 func TestNewProviderGroq_QwenAutoReasoningFormat(t *testing.T) {
 	p, err := NewProvider("groq", "k", "qwen/qwen3-32b", 1024)

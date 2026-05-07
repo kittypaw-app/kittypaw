@@ -63,7 +63,7 @@ func run(ctx context.Context, cfg core.SandboxConfig, code string, jsContext map
 
 	result := &core.ExecutionResult{Success: true}
 
-	// observeSignal is the typed sentinel for Agent.observe() interrupts.
+	// observeSignal is the typed sentinel for Runner.observe() interrupts.
 	// Using a struct type (not a string) prevents confusion with timeout interrupts.
 	type observeSignal struct{}
 	var observations []core.Observation
@@ -136,13 +136,13 @@ func run(ctx context.Context, cfg core.SandboxConfig, code string, jsContext map
 		vm.Set(skillName, obj)
 	}
 
-	// --- Agent.observe (VM control flow, not a skill call) ---
-	// Registered after SkillRegistry loop so it's added to the existing Agent object.
-	if agentVal := vm.Get("Agent"); agentVal != nil && agentVal != goja.Undefined() {
-		agentObj := agentVal.ToObject(vm)
-		agentObj.Set("observe", func(call goja.FunctionCall) goja.Value {
+	// --- Runner.observe (VM control flow, not a skill call) ---
+	// Registered after SkillRegistry loop so it's added to the existing Runner object.
+	if runnerVal := vm.Get("Runner"); runnerVal != nil && runnerVal != goja.Undefined() {
+		runnerObj := runnerVal.ToObject(vm)
+		runnerObj.Set("observe", func(call goja.FunctionCall) goja.Value {
 			if len(call.Arguments) == 0 {
-				panic(vm.ToValue("Agent.observe requires an argument"))
+				panic(vm.ToValue("Runner.observe requires an argument"))
 			}
 			obs := core.Observation{}
 			exported := call.Arguments[0].Export()
@@ -183,7 +183,7 @@ func run(ctx context.Context, cfg core.SandboxConfig, code string, jsContext map
 	val, err := vm.RunString(script)
 
 	if err != nil {
-		// Check for Agent.observe() interrupt (typed sentinel).
+		// Check for Runner.observe() interrupt (typed sentinel).
 		if ie, ok := err.(*goja.InterruptedError); ok {
 			if _, isObserve := ie.Value().(observeSignal); isObserve {
 				result.Observe = true

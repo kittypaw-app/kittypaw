@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/llm"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -25,7 +26,7 @@ func TestPMDecision_Direct(t *testing.T) {
 }
 
 func TestPMDecision_Delegate(t *testing.T) {
-	raw := `{"kind":"delegate","reason":"needs specialist","tasks":[{"profile_id":"coder","task":"write tests"},{"profile_id":"writer","task":"write docs"}]}`
+	raw := `{"kind":"delegate","reason":"needs specialist","tasks":[{"staff_id":"coder","task":"write tests"},{"staff_id":"writer","task":"write docs"}]}`
 	var d PMDecision
 	if err := json.Unmarshal([]byte(raw), &d); err != nil {
 		t.Fatal(err)
@@ -36,8 +37,8 @@ func TestPMDecision_Delegate(t *testing.T) {
 	if len(d.Tasks) != 2 {
 		t.Fatalf("tasks = %d, want 2", len(d.Tasks))
 	}
-	if d.Tasks[0].ProfileID != "coder" || d.Tasks[1].ProfileID != "writer" {
-		t.Errorf("unexpected profile IDs: %+v", d.Tasks)
+	if d.Tasks[0].StaffID != "coder" || d.Tasks[1].StaffID != "writer" {
+		t.Errorf("unexpected staff IDs: %+v", d.Tasks)
 	}
 }
 
@@ -59,7 +60,7 @@ func TestDelegateTask_TaskTooLong(t *testing.T) {
 	for i := range longTask {
 		longTask[i] = 'a'
 	}
-	spec := PMTaskSpec{ProfileID: "test", Task: string(longTask)}
+	spec := PMTaskSpec{StaffID: "test", Task: string(longTask)}
 	result := executeDelegateTask(context.Background(), spec, nil, nil, nil, 0, 3, "")
 	if result.Success {
 		t.Fatal("expected failure for oversized task")
@@ -67,7 +68,7 @@ func TestDelegateTask_TaskTooLong(t *testing.T) {
 }
 
 func TestDelegateTask_DepthExceeded(t *testing.T) {
-	spec := PMTaskSpec{ProfileID: "test", Task: "do something"}
+	spec := PMTaskSpec{StaffID: "test", Task: "do something"}
 	result := executeDelegateTask(context.Background(), spec, nil, nil, nil, 3, 3, "")
 	if result.Success {
 		t.Fatal("expected failure when depth >= maxDepth")
@@ -76,19 +77,38 @@ func TestDelegateTask_DepthExceeded(t *testing.T) {
 
 func TestDelegateTask_DepthZeroMaxZero(t *testing.T) {
 	// Delegation structurally disabled when maxDepth=0.
-	spec := PMTaskSpec{ProfileID: "test", Task: "do something"}
+	spec := PMTaskSpec{StaffID: "test", Task: "do something"}
 	result := executeDelegateTask(context.Background(), spec, nil, nil, nil, 0, 0, "")
 	if result.Success {
 		t.Fatal("expected failure when maxDepth=0")
 	}
 }
 
-func TestDelegateTask_ProfileNotFound(t *testing.T) {
+func TestDelegateTask_StaffNotFound(t *testing.T) {
 	st := newDelegateTestStore(t)
-	spec := PMTaskSpec{ProfileID: "nonexistent", Task: "do something"}
+	spec := PMTaskSpec{StaffID: "nonexistent", Task: "do something"}
 	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, "")
 	if result.Success {
-		t.Fatal("expected failure for missing profile")
+		t.Fatal("expected failure for missing staff")
+	}
+}
+
+func TestDelegateTask_InactiveStaffFails(t *testing.T) {
+	st := newDelegateTestStore(t)
+	if err := st.UpsertStaffMeta("inactive", "Inactive staff", "", "system"); err != nil {
+		t.Fatalf("seed staff: %v", err)
+	}
+	if err := st.SetStaffActive("inactive", false); err != nil {
+		t.Fatalf("deactivate staff: %v", err)
+	}
+
+	spec := PMTaskSpec{StaffID: "inactive", Task: "do something"}
+	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, "")
+	if result.Success {
+		t.Fatal("expected failure for inactive staff")
+	}
+	if result.Result != `staff "inactive" is inactive` {
+		t.Fatalf("result = %q, want inactive staff error", result.Result)
 	}
 }
 
@@ -98,8 +118,8 @@ func TestDelegateTask_ProfileNotFound(t *testing.T) {
 
 func TestLoadSOUL_MissingFile(t *testing.T) {
 	// When SOUL.md is missing, loadSOUL returns the default preset fallback.
-	// This matches the persona preset system behavior (AC5: fallback + warn log).
-	content := loadSOUL("", "definitely-nonexistent-profile")
+	// This matches the staff preset system behavior (AC5: fallback + warn log).
+	content := loadSOUL("", "definitely-nonexistent-staff")
 	if content == "" {
 		t.Fatal("expected default preset fallback, got empty string")
 	}
@@ -113,9 +133,9 @@ func TestLoadSOUL_MissingFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSynthesize_AllFailed(t *testing.T) {
-	tasks := []PMTaskSpec{{ProfileID: "a", Task: "task-a"}}
+	tasks := []PMTaskSpec{{StaffID: "a", Task: "task-a"}}
 	results := []DelegateResult{
-		{ProfileID: "a", Task: "task-a", Result: "timeout", Success: false},
+		{StaffID: "a", Task: "task-a", Result: "timeout", Success: false},
 	}
 	out, err := pmSynthesize(context.Background(), tasks, results, nil)
 	if err != nil {
@@ -127,9 +147,9 @@ func TestSynthesize_AllFailed(t *testing.T) {
 }
 
 func TestSynthesize_SingleSuccess(t *testing.T) {
-	tasks := []PMTaskSpec{{ProfileID: "a", Task: "task-a"}}
+	tasks := []PMTaskSpec{{StaffID: "a", Task: "task-a"}}
 	results := []DelegateResult{
-		{ProfileID: "a", Task: "task-a", Result: "the answer is 42", Success: true},
+		{StaffID: "a", Task: "task-a", Result: "the answer is 42", Success: true},
 	}
 	out, err := pmSynthesize(context.Background(), tasks, results, nil)
 	if err != nil {
@@ -150,10 +170,10 @@ func TestDelegateTask_BudgetExhausted(t *testing.T) {
 	b.TrySpend(100)
 
 	st := newDelegateTestStore(t)
-	// Seed a profile.
-	_ = st.UpsertProfileMeta("test-prof", "A test profile", "", "system")
+	// Seed staff.
+	_ = st.UpsertStaffMeta("test-staff", "A test staff member", "", "system")
 
-	spec := PMTaskSpec{ProfileID: "test-prof", Task: "do something"}
+	spec := PMTaskSpec{StaffID: "test-staff", Task: "do something"}
 	// Since we can't call the real LLM, the test just verifies budget is checked.
 	// With a nil provider, it will fail at LLM call, but the budget would still
 	// be checked after. We verify the flow doesn't panic.
@@ -161,6 +181,41 @@ func TestDelegateTask_BudgetExhausted(t *testing.T) {
 	// Should fail because provider is nil, not because of budget.
 	if result.Success {
 		t.Fatal("expected failure with nil provider")
+	}
+}
+
+func TestExecuteRunnerDelegateUsesStaffIDFirst(t *testing.T) {
+	st := newDelegateTestStore(t)
+	if err := st.UpsertStaffMeta("coder", "Code staff", "", "system"); err != nil {
+		t.Fatalf("seed staff: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Config:   &cfg,
+		Provider: &mockProvider{responses: []*llm.Response{mockResp("delegated ok")}},
+		Store:    st,
+	}
+
+	out, err := executeRunner(context.Background(), core.SkillCall{
+		Method: "delegate",
+		Args: []json.RawMessage{
+			json.RawMessage(`"coder"`),
+			json.RawMessage(`"write tests"`),
+		},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeRunner error: %v", err)
+	}
+
+	var got struct {
+		Result  string `json:"result"`
+		Success bool   `json:"success"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !got.Success || got.Result != "delegated ok" {
+		t.Fatalf("result = %+v, want success delegated ok", got)
 	}
 }
 

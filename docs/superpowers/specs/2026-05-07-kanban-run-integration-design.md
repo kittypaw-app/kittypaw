@@ -6,7 +6,7 @@ Status: Approved for implementation by continuation request
 ## Goal
 
 Connect durable Kanban tasks to a concrete local execution path without adding a
-full agent dispatcher. A user should be able to claim a task, run a command in
+full runner dispatcher. A user should be able to claim a task, run a command in
 that task's Run work dir, and have the run outcome recorded durably.
 
 ## Research Notes

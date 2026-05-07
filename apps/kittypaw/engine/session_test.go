@@ -43,88 +43,191 @@ func (p *promptCaptureProvider) GenerateWithTools(ctx context.Context, msgs []co
 func (p *promptCaptureProvider) ContextWindow() int { return 128_000 }
 func (p *promptCaptureProvider) MaxTokens() int     { return 4096 }
 
-func TestResolveProfileName_MentionOverride(t *testing.T) {
+func TestResolveStaffName_MentionOverride(t *testing.T) {
 	cfg := core.DefaultConfig()
 	st := openTestStore(t)
-	got := ResolveProfileName(&cfg, "telegram", "user-1", "english-teacher", st)
+	got := ResolveStaffName(&cfg, "telegram", "user-1", "english-teacher", st)
 	if got != "english-teacher" {
 		t.Errorf("got %q, want %q", got, "english-teacher")
 	}
 }
 
-func TestResolveProfileName_SessionOverride(t *testing.T) {
+func TestResolveStaffName_SessionOverride(t *testing.T) {
 	cfg := core.DefaultConfig()
 	st := openTestStore(t)
-	// Set active_profile for this agent.
-	if err := st.SetUserContext("active_profile:user-1", "custom-bot", "agent"); err != nil {
+	// Set active_staff for this runner.
+	if err := st.SetUserContext("active_staff:user-1", "custom-bot", "runner"); err != nil {
 		t.Fatal(err)
 	}
-	got := ResolveProfileName(&cfg, "telegram", "user-1", "", st)
+	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st)
 	if got != "custom-bot" {
 		t.Errorf("got %q, want %q", got, "custom-bot")
 	}
 }
 
-func TestResolveProfileName_ChannelBinding(t *testing.T) {
+func TestResolveStaffName_ChannelBinding(t *testing.T) {
 	cfg := core.DefaultConfig()
-	cfg.Profiles = []core.ProfileConfig{
+	cfg.Staff = []core.StaffConfig{
 		{ID: "tg-bot", Nick: "TG", Channels: []string{"telegram"}},
 		{ID: "slack-bot", Nick: "SL", Channels: []string{"slack"}},
 	}
 	st := openTestStore(t)
-	got := ResolveProfileName(&cfg, "telegram", "user-1", "", st)
+	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st)
 	if got != "tg-bot" {
 		t.Errorf("got %q, want %q", got, "tg-bot")
 	}
 }
 
-func TestResolveProfileName_Default(t *testing.T) {
+func TestResolveStaffName_Default(t *testing.T) {
 	cfg := core.DefaultConfig()
-	cfg.DefaultProfile = "my-default"
+	cfg.DefaultStaff = "my-default"
 	st := openTestStore(t)
-	got := ResolveProfileName(&cfg, "web", "user-1", "", st)
+	got := ResolveStaffName(&cfg, "web", "user-1", "", st)
 	if got != "my-default" {
 		t.Errorf("got %q, want %q", got, "my-default")
 	}
 }
 
-func TestResolveProfileName_NilStore(t *testing.T) {
+func TestResolveStaffName_NilStore(t *testing.T) {
 	cfg := core.DefaultConfig()
 	// nil store should not panic, just skip session override.
-	got := ResolveProfileName(&cfg, "web", "user-1", "", nil)
-	if got != cfg.DefaultProfile {
-		t.Errorf("got %q, want %q", got, cfg.DefaultProfile)
+	got := ResolveStaffName(&cfg, "web", "user-1", "", nil)
+	if got != cfg.DefaultStaff {
+		t.Errorf("got %q, want %q", got, cfg.DefaultStaff)
 	}
 }
 
-// --- T5: Profile.switch integration ---
+// --- T5: Staff.switch integration ---
 
-func TestProfileSwitch_SetsContext(t *testing.T) {
+func TestStaffSwitch_SetsContext(t *testing.T) {
 	st := openTestStore(t)
 
-	// Create a profile directory so LoadProfile succeeds.
+	// Create a staff directory so LoadStaff succeeds.
 	base := t.TempDir()
-	profDir := filepath.Join(base, "profiles", "new-persona")
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
+	staffDir := filepath.Join(base, "staff", "new-staff")
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(profDir, "SOUL.md"), []byte("test soul"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte("test soul"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// We can't easily call executeProfile directly without ConfigDir pointing to
-	// our temp dir, so test the store round-trip that Profile.switch performs.
+	// We can't easily call executeStaff directly without ConfigDir pointing to
+	// our temp dir, so test the store round-trip that Staff.switch performs.
 	agentID := "user-42"
-	key := fmt.Sprintf("active_profile:%s", agentID)
-	if err := st.SetUserContext(key, "new-persona", "agent"); err != nil {
+	key := fmt.Sprintf("active_staff:%s", agentID)
+	if err := st.SetUserContext(key, "new-staff", "runner"); err != nil {
 		t.Fatal(err)
 	}
 
-	// ResolveProfileName should pick up the session override.
+	// ResolveStaffName should pick up the session override.
 	cfg := core.DefaultConfig()
-	got := ResolveProfileName(&cfg, "web", agentID, "", st)
-	if got != "new-persona" {
-		t.Errorf("got %q, want %q", got, "new-persona")
+	got := ResolveStaffName(&cfg, "web", agentID, "", st)
+	if got != "new-staff" {
+		t.Errorf("got %q, want %q", got, "new-staff")
+	}
+}
+
+func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+	ctx := ContextWithConversationID(context.Background(), "conv-1")
+
+	out, err := executeStaff(ctx, core.SkillCall{
+		Method: "switch",
+		Args:   []json.RawMessage{json.RawMessage(`"finance"`)},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeStaff error: %v", err)
+	}
+	var result struct {
+		Success bool   `json:"success"`
+		Staff   string `json:"staff"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !result.Success || result.Staff != "finance" || result.Error != "" {
+		t.Fatalf("result = %+v, want successful finance switch", result)
+	}
+	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || !ok || got != "finance" {
+		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want finance", got, ok, err)
+	}
+}
+
+func TestStaffSwitch_MissingStaffDoesNotSetContext(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Store:   st,
+		Config:  &cfg,
+		BaseDir: t.TempDir(),
+	}
+	ctx := ContextWithConversationID(context.Background(), "conv-1")
+
+	out, err := executeStaff(ctx, core.SkillCall{
+		Method: "switch",
+		Args:   []json.RawMessage{json.RawMessage(`"missing-staff"`)},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeStaff error: %v", err)
+	}
+	var result struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if result.Error != `staff "missing-staff" not found` {
+		t.Fatalf("error = %q, want missing staff error", result.Error)
+	}
+	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || ok {
+		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want unset", got, ok, err)
+	}
+}
+
+func TestStaffUpdateChangesDescription(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.UpsertStaffMeta("finance", "old desc", `["budget"]`, "test"); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+
+	out, err := executeStaff(context.Background(), core.SkillCall{
+		Method: "update",
+		Args: []json.RawMessage{
+			json.RawMessage(`"finance"`),
+			json.RawMessage(`"new desc"`),
+		},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeStaff error: %v", err)
+	}
+	var result struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !result.Success || result.Error != "" {
+		t.Fatalf("result = %+v, want successful update", result)
+	}
+	meta, ok, err := st.GetStaffMeta("finance")
+	if err != nil || !ok {
+		t.Fatalf("staff meta missing after update: ok=%v err=%v", ok, err)
+	}
+	if meta.Description != "new desc" {
+		t.Fatalf("description = %q, want new desc", meta.Description)
+	}
+	if meta.EquippedSkills != `["budget"]` {
+		t.Fatalf("equipped skills = %q, want preserved skills", meta.EquippedSkills)
 	}
 }
 
@@ -179,19 +282,19 @@ func TestResolveProvider_InvalidProviderFallsBack(t *testing.T) {
 	}
 }
 
-func TestProfileSwitch_OverriddenByMention(t *testing.T) {
+func TestStaffSwitch_OverriddenByMention(t *testing.T) {
 	st := openTestStore(t)
 	agentID := "user-42"
-	key := fmt.Sprintf("active_profile:%s", agentID)
-	if err := st.SetUserContext(key, "session-profile", "agent"); err != nil {
+	key := fmt.Sprintf("active_staff:%s", agentID)
+	if err := st.SetUserContext(key, "session-staff", "runner"); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := core.DefaultConfig()
 	// @mention should win over session override.
-	got := ResolveProfileName(&cfg, "web", agentID, "mention-profile", st)
-	if got != "mention-profile" {
-		t.Errorf("got %q, want %q", got, "mention-profile")
+	got := ResolveStaffName(&cfg, "web", agentID, "mention-staff", st)
+	if got != "mention-staff" {
+		t.Errorf("got %q, want %q", got, "mention-staff")
 	}
 }
 
@@ -199,17 +302,17 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	skipWithoutRuntime(t)
 
 	base := t.TempDir()
-	profDir := filepath.Join(base, "profiles", "finance")
-	if err := os.MkdirAll(profDir, 0o755); err != nil {
+	staffDir := filepath.Join(base, "staff", "finance")
+	if err := os.MkdirAll(staffDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(profDir, "SOUL.md"), []byte("FINANCE_SOUL_MARKER"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte("FINANCE_SOUL_MARKER"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	st := openTestStore(t)
-	if err := st.UpsertProfileMeta("finance", "재무담당 비서", "[]", "test"); err != nil {
-		t.Fatalf("seed profile meta: %v", err)
+	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
 	}
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `return "finance ok";`}
@@ -232,7 +335,7 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	}
 
 	if len(provider.messages) == 0 || !strings.Contains(provider.messages[0].Content, "FINANCE_SOUL_MARKER") {
-		t.Fatalf("prompt did not include mentioned profile soul: %+v", provider.messages)
+		t.Fatalf("prompt did not include mentioned staff soul: %+v", provider.messages)
 	}
 
 	turns, err := st.ListConversationTurns(10)
@@ -250,14 +353,14 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	}
 }
 
-func TestRunCanCreatePersonaFromConversationRequest(t *testing.T) {
+func TestRunCanCreateStaffFromConversationRequest(t *testing.T) {
 	skipWithoutRuntime(t)
 
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `
-const created = Profile.create("finance", "재무담당 비서");
-return created.success ? "finance profile created" : created.error;
+const created = Staff.create("finance", "재무담당 스태프");
+return created.success ? "finance staff created" : created.error;
 `}
 	sess := &Session{
 		Provider:  provider,
@@ -273,15 +376,15 @@ return created.success ? "finance profile created" : created.error;
 	if err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
-	if out != "finance profile created" {
+	if out != "finance staff created" {
 		t.Fatalf("out = %q", out)
 	}
-	meta, ok, err := st.GetProfileMeta("finance")
+	meta, ok, err := st.GetStaffMeta("finance")
 	if err != nil || !ok {
-		t.Fatalf("finance profile meta missing: ok=%v err=%v", ok, err)
+		t.Fatalf("finance staff meta missing: ok=%v err=%v", ok, err)
 	}
-	if meta.Description != "재무담당 비서" || !meta.Active || meta.CreatedBy != "agent" {
-		t.Fatalf("profile meta = %+v", meta)
+	if meta.Description != "재무담당 스태프" || !meta.Active || meta.CreatedBy != "runner" {
+		t.Fatalf("staff meta = %+v", meta)
 	}
 }
 
@@ -455,9 +558,9 @@ func TestAppendSuggestionForBranchResponse_NotFirstTurnSkips(t *testing.T) {
 
 	// Pre-existing assistant turn in the account conversation means this is
 	// not the first turn, even if the channel session differs.
-	state := &core.AgentState{
-		AgentID:      conversationKey(s),
-		SystemPrompt: SystemPrompt,
+	state := &core.ConversationState{
+		ConversationID: conversationKey(s),
+		SystemPrompt:   SystemPrompt,
 		Turns: []core.ConversationTurn{
 			{Role: core.RoleUser, Content: "이전"},
 			{Role: core.RoleAssistant, Content: "응답"},

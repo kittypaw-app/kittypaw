@@ -82,7 +82,7 @@ id = "test-pkg"
 name = "Test"
 version = "1.0.0"
 `
-	mainJS := `Agent.respond("hello")`
+	mainJS := `return "hello"`
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

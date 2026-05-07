@@ -9,10 +9,10 @@ import (
 	"github.com/jinto/kittypaw/sandbox"
 )
 
-func TestSlashPersonaSwitchesAccountConversationProfile(t *testing.T) {
+func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
 	st := openTestStore(t)
-	if err := st.UpsertProfileMeta("finance", "재무담당 비서", "[]", "test"); err != nil {
-		t.Fatalf("seed profile meta: %v", err)
+	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
 	}
 	cfg := core.DefaultConfig()
 	sess := &Session{
@@ -21,15 +21,15 @@ func TestSlashPersonaSwitchesAccountConversationProfile(t *testing.T) {
 		AccountID: "alice",
 	}
 
-	out, handled := tryHandleCommand(context.Background(), "/persona finance", sess)
+	out, handled := tryHandleCommand(context.Background(), "/staff finance", sess)
 	if !handled {
-		t.Fatal("/persona command was not handled")
+		t.Fatal("/staff command was not handled")
 	}
 	if !strings.Contains(out, "finance") {
-		t.Fatalf("response should mention selected profile, got %q", out)
+		t.Fatalf("response should mention selected staff, got %q", out)
 	}
-	if got, ok, err := st.GetUserContext("active_profile:alice"); err != nil || !ok || got != "finance" {
-		t.Fatalf("active_profile:alice = %q ok=%v err=%v, want finance", got, ok, err)
+	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || !ok || got != "finance" {
+		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want finance", got, ok, err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -29,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 24 {
-		t.Fatalf("expected 24 migrations, got %d", count)
+	if count != 25 {
+		t.Fatalf("expected 25 migrations, got %d", count)
 	}
 }
 
@@ -139,7 +140,7 @@ func TestConversationStateRoundTrip(t *testing.T) {
 	}
 
 	// Save and reload.
-	state := &core.AgentState{
+	state := &core.ConversationState{
 		SystemPrompt: "You are helpful.",
 		Turns: []core.ConversationTurn{
 			{Role: core.RoleUser, Content: "hi", Channel: "telegram", ChannelUserID: "tg-1", ChatID: "chat-1", MessageID: "msg-1", Timestamp: "2026-04-13 10:00:00"},
@@ -1034,51 +1035,117 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
-func TestProfiles(t *testing.T) {
+func TestStaffMetaCRUD(t *testing.T) {
 	st := openTestStore(t)
 
-	// Get non-existent returns false.
-	_, found, err := st.GetProfileMeta("phantom")
+	if _, ok, err := st.GetStaffMeta("missing"); err != nil || ok {
+		t.Fatalf("GetStaffMeta(missing) = ok %v err %v, want ok false nil err", ok, err)
+	}
+
+	if err := st.UpsertStaffMeta("staff-1", "dev staff", `["code","debug"]`, "admin"); err != nil {
+		t.Fatalf("UpsertStaffMeta() error = %v", err)
+	}
+
+	got, ok, err := st.GetStaffMeta("staff-1")
+	if err != nil || !ok {
+		t.Fatalf("GetStaffMeta(staff-1) = ok %v err %v", ok, err)
+	}
+	if got.ID != "staff-1" || got.Description != "dev staff" || got.CreatedBy != "admin" || !got.Active {
+		t.Fatalf("staff meta = %+v", got)
+	}
+
+	list, err := st.ListActiveStaff()
 	if err != nil {
-		t.Fatalf("get phantom: %v", err)
+		t.Fatalf("ListActiveStaff() error = %v", err)
 	}
-	if found {
-		t.Fatal("expected not found for non-existent profile")
-	}
-
-	// Upsert and get.
-	if err := st.UpsertProfileMeta("p-1", "dev profile", `["code","debug"]`, "admin"); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	p, found, err := st.GetProfileMeta("p-1")
-	if err != nil || !found {
-		t.Fatalf("get: found=%v err=%v", found, err)
-	}
-	if p.Description != "dev profile" || p.CreatedBy != "admin" {
-		t.Errorf("profile mismatch: %+v", p)
+	if len(list) != 1 || list[0].ID != "staff-1" {
+		t.Fatalf("active staff = %+v", list)
 	}
 
-	// Default is active (schema defaults active=1).
-	if !p.Active {
-		t.Error("expected new profile to be active by default")
+	if err := st.UpdateEquippedStaffSkills("staff-1", `["code","debug","deploy"]`); err != nil {
+		t.Fatalf("UpdateEquippedStaffSkills() error = %v", err)
+	}
+	got, ok, err = st.GetStaffMeta("staff-1")
+	if err != nil || !ok {
+		t.Fatalf("GetStaffMeta(staff-1) after skills update = ok %v err %v", ok, err)
+	}
+	if got.EquippedSkills != `["code","debug","deploy"]` {
+		t.Fatalf("staff equipped skills = %q, want updated skills", got.EquippedSkills)
 	}
 
-	// ListActiveProfiles sees it immediately.
-	active, err := st.ListActiveProfiles()
+	if err := st.SetStaffActive("staff-1", false); err != nil {
+		t.Fatalf("SetStaffActive(false) error = %v", err)
+	}
+	list, err = st.ListActiveStaff()
 	if err != nil {
-		t.Fatalf("list active: %v", err)
+		t.Fatalf("ListActiveStaff() after inactive error = %v", err)
 	}
-	if len(active) != 1 || active[0].ID != "p-1" {
-		t.Errorf("active profiles: got %+v", active)
+	if len(list) != 0 {
+		t.Fatalf("active staff after inactive = %+v, want empty", list)
+	}
+}
+
+func TestMigrationProfileMetaToStaffMeta(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "kittypaw.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE profile_meta (
+		id TEXT PRIMARY KEY,
+		description TEXT NOT NULL DEFAULT '',
+		equipped_skills TEXT NOT NULL DEFAULT '[]',
+		active INTEGER NOT NULL DEFAULT 1,
+		created_by TEXT NOT NULL DEFAULT 'manual',
+		created_at TEXT NOT NULL DEFAULT '2026-05-07T00:00:00Z'
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO profile_meta (id, description, equipped_skills, active, created_by, created_at)
+		VALUES ('coder', 'Code staff', '["git"]', 1, 'test', '2026-05-07T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE user_context (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		source TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_context (key, value, source, updated_at)
+		VALUES ('active_profile:conv-1', 'coder', 'runner', '2026-05-07T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer st.Close()
+
+	got, ok, err := st.GetStaffMeta("coder")
+	if err != nil || !ok {
+		t.Fatalf("GetStaffMeta(coder) = ok %v err %v", ok, err)
+	}
+	if got.Description != "Code staff" || got.EquippedSkills != `["git"]` || got.CreatedBy != "test" || !got.Active || got.CreatedAt != "2026-05-07T00:00:00Z" {
+		t.Fatalf("migrated staff meta = %+v", got)
 	}
 
-	// UpdateEquippedSkills.
-	if err := st.UpdateEquippedSkills("p-1", `["code","debug","deploy"]`); err != nil {
-		t.Fatalf("update equipped: %v", err)
+	var legacyTables int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'profile_meta'`).Scan(&legacyTables); err != nil {
+		t.Fatalf("query profile_meta table: %v", err)
 	}
-	p, _, _ = st.GetProfileMeta("p-1")
-	if p.EquippedSkills != `["code","debug","deploy"]` {
-		t.Errorf("equipped skills: got %q", p.EquippedSkills)
+	if legacyTables != 0 {
+		t.Fatalf("profile_meta table count = %d, want 0", legacyTables)
+	}
+	activeStaff, ok, err := st.GetUserContext("active_staff:conv-1")
+	if err != nil || !ok || activeStaff != "coder" {
+		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want coder", activeStaff, ok, err)
+	}
+	if oldActive, ok, err := st.GetUserContext("active_profile:conv-1"); err != nil || ok {
+		t.Fatalf("active_profile:conv-1 = %q ok=%v err=%v, want removed", oldActive, ok, err)
 	}
 }
 

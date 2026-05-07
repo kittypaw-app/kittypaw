@@ -52,7 +52,7 @@ func newAccountAddCmd() *cobra.Command {
 		Use:   "add <name>",
 		Short: "Provision a new account directory",
 		Long: `Create a new account under ~/.kittypaw/accounts/<name>/ with its own
-config.toml, data/, skills/, profiles/, and packages/ subtrees.
+config.toml, data/, skills/, staff/, and packages/ subtrees.
 
 Bot-token sources (highest priority wins):
   1. --telegram-bot-token-stdin  (reads from stdin — recommended)
