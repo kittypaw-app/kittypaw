@@ -64,6 +64,7 @@ var SkillRegistry = []SkillMeta{
 		{Name: "searchRecent", Signature: "X.searchRecent(queryOrOptions[, options]) — read-only recent X posts search. options: {limit}; max 10. Requires `kittypaw connect x`."},
 		{Name: "user", Signature: "X.user(usernameOrOptions) — read one X user profile by @handle."},
 		{Name: "userPosts", Signature: "X.userPosts(usernameOrOptions[, options]) — read recent posts from one X user. options: {limit}; max 10."},
+		{Name: "post", Signature: "X.post(idOrUrl) — read one X post/tweet by status URL or ID."},
 	}},
 	{Name: "Shell", Methods: []SkillMethodMeta{
 		{Name: "exec", Signature: "Shell.exec(command)"},

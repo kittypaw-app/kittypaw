@@ -3,8 +3,9 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 type xOptions struct {
 	Query    string `json:"query"`
 	Username string `json:"username"`
+	ID       string `json:"id"`
+	URL      string `json:"url"`
 	Limit    int    `json:"limit"`
 }
 
@@ -35,7 +38,7 @@ func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, err
 		limit = clampXSkillLimit(limit)
 		result, err := client.SearchRecent(ctx, accessToken, query, limit)
 		if err != nil {
-			return jsonResult(map[string]any{"error": err.Error()})
+			return jsonResult(map[string]any{"error": xBrokerErrorMessage(err, s)})
 		}
 		return jsonResult(map[string]any{
 			"query": query,
@@ -50,7 +53,7 @@ func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, err
 		}
 		user, err := client.UserByUsername(ctx, accessToken, username)
 		if err != nil {
-			return jsonResult(map[string]any{"error": err.Error()})
+			return jsonResult(map[string]any{"error": xBrokerErrorMessage(err, s)})
 		}
 		return jsonResult(map[string]any{"user": user})
 	case "userPosts":
@@ -61,11 +64,11 @@ func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, err
 		limit = clampXSkillLimit(limit)
 		user, err := client.UserByUsername(ctx, accessToken, username)
 		if err != nil {
-			return jsonResult(map[string]any{"error": err.Error()})
+			return jsonResult(map[string]any{"error": xBrokerErrorMessage(err, s)})
 		}
-		result, err := client.UserPosts(ctx, accessToken, user.ID, limit)
+		result, err := client.UserPostsByUsername(ctx, accessToken, username, limit)
 		if err != nil {
-			return jsonResult(map[string]any{"error": err.Error()})
+			return jsonResult(map[string]any{"error": xBrokerErrorMessage(err, s)})
 		}
 		return jsonResult(map[string]any{
 			"username": strings.TrimPrefix(strings.TrimSpace(username), "@"),
@@ -74,31 +77,63 @@ func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, err
 			"count":    len(result.Posts),
 			"posts":    result.Posts,
 		})
+	case "post", "tweet":
+		id := parseXPostArgs(call.Args)
+		if id == "" {
+			return jsonResult(map[string]any{"error": `X.post requires a tweet/post ID or URL, e.g. X.post("2051255574848016682")`})
+		}
+		post, err := client.TweetByID(ctx, accessToken, id)
+		if err != nil {
+			return jsonResult(map[string]any{"error": xBrokerErrorMessage(err, s)})
+		}
+		return jsonResult(map[string]any{"id": id, "post": post})
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown X method: %s", call.Method)})
 	}
 }
 
-func xClientForSession(s *Session) (*core.XClient, string, string) {
-	if s == nil || s.ServiceTokenMgr == nil {
-		return nil, "", jsonResultMust(map[string]any{"error": xConnectGuidance(s)})
+func xClientForSession(s *Session) (*core.XBrokerClient, string, string) {
+	if s == nil || s.APITokenMgr == nil {
+		return nil, "", jsonResultMust(map[string]any{"error": xLoginGuidance(s)})
 	}
-	accessToken, err := s.ServiceTokenMgr.LoadAccessToken("x")
+	accessToken, err := s.APITokenMgr.LoadAccessToken(core.DefaultAPIServerURL)
 	if err != nil || accessToken == "" {
-		msg := xConnectGuidance(s)
+		msg := xLoginGuidance(s)
 		if err != nil {
 			msg = fmt.Sprintf("%s (%v)", msg, err)
 		}
 		return nil, "", jsonResultMust(map[string]any{"error": msg})
 	}
-	return core.NewXClient(os.Getenv("KITTYPAW_X_BASE_URL"), nil), accessToken, ""
+	return core.NewXBrokerClient(s.APITokenMgr.ResolveConnectBaseURL(core.DefaultAPIServerURL), nil), accessToken, ""
+}
+
+func xBrokerErrorMessage(err error, s *Session) string {
+	var statusErr *core.XBrokerStatusError
+	if errors.As(err, &statusErr) {
+		switch statusErr.StatusCode {
+		case 401:
+			return xLoginGuidance(s)
+		case 403:
+			return xConnectGuidance(s)
+		case 429:
+			return "x monthly post read quota exceeded"
+		}
+	}
+	return err.Error()
+}
+
+func xLoginGuidance(s *Session) string {
+	if s != nil && strings.TrimSpace(s.AccountID) != "" {
+		return fmt.Sprintf("not logged in - run: kittypaw login --account %s", s.AccountID)
+	}
+	return "not logged in - run: kittypaw login"
 }
 
 func xConnectGuidance(s *Session) string {
 	if s != nil && strings.TrimSpace(s.AccountID) != "" {
-		return fmt.Sprintf("x not connected — run: kittypaw connect x --account %s", s.AccountID)
+		return fmt.Sprintf("x not connected - run: kittypaw connect x --account %s", s.AccountID)
 	}
-	return "x not connected — run: kittypaw connect x"
+	return "x not connected - run: kittypaw connect x"
 }
 
 func parseXQueryArgs(args []json.RawMessage) (string, int) {
@@ -165,6 +200,55 @@ func parseXUserPostsArgs(args []json.RawMessage) (string, int) {
 		}
 	}
 	return username, limit
+}
+
+func parseXPostArgs(args []json.RawMessage) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var raw string
+	if json.Unmarshal(args[0], &raw) == nil {
+		return normalizeXTweetID(raw)
+	}
+	var opts xOptions
+	if json.Unmarshal(args[0], &opts) == nil {
+		if opts.ID != "" {
+			return normalizeXTweetID(opts.ID)
+		}
+		return normalizeXTweetID(opts.URL)
+	}
+	return ""
+}
+
+func normalizeXTweetID(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if strings.Contains(value, "x.com/") && !strings.Contains(value, "://") {
+		value = "https://" + value
+	}
+	if u, err := url.Parse(value); err == nil && u.Host != "" {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		for i, part := range parts {
+			if (part == "status" || part == "statuses") && i+1 < len(parts) {
+				return strings.TrimSpace(parts[i+1])
+			}
+		}
+	}
+	if before, _, ok := strings.Cut(value, "?"); ok {
+		value = before
+	}
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	for i, part := range parts {
+		if (part == "status" || part == "statuses") && i+1 < len(parts) {
+			return strings.TrimSpace(parts[i+1])
+		}
+	}
+	if len(parts) > 0 {
+		return strings.TrimSpace(parts[len(parts)-1])
+	}
+	return value
 }
 
 func clampXSkillLimit(limit int) int {
