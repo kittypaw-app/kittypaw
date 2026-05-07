@@ -652,6 +652,78 @@ func TestKanbanDispatchRunsReadyTaskCommand(t *testing.T) {
 	}
 }
 
+func TestKanbanDispatchHeartbeatsWhileWorkerRuns(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Long dispatch", Status: store.KanbanStatusReady})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	oldInterval := kanbanDispatchHeartbeatInterval
+	kanbanDispatchHeartbeatInterval = 100 * time.Millisecond
+	t.Cleanup(func() { kanbanDispatchHeartbeatInterval = oldInterval })
+
+	startedPath := filepath.Join(projectRoot, "started")
+	releasePath := filepath.Join(projectRoot, "release")
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runKanbanDispatch(
+			ctx,
+			[]string{"sh", "-c", "touch started; while [ ! -f release ]; do sleep 0.05; done; printf done > heartbeat-done.txt"},
+			&kanbanDispatchFlags{
+				shared:  &kanbanSharedFlags{accountID: "alice"},
+				project: "kitty",
+				actor:   "dispatcher",
+				limit:   1,
+			},
+		)
+	}()
+	defer func() {
+		_ = os.WriteFile(releasePath, []byte("release"), 0o600)
+		cancel()
+		select {
+		case <-errCh:
+		case <-time.After(3 * time.Second):
+		}
+	}()
+
+	waitForCliKanbanFile(t, startedPath, 2*time.Second)
+	runID := waitForCliKanbanRunningRun(t, "alice", task.ID, 2*time.Second)
+	const oldHeartbeat = "2000-01-01T00:00:00Z"
+	mustSetCliKanbanRunHeartbeatForStaleTest(t, filepath.Join(root, "accounts", "alice", "data", "kittypaw.db"), runID, oldHeartbeat)
+	waitForCliKanbanRunHeartbeatChange(t, "alice", task.ID, runID, oldHeartbeat, 2*time.Second)
+
+	if err := os.WriteFile(releasePath, []byte("release"), 0o600); err != nil {
+		t.Fatalf("write release file: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runKanbanDispatch: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for dispatch worker to finish")
+	}
+	if data, err := os.ReadFile(filepath.Join(projectRoot, "heartbeat-done.txt")); err != nil || string(data) != "done" {
+		t.Fatalf("heartbeat-done output = %q err=%v", string(data), err)
+	}
+}
+
 func TestKanbanDispatchExposesWorkerEnvironment(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)
@@ -934,6 +1006,65 @@ func mustSetCliKanbanRunHeartbeatForStaleTest(t *testing.T, dbPath, runID, heart
 	if _, err := db.Exec(`UPDATE kanban_task_runs SET heartbeat_at = ? WHERE id = ?`, heartbeat, runID); err != nil {
 		t.Fatalf("set stale heartbeat: %v", err)
 	}
+}
+
+func waitForCliKanbanFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for file %s", path)
+}
+
+func waitForCliKanbanRunningRun(t *testing.T, accountID, taskID string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		st, err := openStoreForAccount(accountID)
+		if err != nil {
+			t.Fatalf("open store: %v", err)
+		}
+		runs, err := st.ListKanbanRuns(taskID)
+		_ = st.Close()
+		if err != nil {
+			t.Fatalf("ListKanbanRuns: %v", err)
+		}
+		for _, run := range runs {
+			if run.Outcome == store.KanbanRunRunning {
+				return run.ID
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for running run for task %s", taskID)
+	return ""
+}
+
+func waitForCliKanbanRunHeartbeatChange(t *testing.T, accountID, taskID, runID, oldHeartbeat string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		st, err := openStoreForAccount(accountID)
+		if err != nil {
+			t.Fatalf("open store: %v", err)
+		}
+		runs, err := st.ListKanbanRuns(taskID)
+		_ = st.Close()
+		if err != nil {
+			t.Fatalf("ListKanbanRuns: %v", err)
+		}
+		for _, run := range runs {
+			if run.ID == runID && run.HeartbeatAt != oldHeartbeat {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for heartbeat change for run %s", runID)
 }
 
 func TestKanbanDispatchBlocksReadyTaskAtMaxAttempts(t *testing.T) {

@@ -243,7 +243,7 @@ type FeatureFlags struct {
 	ProgressiveRetry  bool   `toml:"progressive_retry"`
 	ContextCompaction bool   `toml:"context_compaction"`
 	ModelRouting      bool   `toml:"model_routing"`
-	BackgroundAgents  bool   `toml:"background_agents"`
+	BackgroundRunners bool   `toml:"background_runners"`
 	DailyTokenLimit   uint64 `toml:"daily_token_limit"`
 	MaxObserveRounds  int    `toml:"max_observe_rounds"` // default 5
 }

@@ -493,7 +493,7 @@ func (s *Server) handleConfigCheck(w http.ResponseWriter, _ *http.Request) {
 			"progressive_retry":  s.config.Features.ProgressiveRetry,
 			"context_compaction": s.config.Features.ContextCompaction,
 			"model_routing":      s.config.Features.ModelRouting,
-			"background_agents":  s.config.Features.BackgroundAgents,
+			"background_runners": s.config.Features.BackgroundRunners,
 			"daily_token_limit":  s.config.Features.DailyTokenLimit,
 		},
 	})

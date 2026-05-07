@@ -405,10 +405,13 @@ func TestStaffMetaCRUD(t *testing.T) {
 }
 ```
 
-Add a migration test that seeds old `profile_meta` through migrations up to 023 and then opens the current store. Use the existing migration helpers in the file; if there is no helper, create the table manually before opening the store:
+Add a migration test that seeds old `profile_meta` and
+`active_profile:<conversation>` user context through migrations up to 023 and
+then opens the current store. Use the existing migration helpers in the file; if
+there is no helper, create the tables manually before opening the store:
 
 ```go
-func TestMigrationStaffMetaToStaffMeta(t *testing.T) {
+func TestMigrationProfileMetaToStaffMeta(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "kittypaw.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -451,7 +454,7 @@ func TestMigrationStaffMetaToStaffMeta(t *testing.T) {
 Run:
 
 ```sh
-go test ./store -run 'TestStaffMetaCRUD|TestMigrationStaffMetaToStaffMeta' -count=1
+go test ./store -run 'TestStaffMetaCRUD|TestMigrationProfileMetaToStaffMeta' -count=1
 ```
 
 Expected: FAIL with undefined symbols such as `GetStaffMeta` or a missing `staff_meta` table.
@@ -473,6 +476,14 @@ CREATE TABLE IF NOT EXISTS staff_meta (
 INSERT OR IGNORE INTO staff_meta (id, description, equipped_skills, active, created_by, created_at)
 SELECT id, description, equipped_skills, active, created_by, created_at
 FROM profile_meta;
+
+INSERT OR IGNORE INTO user_context (key, value, source, updated_at)
+SELECT 'active_staff:' || substr(key, length('active_profile:') + 1), value, source, updated_at
+FROM user_context
+WHERE key LIKE 'active_profile:%';
+
+DELETE FROM user_context
+WHERE key LIKE 'active_profile:%';
 
 DROP TABLE IF EXISTS profile_meta;
 ```

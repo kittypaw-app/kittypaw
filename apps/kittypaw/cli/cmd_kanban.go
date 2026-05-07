@@ -107,6 +107,8 @@ type kanbanDispatchOptions struct {
 	stale      bool
 }
 
+var kanbanDispatchHeartbeatInterval = time.Second
+
 type kanbanCompleteFlags struct {
 	shared   *kanbanSharedFlags
 	actor    string
@@ -841,7 +843,7 @@ func runKanbanExec(taskID string, command []string, flags *kanbanExecFlags) erro
 		if summary == "" {
 			summary = kanbanExecDefaultSummary("command failed", command)
 		}
-		recordErr := st.FailKanbanTask(taskID, store.FailKanbanTaskRequest{
+		recordErr := st.FailKanbanRun(run.ID, store.FailKanbanTaskRequest{
 			Actor:        strings.TrimSpace(flags.actor),
 			Summary:      summary,
 			Error:        runErr.Error(),
@@ -857,7 +859,7 @@ func runKanbanExec(taskID string, command []string, flags *kanbanExecFlags) erro
 	if summary == "" {
 		summary = kanbanExecDefaultSummary("command completed", command)
 	}
-	if err := st.CompleteKanbanTask(taskID, store.CompleteKanbanTaskRequest{
+	if err := st.CompleteKanbanRun(run.ID, store.CompleteKanbanTaskRequest{
 		Actor:        strings.TrimSpace(flags.actor),
 		Summary:      summary,
 		MetadataJSON: metadata,
@@ -974,7 +976,7 @@ func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store
 				processed++
 				continue
 			}
-			if err := reclaimAndExecuteKanbanTask(ctx, st, project, item.Task, command, flags, workDir, provider); err != nil {
+			if err := reclaimAndExecuteKanbanTask(ctx, st, project, item.Task, item.Run.ID, command, flags, workDir, provider); err != nil {
 				return processed, err
 			}
 			processed++
@@ -1024,9 +1026,9 @@ func claimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *st
 	return executeDispatchedKanbanRun(ctx, st, project, task, run, command, flags, actor)
 }
 
-func reclaimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
+func reclaimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, runID string, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
 	actor := kanbanDispatchAutomationActor(flags)
-	run, err := st.ReclaimKanbanTask(task.ID, store.ReclaimKanbanTaskRequest{
+	run, err := st.ReclaimKanbanRun(runID, store.ReclaimKanbanTaskRequest{
 		Actor:           actor,
 		Reason:          "stale dispatch reclaim",
 		WorkDir:         workDir,
@@ -1034,6 +1036,9 @@ func reclaimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *
 		MetadataJSON:    `{"source":"kanban-dispatch"}`,
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrKanbanRunNotRunning) {
+			return nil
+		}
 		return err
 	}
 	return executeDispatchedKanbanRun(ctx, st, project, task, run, command, flags, actor)
@@ -1041,26 +1046,30 @@ func reclaimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *
 
 func executeDispatchedKanbanRun(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, run *store.KanbanRun, command []string, flags *kanbanDispatchFlags, actor string) error {
 	started := time.Now()
-	cmd := osexec.CommandContext(ctx, command[0], command[1:]...)
+	cmdCtx, cancelCmd := context.WithCancel(ctx)
+	defer cancelCmd()
+	stopHeartbeat := startKanbanDispatchHeartbeat(cmdCtx, cancelCmd, st, run.ID)
+	cmd := osexec.CommandContext(cmdCtx, command[0], command[1:]...)
 	cmd.Dir = run.WorkDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = kanbanDispatchCommandEnv(os.Environ(), project, task, run)
 	runErr := cmd.Run()
+	heartbeatErr := stopHeartbeat()
 	duration := time.Since(started)
 	exitCode := kanbanExecExitCode(runErr)
 	metadata := kanbanExecMetadata(command, run.ID, exitCode, duration)
 	if runErr != nil {
 		summaryPrefix := "command failed"
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := cmdCtx.Err(); ctxErr != nil {
 			summaryPrefix = "command canceled"
 		}
 		summary := strings.TrimSpace(flags.summary)
 		if summary == "" {
 			summary = kanbanExecDefaultSummary(summaryPrefix, command)
 		}
-		recordErr := st.FailKanbanTask(task.ID, store.FailKanbanTaskRequest{
+		recordErr := st.FailKanbanRun(run.ID, store.FailKanbanTaskRequest{
 			Actor:        actor,
 			Summary:      summary,
 			Error:        runErr.Error(),
@@ -1069,17 +1078,23 @@ func executeDispatchedKanbanRun(ctx context.Context, st *store.Store, project *s
 		if recordErr != nil {
 			return fmt.Errorf("command failed (%v); record kanban failure: %w", runErr, recordErr)
 		}
+		if heartbeatErr != nil {
+			return fmt.Errorf("kanban run heartbeat failed: %w", heartbeatErr)
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("command canceled: %w", ctxErr)
 		}
 		return fmt.Errorf("command failed with exit code %d: %w", exitCode, runErr)
+	}
+	if heartbeatErr != nil {
+		return fmt.Errorf("kanban run heartbeat failed: %w", heartbeatErr)
 	}
 
 	summary := strings.TrimSpace(flags.summary)
 	if summary == "" {
 		summary = kanbanExecDefaultSummary("command completed", command)
 	}
-	if err := st.CompleteKanbanTask(task.ID, store.CompleteKanbanTaskRequest{
+	if err := st.CompleteKanbanRun(run.ID, store.CompleteKanbanTaskRequest{
 		Actor:        actor,
 		Summary:      summary,
 		MetadataJSON: metadata,
@@ -1090,6 +1105,45 @@ func executeDispatchedKanbanRun(ctx context.Context, st *store.Store, project *s
 	fmt.Printf("Run: %s\n", run.ID)
 	fmt.Printf("Work dir: %s\n", run.WorkDir)
 	return nil
+}
+
+func startKanbanDispatchHeartbeat(ctx context.Context, cancelRun context.CancelFunc, st *store.Store, runID string) func() error {
+	interval := kanbanDispatchHeartbeatInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-ticker.C:
+				if _, err := st.HeartbeatKanbanRun(runID, store.HeartbeatKanbanTaskRequest{Actor: "dispatcher"}); err != nil {
+					errCh <- err
+					cancelRun()
+					return
+				}
+			}
+		}
+	}()
+	return func() error {
+		close(stop)
+		<-done
+		select {
+		case err := <-errCh:
+			return err
+		default:
+			return nil
+		}
+	}
 }
 
 func kanbanDispatchAutomationActor(flags *kanbanDispatchFlags) string {

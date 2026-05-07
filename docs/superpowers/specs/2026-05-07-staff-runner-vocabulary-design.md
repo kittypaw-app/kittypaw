@@ -127,10 +127,10 @@ If both exist, leave both untouched and prefer staff/ so the operator can
 resolve the conflict manually. The implementation should surface a clear log or
 error for this conflict where the existing migration pattern supports it.
 
-user_context active selection keys are not migrated in place unless the store
-already has a narrow migration helper. If omitted, active staff selection falls
-back to account default staff and users can select again with /staff. No
-runtime path should read the old active staff selection key after this change.
+user_context active selection keys should be migrated in place from
+active_profile:<conversation> to active_staff:<conversation>, then the old keys
+should be removed. No runtime path should read the old active staff selection
+key after this change.
 
 ## Error Handling
 

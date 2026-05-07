@@ -11,4 +11,12 @@ INSERT OR IGNORE INTO staff_meta (id, description, equipped_skills, active, crea
 SELECT id, description, equipped_skills, active, created_by, created_at
 FROM profile_meta;
 
+INSERT OR IGNORE INTO user_context (key, value, source, updated_at)
+SELECT 'active_staff:' || substr(key, length('active_profile:') + 1), value, source, updated_at
+FROM user_context
+WHERE key LIKE 'active_profile:%';
+
+DELETE FROM user_context
+WHERE key LIKE 'active_profile:%';
+
 DROP TABLE IF EXISTS profile_meta;

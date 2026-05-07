@@ -1613,7 +1613,7 @@ func runConfigCheck(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  progressive_retry:  %v\n", cfg.Features.ProgressiveRetry)
 	fmt.Printf("  context_compaction: %v\n", cfg.Features.ContextCompaction)
 	fmt.Printf("  model_routing:      %v\n", cfg.Features.ModelRouting)
-	fmt.Printf("  background_agents:  %v\n", cfg.Features.BackgroundAgents)
+	fmt.Printf("  background_runners: %v\n", cfg.Features.BackgroundRunners)
 	if cfg.Features.DailyTokenLimit > 0 {
 		fmt.Printf("  daily_token_limit:  %d\n", cfg.Features.DailyTokenLimit)
 	}

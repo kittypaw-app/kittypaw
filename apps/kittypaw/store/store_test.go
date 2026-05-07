@@ -1105,6 +1105,18 @@ func TestMigrationProfileMetaToStaffMeta(t *testing.T) {
 		VALUES ('coder', 'Code staff', '["git"]', 1, 'test', '2026-05-07T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`CREATE TABLE user_context (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		source TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_context (key, value, source, updated_at)
+		VALUES ('active_profile:conv-1', 'coder', 'runner', '2026-05-07T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 
 	st, err := Open(dbPath)
@@ -1127,6 +1139,13 @@ func TestMigrationProfileMetaToStaffMeta(t *testing.T) {
 	}
 	if legacyTables != 0 {
 		t.Fatalf("profile_meta table count = %d, want 0", legacyTables)
+	}
+	activeStaff, ok, err := st.GetUserContext("active_staff:conv-1")
+	if err != nil || !ok || activeStaff != "coder" {
+		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want coder", activeStaff, ok, err)
+	}
+	if oldActive, ok, err := st.GetUserContext("active_profile:conv-1"); err != nil || ok {
+		t.Fatalf("active_profile:conv-1 = %q ok=%v err=%v, want removed", oldActive, ok, err)
 	}
 }
 

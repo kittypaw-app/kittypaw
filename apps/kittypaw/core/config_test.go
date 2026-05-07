@@ -134,6 +134,20 @@ access = "read_write"
 	}
 }
 
+func TestFeatureFlagsUseRunnerVocabulary(t *testing.T) {
+	tomlContent := `
+[features]
+background_runners = true
+`
+	var cfg Config
+	if _, err := toml.Decode(tomlContent, &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !cfg.Features.BackgroundRunners {
+		t.Fatal("background_runners should enable BackgroundRunners")
+	}
+}
+
 func TestMCPServerConfigEnvFromParsing(t *testing.T) {
 	tomlContent := `
 [[mcp_servers]]
