@@ -128,6 +128,37 @@ func TestStaffSwitch_SetsContext(t *testing.T) {
 	}
 }
 
+func TestStaffSwitch_MissingStaffDoesNotSetContext(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Store:   st,
+		Config:  &cfg,
+		BaseDir: t.TempDir(),
+	}
+	ctx := ContextWithConversationID(context.Background(), "conv-1")
+
+	out, err := executeStaff(ctx, core.SkillCall{
+		Method: "switch",
+		Args:   []json.RawMessage{json.RawMessage(`"missing-staff"`)},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeStaff error: %v", err)
+	}
+	var result struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if result.Error != `staff "missing-staff" not found` {
+		t.Fatalf("error = %q, want missing staff error", result.Error)
+	}
+	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || ok {
+		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want unset", got, ok, err)
+	}
+}
+
 // --- resolveProvider ---
 
 func TestResolveProvider_EmptyReturnsDefault(t *testing.T) {

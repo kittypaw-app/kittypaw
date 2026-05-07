@@ -2149,13 +2149,15 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		// Verify staff exists on disk.
-		base, err := core.ResolveBaseDir(s.BaseDir)
+		meta, ok, err := s.Store.GetStaffMeta(id)
 		if err != nil {
-			return jsonResult(map[string]any{"error": "config dir: " + err.Error()})
+			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
 		}
-		if _, err := core.LoadStaff(base, id); err != nil {
+		if !ok {
 			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q not found", id)})
+		}
+		if !meta.Active {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q is inactive", id)})
 		}
 		// Store active_staff:{conversationID} so next message uses this staff member.
 		conversationID := ConversationIDFromContext(ctx)
