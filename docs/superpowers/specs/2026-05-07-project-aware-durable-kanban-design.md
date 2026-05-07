@@ -253,7 +253,7 @@ Runner tools are a follow-up after the CLI/API kernel is stable:
 The automatic dispatcher is a separate follow-up:
 
 - ready-task claim loop
-- staff runner launch
+- staff-assigned runner launch
 - heartbeat timeout
 - failure limit
 - retry/reclaim

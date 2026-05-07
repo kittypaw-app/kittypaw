@@ -1218,7 +1218,7 @@ For Kanban docs under `docs/superpowers/specs/2026-05-07-kanban-*.md` and `docs/
 old runtime toolset -> runner toolset
 old runtime tools -> runner tools
 old runtime dispatcher -> runner dispatcher
-old identity worker -> staff runner
+old identity worker -> staff-assigned runner
 old identity-specific LLM worker -> staff-specific runner
 old assignee identity -> assignee staff
 old created_by runtime literal -> created_by: "runner"
@@ -1266,7 +1266,7 @@ Commit:
 
 ```sh
 git add apps/kittypaw/CLAUDE.md apps/kittypaw/TASKS.md docs/superpowers/specs docs/superpowers/plans apps/kittypaw
-git commit -m "docs: align staff runner vocabulary"
+git commit -m "docs: align staff and runner vocabulary"
 ```
 
 ## Task 6: Final Review Preparation
