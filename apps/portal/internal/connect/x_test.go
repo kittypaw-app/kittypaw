@@ -120,3 +120,32 @@ func TestXProviderExchangeAndRefresh(t *testing.T) {
 		t.Fatal("refresh request should authenticate confidential X client")
 	}
 }
+
+func TestXProviderHomeTimelinePreservesSmallLimit(t *testing.T) {
+	var gotMaxResults string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/2/users/u1/timelines/reverse_chronological" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer x-access" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		gotMaxResults = r.URL.Query().Get("max_results")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"id":"p1","text":"post 1","author_id":"u1"}],"includes":{"users":[{"id":"u1","username":"jaypark","name":"Jay Park"}]}}`)
+	}))
+	defer ts.Close()
+
+	provider := NewXProvider(XConfig{APIBaseURL: ts.URL + "/2"}, ts.Client())
+	result, err := provider.HomeTimeline(t.Context(), "x-access", "u1", 5)
+	if err != nil {
+		t.Fatalf("HomeTimeline: %v", err)
+	}
+	if gotMaxResults != "5" {
+		t.Fatalf("max_results = %q, want 5", gotMaxResults)
+	}
+	if len(result.Posts) != 1 || result.Posts[0].Author == nil || result.Posts[0].Author.Username != "jaypark" {
+		t.Fatalf("result = %#v", result)
+	}
+}

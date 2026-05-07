@@ -260,7 +260,7 @@ func (p *XProvider) HomeTimeline(ctx context.Context, accessToken, userID string
 		return XPostsResult{}, err
 	}
 	q := req.URL.Query()
-	q.Set("max_results", strconv.Itoa(normalizeXMaxResults(maxResults)))
+	q.Set("max_results", strconv.Itoa(normalizeXHomeTimelineMaxResults(maxResults)))
 	addXPostFields(q)
 	req.URL.RawQuery = q.Encode()
 	return p.doPosts(req)
@@ -354,6 +354,16 @@ func addXPostFields(q url.Values) {
 
 func normalizeXMaxResults(maxResults int) int {
 	if maxResults < 10 {
+		return 10
+	}
+	if maxResults > 100 {
+		return 100
+	}
+	return maxResults
+}
+
+func normalizeXHomeTimelineMaxResults(maxResults int) int {
+	if maxResults <= 0 {
 		return 10
 	}
 	if maxResults > 100 {
