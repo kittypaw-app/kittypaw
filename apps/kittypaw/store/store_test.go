@@ -1062,6 +1062,17 @@ func TestStaffMetaCRUD(t *testing.T) {
 		t.Fatalf("active staff = %+v", list)
 	}
 
+	if err := st.UpdateEquippedStaffSkills("staff-1", `["code","debug","deploy"]`); err != nil {
+		t.Fatalf("UpdateEquippedStaffSkills() error = %v", err)
+	}
+	got, ok, err = st.GetStaffMeta("staff-1")
+	if err != nil || !ok {
+		t.Fatalf("GetStaffMeta(staff-1) after skills update = ok %v err %v", ok, err)
+	}
+	if got.EquippedSkills != `["code","debug","deploy"]` {
+		t.Fatalf("staff equipped skills = %q, want updated skills", got.EquippedSkills)
+	}
+
 	if err := st.SetStaffActive("staff-1", false); err != nil {
 		t.Fatalf("SetStaffActive(false) error = %v", err)
 	}
@@ -1106,8 +1117,16 @@ func TestMigrationProfileMetaToStaffMeta(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetStaffMeta(coder) = ok %v err %v", ok, err)
 	}
-	if got.Description != "Code staff" || got.EquippedSkills != `["git"]` || got.CreatedBy != "test" {
+	if got.Description != "Code staff" || got.EquippedSkills != `["git"]` || got.CreatedBy != "test" || !got.Active || got.CreatedAt != "2026-05-07T00:00:00Z" {
 		t.Fatalf("migrated staff meta = %+v", got)
+	}
+
+	var legacyTables int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'profile_meta'`).Scan(&legacyTables); err != nil {
+		t.Fatalf("query profile_meta table: %v", err)
+	}
+	if legacyTables != 0 {
+		t.Fatalf("profile_meta table count = %d, want 0", legacyTables)
 	}
 }
 
