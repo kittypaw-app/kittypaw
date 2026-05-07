@@ -25,20 +25,44 @@
     if (typeof body.message === "string") {
       return body.message;
     }
+    if (typeof body.title === "string" && typeof body.detail === "string") {
+      return `${body.title}: ${body.detail}`;
+    }
+    if (typeof body.title === "string") {
+      return body.title;
+    }
+    if (typeof body.detail === "string") {
+      return body.detail;
+    }
+    return "";
+  }
+
+  function relaySource(resp) {
+    const source = resp.headers && typeof resp.headers.get === "function"
+      ? resp.headers.get("X-KittySpace-Relay-Source")
+      : "";
+    if (source === "daemon") {
+      return "daemon/provider";
+    }
+    if (source === "relay") {
+      return "space relay";
+    }
     return "";
   }
 
   function formatHTTPError(resp, body, rawText) {
     const status = errorStatus(resp);
+    const source = relaySource(resp);
+    const prefix = source ? `${status} (${source})` : status;
     const jsonMessage = compactErrorText(errorMessageFromJSON(body));
     if (jsonMessage && !looksLikeHTML(jsonMessage)) {
-      return `${status}: ${jsonMessage}`;
+      return `${prefix}: ${jsonMessage}`;
     }
     const textMessage = compactErrorText(rawText || "");
     if (textMessage && !looksLikeHTML(textMessage)) {
-      return `${status}: ${textMessage}`;
+      return `${prefix}: ${textMessage}`;
     }
-    return status;
+    return prefix;
   }
 
   function selectFirstAvailableRoute(current, routes) {

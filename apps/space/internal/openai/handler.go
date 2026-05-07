@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -37,6 +38,15 @@ type Broker interface {
 type Handler struct {
 	auth   Authenticator
 	broker Broker
+}
+
+type relayLogFields struct {
+	UserID    string
+	DeviceID  string
+	AccountID string
+	Operation protocol.Operation
+	Method    string
+	Path      string
 }
 
 func NewHandler(auth Authenticator, b Broker) *Handler {
@@ -140,6 +150,14 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, operation protoc
 		return
 	}
 
+	fields := relayLogFields{
+		UserID:    principal.UserID,
+		DeviceID:  deviceID,
+		AccountID: accountID,
+		Operation: operation,
+		Method:    method,
+		Path:      path,
+	}
 	stream, err := h.broker.Request(r.Context(), broker.Request{
 		UserID:    principal.UserID,
 		DeviceID:  deviceID,
@@ -150,6 +168,15 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, operation protoc
 		Body:      body,
 	})
 	if err != nil {
+		slog.Warn("space openai relay request rejected",
+			"user_id", fields.UserID,
+			"device_id", fields.DeviceID,
+			"account_id", fields.AccountID,
+			"operation", fields.Operation,
+			"method", fields.Method,
+			"path", fields.Path,
+			"error", err,
+		)
 		switch {
 		case errors.Is(err, broker.ErrDeviceOffline):
 			writeJSONError(w, http.StatusServiceUnavailable, "device offline")
@@ -165,10 +192,10 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, operation protoc
 		return
 	}
 
-	h.writeRelayStream(w, stream)
+	h.writeRelayStream(w, stream, fields)
 }
 
-func (h *Handler) writeRelayStream(w http.ResponseWriter, stream <-chan protocol.Frame) {
+func (h *Handler) writeRelayStream(w http.ResponseWriter, stream <-chan protocol.Frame, fields relayLogFields) {
 	headerWritten := false
 	writeHeaders := func(status int, headers map[string]string) {
 		if headerWritten {
@@ -177,6 +204,7 @@ func (h *Handler) writeRelayStream(w http.ResponseWriter, stream <-chan protocol
 		if status == 0 {
 			status = http.StatusOK
 		}
+		w.Header().Set("X-KittySpace-Relay-Source", "daemon")
 		for key, value := range headers {
 			if strings.EqualFold(key, "content-type") {
 				w.Header().Set("Content-Type", value)
@@ -186,6 +214,17 @@ func (h *Handler) writeRelayStream(w http.ResponseWriter, stream <-chan protocol
 		}
 		if w.Header().Get("Content-Type") == "" {
 			w.Header().Set("Content-Type", "application/json")
+		}
+		if status >= http.StatusBadRequest {
+			slog.Warn("space openai relay downstream response",
+				"user_id", fields.UserID,
+				"device_id", fields.DeviceID,
+				"account_id", fields.AccountID,
+				"operation", fields.Operation,
+				"method", fields.Method,
+				"path", fields.Path,
+				"status", status,
+			)
 		}
 		w.WriteHeader(status)
 		headerWritten = true
@@ -207,13 +246,25 @@ func (h *Handler) writeRelayStream(w http.ResponseWriter, stream <-chan protocol
 			writeHeaders(http.StatusOK, nil)
 			return
 		case protocol.FrameError:
+			slog.Warn("space openai relay daemon error",
+				"user_id", fields.UserID,
+				"device_id", fields.DeviceID,
+				"account_id", fields.AccountID,
+				"operation", fields.Operation,
+				"method", fields.Method,
+				"path", fields.Path,
+				"code", frame.Code,
+				"message", frame.Message,
+			)
 			if !headerWritten {
+				w.Header().Set("X-KittySpace-Relay-Source", "relay")
 				writeJSONError(w, http.StatusBadGateway, frame.Message)
 			}
 			return
 		}
 	}
 	if !headerWritten {
+		w.Header().Set("X-KittySpace-Relay-Source", "relay")
 		writeJSONError(w, http.StatusBadGateway, "relay stream ended without response")
 	}
 }

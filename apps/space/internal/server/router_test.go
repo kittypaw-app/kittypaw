@@ -102,3 +102,27 @@ func TestChatScriptUsesChatBFFRoutes(t *testing.T) {
 		t.Fatalf("chat.js still references legacy app API path:\n%s", body)
 	}
 }
+
+func TestSharedScriptLabelsRelayErrorSource(t *testing.T) {
+	r := NewRouter(Config{})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/shared.js", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"X-KittySpace-Relay-Source",
+		"daemon/provider",
+		"space relay",
+		"body.title",
+		"body.detail",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("shared.js must include %q for readable relay errors:\n%s", want, body)
+		}
+	}
+}

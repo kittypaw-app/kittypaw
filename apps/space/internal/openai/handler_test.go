@@ -194,6 +194,39 @@ func TestChatCompletionsStreamingRelaysSSE(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsPassesThroughDaemonHTTPError(t *testing.T) {
+	body := map[string]any{
+		"model": "kittypaw",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	raw, _ := json.Marshal(body)
+	fb := &fakeBroker{frames: []protocol.Frame{
+		{Type: protocol.FrameResponseHeaders, ID: "req_1", Status: http.StatusBadGateway, Headers: map[string]string{"content-type": "application/json"}},
+		{Type: protocol.FrameResponseChunk, ID: "req_1", Data: `{"error":"provider bad gateway"}`},
+		{Type: protocol.FrameResponseEnd, ID: "req_1"},
+	}}
+	h := NewHandler(staticAuth{principal: Principal{
+		UserID: "user_1", DeviceID: "dev_1", AccountID: "alice", Scopes: []string{"chat:relay"},
+	}}, fb)
+
+	req := httptest.NewRequest(http.MethodPost, "/nodes/dev_1/v1/chat/completions", bytes.NewReader(raw))
+	req.Header.Set("Authorization", "Bearer kp_test")
+	rr := httptest.NewRecorder()
+	h.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-KittySpace-Relay-Source"); got != "daemon" {
+		t.Fatalf("relay source header = %q, want daemon", got)
+	}
+	if strings.TrimSpace(rr.Body.String()) != `{"error":"provider bad gateway"}` {
+		t.Fatalf("body = %q, want daemon/provider error body", rr.Body.String())
+	}
+}
+
 func TestAccountScopedChatCompletionsRouteUsesURLAccount(t *testing.T) {
 	body := map[string]any{
 		"model": "kittypaw",

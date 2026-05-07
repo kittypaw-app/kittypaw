@@ -143,8 +143,11 @@ func TestWebAppNonDefaultShellExposesAccountScopedKanban(t *testing.T) {
 	if strings.Contains(showShell, "const adminNav = this.isDefault") {
 		t.Fatal("showShell must not hide Kanban inside the default-account-only nav")
 	}
-	if !strings.Contains(showShell, `data-tab="kanban"`) {
-		t.Fatalf("showShell must expose account-scoped Kanban for every logged-in account, got:\n%s", showShell)
+	if !strings.Contains(showShell, `href="/kanban"`) {
+		t.Fatalf("showShell must expose account-scoped Kanban link for every logged-in account, got:\n%s", showShell)
+	}
+	if strings.Contains(showShell, `data-tab="kanban"`) {
+		t.Fatalf("showShell must not mount Kanban as a settings tab, got:\n%s", showShell)
 	}
 	if strings.Contains(body, "wizardButton") {
 		t.Fatal("showShell must not expose a setup wizard entry")
@@ -184,6 +187,20 @@ func TestWebAppControlShellDoesNotExposeChatNav(t *testing.T) {
 	}
 }
 
+func TestWebAppControlShellOnlyBindsTabButtons(t *testing.T) {
+	src, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read web app: %v", err)
+	}
+	body := string(src)
+	if strings.Contains(body, "querySelectorAll('.nav-item')") {
+		t.Fatal("control shell must not attach tab handlers to standalone navigation links")
+	}
+	if !strings.Contains(body, "querySelectorAll('[data-tab]')") {
+		t.Fatal("control shell must attach tab handlers only to tab buttons")
+	}
+}
+
 func TestWebAppChatSurfaceUsesChatOnlyBootstrap(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {
@@ -219,7 +236,36 @@ func TestWebAppKanbanSurfaceUsesDirectKanbanMount(t *testing.T) {
 	if !strings.Contains(body, "Kanban.mount") {
 		t.Fatal("kanban surface must mount Kanban directly")
 	}
+	if strings.Contains(body, `data-tab="kanban"`) || strings.Contains(body, "tab === 'kanban'") {
+		t.Fatal("control shell must not mount Kanban as a settings tab; /kanban is the only Kanban surface")
+	}
+	if !strings.Contains(body, `href="/kanban"`) {
+		t.Fatal("control shell must link to the standalone /kanban surface")
+	}
 	if !strings.Contains(body, "this.chatOnly || this.kanbanOnly") {
 		t.Fatal("successful direct-surface login must stay on /chat or /kanban")
+	}
+}
+
+func TestWebAppKanbanSurfaceBootstrapsDefaultAuthenticatedAPI(t *testing.T) {
+	src, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read web app: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "async startKanbanFlow()")
+	if start < 0 {
+		t.Fatal("startKanbanFlow method not found")
+	}
+	end := strings.Index(body[start:], "\n  async checkAuth()")
+	if end < 0 {
+		t.Fatal("startKanbanFlow method end not found")
+	}
+	startKanbanFlow := body[start : start+end]
+	if !strings.Contains(startKanbanFlow, "if (!this.authRequired || this.isDefault)") {
+		t.Fatalf("default authenticated /kanban must call /api/bootstrap before mounting, got:\n%s", startKanbanFlow)
+	}
+	if !strings.Contains(startKanbanFlow, "await this.bootstrap()") {
+		t.Fatalf("/kanban bootstrap path missing control API token bootstrap, got:\n%s", startKanbanFlow)
 	}
 }

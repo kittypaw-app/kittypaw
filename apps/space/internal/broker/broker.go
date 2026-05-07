@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -128,7 +129,19 @@ func (b *Broker) Register(ctx context.Context, principal DevicePrincipal, conn D
 	}
 	b.mu.Unlock()
 
+	slog.Info("space broker device registered",
+		"user_id", principal.UserID,
+		"device_id", principal.DeviceID,
+		"local_accounts", principal.LocalAccountIDs,
+		"capabilities", principal.Capabilities,
+		"replaced", old != nil,
+	)
 	if old != nil {
+		slog.Warn("space broker device connection replaced",
+			"user_id", principal.UserID,
+			"device_id", principal.DeviceID,
+			"old_pending", len(old.pending),
+		)
 		_ = old.conn.Close()
 		for id, ch := range old.pending {
 			ch <- protocol.Frame{Type: protocol.FrameError, ID: id, Code: "replaced", Message: "device connection replaced"}
@@ -155,8 +168,17 @@ func (b *Broker) Unregister(userID, deviceID string, conn DeviceConn) {
 	}
 	b.mu.Unlock()
 	if state == nil {
+		slog.Debug("space broker ignored stale device unregister",
+			"user_id", userID,
+			"device_id", deviceID,
+		)
 		return
 	}
+	slog.Info("space broker device unregistered",
+		"user_id", userID,
+		"device_id", deviceID,
+		"pending", len(state.pending),
+	)
 	_ = state.conn.Close()
 	for id, ch := range state.pending {
 		ch <- protocol.Frame{Type: protocol.FrameError, ID: id, Code: "offline", Message: "device offline"}
@@ -225,18 +247,44 @@ func (b *Broker) Request(ctx context.Context, req Request) (<-chan protocol.Fram
 	state := b.devices[key]
 	if state == nil {
 		b.mu.Unlock()
+		slog.Warn("space broker request rejected: device offline",
+			"user_id", req.UserID,
+			"device_id", req.DeviceID,
+			"account_id", req.AccountID,
+			"operation", req.Operation,
+		)
 		return nil, ErrDeviceOffline
 	}
 	if _, ok := state.accounts[req.AccountID]; !ok {
 		b.mu.Unlock()
+		slog.Warn("space broker request rejected: account forbidden",
+			"user_id", req.UserID,
+			"device_id", req.DeviceID,
+			"account_id", req.AccountID,
+			"operation", req.Operation,
+		)
 		return nil, ErrForbidden
 	}
 	if _, ok := state.capabilities[req.Operation]; !ok {
 		b.mu.Unlock()
+		slog.Warn("space broker request rejected: unsupported operation",
+			"user_id", req.UserID,
+			"device_id", req.DeviceID,
+			"account_id", req.AccountID,
+			"operation", req.Operation,
+		)
 		return nil, ErrUnsupportedOperation
 	}
 	if len(state.pending) >= b.cfg.MaxInflightPerDevice {
 		b.mu.Unlock()
+		slog.Warn("space broker request rejected: backpressure",
+			"user_id", req.UserID,
+			"device_id", req.DeviceID,
+			"account_id", req.AccountID,
+			"operation", req.Operation,
+			"pending", len(state.pending),
+			"max_inflight", b.cfg.MaxInflightPerDevice,
+		)
 		return nil, ErrBackpressure
 	}
 
@@ -247,6 +295,14 @@ func (b *Broker) Request(ctx context.Context, req Request) (<-chan protocol.Fram
 	b.mu.Unlock()
 
 	if err := conn.Send(ctx, frame); err != nil {
+		slog.Warn("space broker request send failed",
+			"user_id", req.UserID,
+			"device_id", req.DeviceID,
+			"account_id", req.AccountID,
+			"operation", req.Operation,
+			"request_id", frame.ID,
+			"error", err,
+		)
 		b.finish(key, frame.ID, protocol.Frame{
 			Type:    protocol.FrameError,
 			ID:      frame.ID,
@@ -282,6 +338,15 @@ func (b *Broker) Request(ctx context.Context, req Request) (<-chan protocol.Fram
 
 func (b *Broker) Deliver(userID, deviceID string, frame protocol.Frame) {
 	key := keyFor(userID, deviceID)
+	if frame.Type == protocol.FrameError {
+		slog.Warn("space broker delivered daemon error",
+			"user_id", userID,
+			"device_id", deviceID,
+			"request_id", frame.ID,
+			"code", frame.Code,
+			"message", frame.Message,
+		)
+	}
 	if frame.Type == protocol.FrameResponseEnd || frame.Type == protocol.FrameError {
 		b.finish(key, frame.ID, frame)
 		return
@@ -296,6 +361,12 @@ func (b *Broker) Deliver(userID, deviceID string, frame protocol.Frame) {
 	b.mu.Unlock()
 
 	if ch == nil {
+		slog.Debug("space broker dropped frame for missing pending request",
+			"user_id", userID,
+			"device_id", deviceID,
+			"request_id", frame.ID,
+			"frame_type", frame.Type,
+		)
 		return
 	}
 	ch <- frame

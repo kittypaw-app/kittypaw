@@ -22,11 +22,14 @@ func TestKanbanWebAssetsAreLoadedAndMounted(t *testing.T) {
 	}
 
 	app := readWebAssetForKanbanTest(t, "web/app.js")
-	if !strings.Contains(app, `data-tab="kanban"`) {
-		t.Fatal("default shell must expose a Kanban nav item")
+	if !strings.Contains(app, `href="/kanban"`) {
+		t.Fatal("control shell must link to the standalone Kanban surface")
 	}
-	if !strings.Contains(app, "tab === 'kanban'") || !strings.Contains(app, "Kanban.mount(content)") {
-		t.Fatal("switchTab must mount the Kanban module")
+	if strings.Contains(app, `data-tab="kanban"`) || strings.Contains(app, "tab === 'kanban'") {
+		t.Fatal("control shell must not mount Kanban as a settings tab")
+	}
+	if !strings.Contains(app, "showKanbanSurface()") || !strings.Contains(app, "Kanban.mount(document.getElementById('kanban-panel'))") {
+		t.Fatal("standalone /kanban surface must mount the Kanban module directly")
 	}
 }
 

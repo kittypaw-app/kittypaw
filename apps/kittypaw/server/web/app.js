@@ -106,7 +106,7 @@ const App = {
       this.showCliSetupRequired(status);
       return;
     }
-    if (!this.authRequired) {
+    if (!this.authRequired || this.isDefault) {
       await this.bootstrap();
     } else {
       this.apiKey = null;
@@ -254,7 +254,7 @@ const App = {
     const defaultNav = this.isDefault
       ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="skills">Skills</button>'
       : '';
-    const kanbanNav = '<button class="nav-item" data-tab="kanban">Kanban</button>';
+    const kanbanNav = '<a class="nav-item nav-link" href="/kanban">Kanban</a>';
 
     // Override #app centering from stylesheet
     this.root.style.display = 'block';
@@ -278,7 +278,7 @@ const App = {
         </main>
       </div>`;
 
-    this.root.querySelectorAll('.nav-item').forEach(btn => {
+    this.root.querySelectorAll('[data-tab]').forEach(btn => {
       btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
     });
 
@@ -290,7 +290,7 @@ const App = {
     const prev = this.activeTab;
     this.activeTab = tab;
 
-    this.root.querySelectorAll('.nav-item').forEach(btn => {
+    this.root.querySelectorAll('[data-tab]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
 
@@ -310,8 +310,6 @@ const App = {
     content.style.display = '';
     if (tab === 'dashboard') {
       this._showDashboard(content);
-    } else if (tab === 'kanban') {
-      Kanban.mount(content);
     } else if (tab === 'skills') {
       Skills.mount(content);
     } else {

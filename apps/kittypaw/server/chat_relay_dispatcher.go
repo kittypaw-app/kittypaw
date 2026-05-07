@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -30,17 +31,43 @@ func (d *chatRelayDispatcher) Dispatch(ctx context.Context, req chatrelay.Reques
 	if err != nil {
 		return jsonDispatch(http.StatusNotFound, map[string]any{"error": "account not found"}), nil
 	}
+	var result chatrelay.DispatchResult
 	switch req.Operation {
 	case chatrelay.OperationOpenAIModels:
-		return d.dispatchModels(acct), nil
+		result = d.dispatchModels(acct)
 	case chatrelay.OperationOpenAIChatCompletions:
-		return d.dispatchChatCompletions(ctx, acct, req)
+		var err error
+		result, err = d.dispatchChatCompletions(ctx, acct, req)
+		if err != nil {
+			slog.Warn("chat relay dispatch error",
+				"request_id", req.ID,
+				"account_id", req.AccountID,
+				"operation", req.Operation,
+				"error", err,
+			)
+			return chatrelay.DispatchResult{}, err
+		}
 	default:
 		return chatrelay.DispatchResult{}, chatrelay.DispatchError{
 			Code:    "unsupported_operation",
 			Message: "unsupported chat relay operation",
 		}
 	}
+	status := result.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	logFn := slog.Info
+	if status >= http.StatusBadRequest {
+		logFn = slog.Warn
+	}
+	logFn("chat relay dispatch result",
+		"request_id", req.ID,
+		"account_id", req.AccountID,
+		"operation", req.Operation,
+		"status", status,
+	)
+	return result, nil
 }
 
 func (d *chatRelayDispatcher) dispatchModels(acct *requestAccount) chatrelay.DispatchResult {
@@ -106,7 +133,12 @@ func (d *chatRelayDispatcher) dispatchChatCompletions(
 	opts = acct.Session.ApplyActiveModel(opts)
 	output, err := acct.Session.RunTurn(ctx, req.ID, event, opts)
 	if err != nil {
-		return jsonDispatch(http.StatusInternalServerError, openAIError(err.Error())), nil
+		slog.Warn("chat relay chat completion failed",
+			"request_id", req.ID,
+			"account_id", req.AccountID,
+			"error", err,
+		)
+		return jsonDispatch(http.StatusInternalServerError, openAIServerError(err.Error())), nil
 	}
 	outbound := core.ParseOutboundResponse(output)
 	model := body.ResponseModel(acct.Session.Config)
@@ -303,6 +335,16 @@ func openAIError(message string) map[string]any {
 		"error": map[string]any{
 			"message": message,
 			"type":    "invalid_request_error",
+		},
+	}
+}
+
+func openAIServerError(message string) map[string]any {
+	return map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "server_error",
+			"code":    "kittypaw_turn_failed",
 		},
 	}
 }

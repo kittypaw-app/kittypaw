@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -188,6 +189,49 @@ func TestChatRelayDispatcherChatCompletionsCanReturnSSE(t *testing.T) {
 	}
 }
 
+func TestChatRelayDispatcherChatCompletionsReturnsServerErrorShape(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	deps := buildAccountDeps(t, root, "alice", &cfg)
+	deps.Provider = &chatRelayMockProvider{err: errors.New("provider bad gateway")}
+	srv := New([]*AccountDeps{deps}, "test")
+	body := map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	raw, _ := json.Marshal(body)
+
+	result, err := NewChatRelayDispatcher(srv).Dispatch(context.Background(), chatrelay.RequestFrame{
+		ID:        "turn-error",
+		Operation: chatrelay.OperationOpenAIChatCompletions,
+		AccountID: "alice",
+		Body:      raw,
+	})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if result.Status != 500 {
+		t.Fatalf("Status = %d body=%s", result.Status, result.Body)
+	}
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(result.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Error.Type != "server_error" || decoded.Error.Code != "kittypaw_turn_failed" {
+		t.Fatalf("error = %+v, want server_error/kittypaw_turn_failed", decoded.Error)
+	}
+	if strings.TrimSpace(decoded.Error.Message) == "" {
+		t.Fatalf("error message is empty: %+v", decoded.Error)
+	}
+}
+
 func modelIDs(items []struct {
 	ID string `json:"id"`
 }) []string {
@@ -200,12 +244,16 @@ func modelIDs(items []struct {
 
 type chatRelayMockProvider struct {
 	content         string
+	err             error
 	calls           int
 	lastUserContent string
 }
 
 func (p *chatRelayMockProvider) Generate(_ context.Context, msgs []core.LlmMessage) (*llm.Response, error) {
 	p.calls++
+	if p.err != nil {
+		return nil, p.err
+	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == core.RoleUser {
 			p.lastUserContent = msgs[i].Content

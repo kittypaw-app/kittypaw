@@ -452,6 +452,21 @@ func TestBuildPrompt_ChannelHintInjected(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_XTwitterRequestsDoNotFallBackToGmail(t *testing.T) {
+	state := &core.ConversationState{ConversationID: "test"}
+	msgs := BuildPrompt(state, "트위터에 최근에 올라온 것 중 재미있는거 있나?", CompactionConfig{RecentWindow: 5}, &core.Config{}, "telegram", nil, "", "", nil, "")
+	sys := msgs[0].Content
+	for _, want := range []string{
+		"Do not call Gmail for explicit X/Twitter requests",
+		"X.homeTimeline is reverse chronological and is not the For You recommendation feed",
+		"Do not substitute email results when X is empty or unavailable",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system prompt missing X/Twitter guard %q", want)
+		}
+	}
+}
+
 func TestBuildPrompt_NoChannelHintForUnknown(t *testing.T) {
 	state := &core.ConversationState{ConversationID: "test"}
 	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "unknown", nil, "", "", nil, "")
@@ -506,11 +521,11 @@ func TestBuildPrompt_TokenBudget(t *testing.T) {
 	// Authored static text only (skills section is dynamic). Budget catches
 	// accidental drift; intentional growth tied to a documented UX fix is
 	// expected — see git log for each bump's rationale. The repeated bumps
-	// (2400 → 2800 → 2900 → 3000) are themselves a signal that the prompt
+	// (2400 → 2800 → 2900 → 3000 → 3250) are themselves a signal that the prompt
 	// needs a structural refactor; that is its own plan.
 	staticText := IdentityBlock + "\n\n" + ExecutionBlock + "\n\n" + QualityBlock + "\n\n" + SkillCreationBlock + "\n\n" + MemoryBlock
 	tokens := EstimateTokens(staticText)
-	const maxTokens = 3000
+	const maxTokens = 3250
 	if tokens > maxTokens {
 		t.Errorf("static text blocks %d tokens exceeds budget %d", tokens, maxTokens)
 	}
