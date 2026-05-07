@@ -22,6 +22,7 @@ func TestKanbanCommandExposesTaskWorkflow(t *testing.T) {
 		{"kanban", "edit"},
 		{"kanban", "archive"},
 		{"kanban", "exec"},
+		{"kanban", "dispatch"},
 		{"kanban", "claim"},
 		{"kanban", "heartbeat"},
 		{"kanban", "complete"},
@@ -79,6 +80,13 @@ func TestKanbanCommandFlags(t *testing.T) {
 	for _, flag := range []string{"actor", "work-dir", "summary", "account"} {
 		if execCmd.Flag(flag) == nil {
 			t.Fatalf("kanban exec missing --%s", flag)
+		}
+	}
+
+	dispatch := mustFindCommand(t, root, []string{"kanban", "dispatch"})
+	for _, flag := range []string{"project", "limit", "loop", "interval", "actor", "work-dir", "summary", "account"} {
+		if dispatch.Flag(flag) == nil {
+			t.Fatalf("kanban dispatch missing --%s", flag)
 		}
 	}
 
@@ -579,6 +587,226 @@ func TestKanbanExecRecordsFailedRunAfterCommandFailure(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].Outcome != store.KanbanRunFailed || runs[0].Error == "" || !strings.Contains(runs[0].MetadataJSON, `"exit_code":7`) {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanDispatchRunsReadyTaskCommand(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Dispatch ready task", Status: store.KanbanStatusReady})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	err = runKanbanDispatch(
+		t.Context(),
+		[]string{"sh", "-c", "printf dispatch-ok > dispatch-output.txt"},
+		&kanbanDispatchFlags{
+			shared:  &kanbanSharedFlags{accountID: "alice"},
+			project: "kitty",
+			actor:   "dispatcher",
+			limit:   1,
+		},
+	)
+	if err != nil {
+		t.Fatalf("runKanbanDispatch: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(projectRoot, "dispatch-output.txt")); err != nil || string(data) != "dispatch-ok" {
+		t.Fatalf("dispatch output = %q err=%v", string(data), err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusDone {
+		t.Fatalf("task status = %q, want done", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Actor != "dispatcher" || runs[0].Outcome != store.KanbanRunCompleted || !strings.Contains(runs[0].MetadataJSON, `"exit_code":0`) {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanDispatchExposesWorkerEnvironment(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Env task", Status: store.KanbanStatusReady})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	err = runKanbanDispatch(
+		t.Context(),
+		[]string{"sh", "-c", "printf '%s|%s|%s|%s|%s' \"$KITTYPAW_KANBAN_TASK_ID\" \"$KITTYPAW_KANBAN_RUN_ID\" \"$KITTYPAW_KANBAN_PROJECT_ID\" \"$KITTYPAW_KANBAN_PROJECT_SLUG\" \"$KITTYPAW_KANBAN_TASK_TITLE\" > dispatch-env.txt"},
+		&kanbanDispatchFlags{
+			shared:  &kanbanSharedFlags{accountID: "alice"},
+			project: "kitty",
+			actor:   "dispatcher",
+			limit:   1,
+		},
+	)
+	if err != nil {
+		t.Fatalf("runKanbanDispatch: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(projectRoot, "dispatch-env.txt"))
+	if err != nil {
+		t.Fatalf("read dispatch-env.txt: %v", err)
+	}
+	parts := strings.Split(string(data), "|")
+	if len(parts) != 5 {
+		t.Fatalf("env output = %q", string(data))
+	}
+	if parts[0] != task.ID || parts[1] == "" || parts[2] != project.ID || parts[3] != "kitty" || parts[4] != "Env task" {
+		t.Fatalf("env output = %q", string(data))
+	}
+}
+
+func TestKanbanDispatchRecordsFailedRun(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Fail dispatch", Status: store.KanbanStatusReady})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	err = runKanbanDispatch(
+		t.Context(),
+		[]string{"sh", "-c", "exit 7"},
+		&kanbanDispatchFlags{
+			shared:  &kanbanSharedFlags{accountID: "alice"},
+			project: "kitty",
+			actor:   "dispatcher",
+			limit:   1,
+		},
+	)
+	if err == nil {
+		t.Fatal("expected runKanbanDispatch to return command failure")
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusTodo {
+		t.Fatalf("task status = %q, want todo", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != store.KanbanRunFailed || !strings.Contains(runs[0].MetadataJSON, `"exit_code":7`) {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestKanbanDispatchPrintsEmptyReadyQueue(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if _, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: t.TempDir()}); err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	_ = st.Close()
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runKanbanDispatch(
+			t.Context(),
+			[]string{"sh", "-c", "exit 99"},
+			&kanbanDispatchFlags{
+				shared:  &kanbanSharedFlags{accountID: "alice"},
+				project: "kitty",
+				limit:   1,
+			},
+		)
+	})
+	if runErr != nil {
+		t.Fatalf("runKanbanDispatch: %v", runErr)
+	}
+	if !strings.Contains(out, "No ready tasks.") {
+		t.Fatalf("dispatch output = %q", out)
+	}
+}
+
+func TestKanbanDispatchValidatesInputs(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+		flags   *kanbanDispatchFlags
+		want    string
+	}{
+		{name: "missing command", command: nil, flags: &kanbanDispatchFlags{project: "kitty", limit: 1}, want: "command is required"},
+		{name: "missing project", command: []string{"sh"}, flags: &kanbanDispatchFlags{limit: 1}, want: "--project is required"},
+		{name: "bad limit", command: []string{"sh"}, flags: &kanbanDispatchFlags{project: "kitty", limit: 0}, want: "--limit must be positive"},
+		{name: "bad interval", command: []string{"sh"}, flags: &kanbanDispatchFlags{project: "kitty", limit: 1, interval: "0s"}, want: "positive --interval duration is required"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runKanbanDispatch(t.Context(), tt.command, tt.flags)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("runKanbanDispatch error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 

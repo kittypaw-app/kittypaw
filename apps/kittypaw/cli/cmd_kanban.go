@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,6 +89,17 @@ type kanbanExecFlags struct {
 	summary string
 }
 
+type kanbanDispatchFlags struct {
+	shared   *kanbanSharedFlags
+	project  string
+	actor    string
+	workDir  string
+	summary  string
+	limit    int
+	loop     bool
+	interval string
+}
+
 type kanbanCompleteFlags struct {
 	shared   *kanbanSharedFlags
 	actor    string
@@ -139,6 +151,7 @@ func newKanbanCmd() *cobra.Command {
 		newKanbanEditCmd(flags),
 		newKanbanArchiveCmd(flags),
 		newKanbanExecCmd(flags),
+		newKanbanDispatchCmd(flags),
 		newKanbanClaimCmd(flags),
 		newKanbanHeartbeatCmd(flags),
 		newKanbanCompleteCmd(flags),
@@ -302,6 +315,31 @@ func newKanbanExecCmd(shared *kanbanSharedFlags) *cobra.Command {
 			return runKanbanExec(args[0], args[1:], flags)
 		},
 	}
+	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
+	cmd.Flags().StringVar(&flags.workDir, "work-dir", "", "run working directory")
+	cmd.Flags().StringVar(&flags.summary, "summary", "", "completion summary")
+	return cmd
+}
+
+func newKanbanDispatchCmd(shared *kanbanSharedFlags) *cobra.Command {
+	flags := &kanbanDispatchFlags{shared: shared, limit: 1, interval: "30s"}
+	cmd := &cobra.Command{
+		Use:   "dispatch --project <project> -- <command> [args...]",
+		Short: "Dispatch ready Kanban tasks to a command",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("usage: kittypaw kanban dispatch --project <project> -- <command> [args...]")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKanbanDispatch(cmd.Context(), args, flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.project, "project", "", "project id or slug")
+	cmd.Flags().IntVar(&flags.limit, "limit", 1, "maximum ready tasks to dispatch per cycle")
+	cmd.Flags().BoolVar(&flags.loop, "loop", false, "keep polling for ready tasks")
+	cmd.Flags().StringVar(&flags.interval, "interval", "30s", "poll interval when --loop is set")
 	cmd.Flags().StringVar(&flags.actor, "actor", "", "actor name")
 	cmd.Flags().StringVar(&flags.workDir, "work-dir", "", "run working directory")
 	cmd.Flags().StringVar(&flags.summary, "summary", "", "completion summary")
@@ -821,6 +859,153 @@ func runKanbanExec(taskID string, command []string, flags *kanbanExecFlags) erro
 	fmt.Printf("Run: %s\n", run.ID)
 	fmt.Printf("Work dir: %s\n", run.WorkDir)
 	return nil
+}
+
+func runKanbanDispatch(ctx context.Context, command []string, flags *kanbanDispatchFlags) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if flags == nil {
+		flags = &kanbanDispatchFlags{shared: &kanbanSharedFlags{}, limit: 1, interval: "30s"}
+	}
+	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
+		return fmt.Errorf("command is required")
+	}
+	if strings.TrimSpace(flags.project) == "" {
+		return fmt.Errorf("--project is required")
+	}
+	if flags.limit <= 0 {
+		return fmt.Errorf("--limit must be positive")
+	}
+	intervalRaw := strings.TrimSpace(flags.interval)
+	if intervalRaw == "" {
+		intervalRaw = "30s"
+	}
+	interval, err := time.ParseDuration(intervalRaw)
+	if err != nil || interval <= 0 {
+		return fmt.Errorf("positive --interval duration is required")
+	}
+	workDir, provider, err := normalizeRunWorkDir(flags.workDir)
+	if err != nil {
+		return err
+	}
+
+	st, err := openKanbanCommandStore(kanbanAccountID(flags.shared))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	project, err := resolveKanbanProject(st, flags.project)
+	if err != nil {
+		return err
+	}
+
+	for {
+		processed, err := runKanbanDispatchCycle(ctx, st, project, command, flags, workDir, provider)
+		if err != nil {
+			return err
+		}
+		if processed == 0 && !flags.loop {
+			fmt.Println("No ready tasks.")
+		}
+		if !flags.loop {
+			return nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store.KanbanProject, command []string, flags *kanbanDispatchFlags, workDir, provider string) (int, error) {
+	tasks, err := st.ListKanbanTasks(store.KanbanTaskListFilter{
+		ProjectID: project.ID,
+		Status:    store.KanbanStatusReady,
+	})
+	if err != nil {
+		return 0, err
+	}
+	processed := 0
+	for _, task := range tasks {
+		if processed >= flags.limit {
+			break
+		}
+		if err := executeDispatchedKanbanTask(ctx, st, project, task, command, flags, workDir, provider); err != nil {
+			return processed, err
+		}
+		processed++
+	}
+	return processed, nil
+}
+
+func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {
+	run, err := st.ClaimKanbanTask(task.ID, store.ClaimKanbanTaskRequest{
+		Actor:           strings.TrimSpace(flags.actor),
+		WorkDir:         workDir,
+		WorkDirProvider: provider,
+	})
+	if err != nil {
+		return err
+	}
+
+	started := time.Now()
+	cmd := osexec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = run.WorkDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = kanbanDispatchCommandEnv(os.Environ(), project, task, run)
+	runErr := cmd.Run()
+	duration := time.Since(started)
+	exitCode := kanbanExecExitCode(runErr)
+	metadata := kanbanExecMetadata(command, run.ID, exitCode, duration)
+	if runErr != nil {
+		summary := strings.TrimSpace(flags.summary)
+		if summary == "" {
+			summary = kanbanExecDefaultSummary("command failed", command)
+		}
+		recordErr := st.FailKanbanTask(task.ID, store.FailKanbanTaskRequest{
+			Actor:        strings.TrimSpace(flags.actor),
+			Summary:      summary,
+			Error:        runErr.Error(),
+			MetadataJSON: metadata,
+		})
+		if recordErr != nil {
+			return fmt.Errorf("command failed (%v); record kanban failure: %w", runErr, recordErr)
+		}
+		return fmt.Errorf("command failed with exit code %d: %w", exitCode, runErr)
+	}
+
+	summary := strings.TrimSpace(flags.summary)
+	if summary == "" {
+		summary = kanbanExecDefaultSummary("command completed", command)
+	}
+	if err := st.CompleteKanbanTask(task.ID, store.CompleteKanbanTaskRequest{
+		Actor:        strings.TrimSpace(flags.actor),
+		Summary:      summary,
+		MetadataJSON: metadata,
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("Dispatched task: %s\n", task.ID)
+	fmt.Printf("Run: %s\n", run.ID)
+	fmt.Printf("Work dir: %s\n", run.WorkDir)
+	return nil
+}
+
+func kanbanDispatchCommandEnv(base []string, project *store.KanbanProject, task store.KanbanTask, run *store.KanbanRun) []string {
+	return append(base,
+		"KITTYPAW_KANBAN_TASK_ID="+task.ID,
+		"KITTYPAW_KANBAN_RUN_ID="+run.ID,
+		"KITTYPAW_KANBAN_PROJECT_ID="+project.ID,
+		"KITTYPAW_KANBAN_PROJECT_SLUG="+project.Slug,
+		"KITTYPAW_KANBAN_TASK_TITLE="+task.Title,
+	)
 }
 
 func runKanbanComplete(taskID string, flags *kanbanCompleteFlags) error {
