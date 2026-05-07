@@ -49,6 +49,68 @@ func mustNotExist(t *testing.T, path string) {
 	}
 }
 
+func TestAccountEnsureDirsMigratesProfilesToStaff(t *testing.T) {
+	base := t.TempDir()
+	account := &Account{ID: "alice", BaseDir: base}
+
+	const soul = "legacy staff soul"
+	if err := os.MkdirAll(filepath.Join(base, "profiles", "default"), 0o755); err != nil {
+		t.Fatalf("seed legacy profiles dir: %v", err)
+	}
+	writeLegacyFile(t, filepath.Join(base, "profiles", "default", "SOUL.md"), soul)
+
+	if err := account.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+
+	staffSoulPath := filepath.Join(base, "staff", "default", "SOUL.md")
+	mustExist(t, staffSoulPath)
+	mustNotExist(t, filepath.Join(base, "profiles"))
+
+	data, err := os.ReadFile(staffSoulPath)
+	if err != nil {
+		t.Fatalf("read migrated staff soul: %v", err)
+	}
+	if string(data) != soul {
+		t.Fatalf("migrated SOUL.md = %q, want %q", string(data), soul)
+	}
+}
+
+func TestAccountEnsureDirsKeepsExistingStaffWhenProfilesAlsoExist(t *testing.T) {
+	base := t.TempDir()
+	account := &Account{ID: "alice", BaseDir: base}
+
+	const legacySoul = "legacy profile soul"
+	const staffSoul = "current staff soul"
+	for _, dir := range []string{
+		filepath.Join(base, "profiles", "default"),
+		filepath.Join(base, "staff", "default"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("seed %s: %v", dir, err)
+		}
+	}
+	writeLegacyFile(t, filepath.Join(base, "profiles", "default", "SOUL.md"), legacySoul)
+	writeLegacyFile(t, filepath.Join(base, "staff", "default", "SOUL.md"), staffSoul)
+
+	if err := account.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+
+	profileSoulPath := filepath.Join(base, "profiles", "default", "SOUL.md")
+	staffSoulPath := filepath.Join(base, "staff", "default", "SOUL.md")
+	mustExist(t, profileSoulPath)
+	mustExist(t, staffSoulPath)
+
+	data, err := os.ReadFile(staffSoulPath)
+	if err != nil {
+		t.Fatalf("read staff soul: %v", err)
+	}
+	if string(data) != staffSoul {
+		t.Fatalf("staff SOUL.md = %q, want %q", string(data), staffSoul)
+	}
+}
+
 // TestMigrateLegacyLayout_Moves enforces the migration happy path: a
 // legacy single-account ~/.kittypaw becomes accounts/default/, account-scoped
 // files move, and server-wide files stay. AC-T9 foundation — without this,

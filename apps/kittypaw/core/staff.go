@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 )
 
-// Staff holds the loaded identity data for a single staff.
+// Staff holds the loaded identity data for one staff member.
 type Staff struct {
 	ID     string // staff directory name
 	Nick   string // display name from config
@@ -110,7 +110,7 @@ func LoadStaff(base, name string) (*Staff, error) {
 	return staff, nil
 }
 
-// EnsureDefaultStaff creates the default staff directory and SOUL.md
+// EnsureDefaultStaff creates the default staff identity directory and SOUL.md
 // if they don't already exist. Existing files are never overwritten.
 func EnsureDefaultStaff(base string) error {
 	staffDir := filepath.Join(base, "staff", "default")
@@ -180,7 +180,7 @@ func DetectStaffDirty(base, staffID string) (bool, error) {
 	return status.Kind == StatusCustom, nil
 }
 
-// PresetStatusKind describes the preset state of a staff member.
+// PresetStatusKind describes the preset state of a staff identity.
 type PresetStatusKind int
 
 const (
@@ -189,7 +189,7 @@ const (
 	StatusUnknown                         // no preset metadata
 )
 
-// PresetStatusResult holds the result of PresetStatus.
+// PresetStatusResult holds the result of StaffPresetStatus.
 type PresetStatusResult struct {
 	Kind     PresetStatusKind
 	PresetID string // set for StatusPreset and StatusCustom
