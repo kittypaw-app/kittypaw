@@ -24,12 +24,12 @@ func TestParseDevToolsActivePort(t *testing.T) {
 }
 
 func TestBuildChromeArgs(t *testing.T) {
-	args := buildChromeArgs("/tmp/"+"pro"+"file", true)
+	args := buildChromeArgs("/tmp/profile", true)
 	joined := strings.Join(args, "\n")
 	for _, want := range []string{
 		"--remote-debugging-port=0",
 		"--remote-debugging-address=127.0.0.1",
-		"--user-data-dir=/tmp/" + "pro" + "file",
+		"--user-data-dir=/tmp/profile",
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--headless=new",

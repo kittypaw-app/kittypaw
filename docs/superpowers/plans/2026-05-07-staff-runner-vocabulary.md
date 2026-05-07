@@ -208,7 +208,7 @@ type ConversationState struct {
 }
 ```
 
-Replace `ValidateLegacyStaffID` with:
+Replace the old identity ID validator with:
 
 ```go
 // ValidateStaffID checks that a staff ID contains only safe characters.
@@ -267,7 +267,7 @@ func (c *Config) DefaultRunner() *RunnerConfig
 
 - [ ] **Step 5: Rename account staff directory and add filesystem migration**
 
-In `apps/kittypaw/core/account.go`, replace `LegacyStaffDir` with:
+In `apps/kittypaw/core/account.go`, replace the old identity directory helper with:
 
 ```go
 // StaffDir returns the account's staff identity directory.
@@ -280,17 +280,17 @@ Add this helper near `EnsureDirs`:
 
 ```go
 func (t *Account) migrateStaffDir() error {
-	legacyStaffDir := filepath.Join(t.BaseDir, "legacy staff dirs")
+	legacyStaffDir := filepath.Join(t.BaseDir, "profiles")
 	staffDir := t.StaffDir()
 
 	if _, err := os.Stat(legacyStaffDir); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
-		return fmt.Errorf("stat legacy staff dirs dir: %w", err)
+		return fmt.Errorf("stat legacy profiles dir: %w", err)
 	}
 
 	if _, err := os.Stat(staffDir); err == nil {
-		slog.Warn("legacy staff dirs/ and staff/ both exist; using staff/",
+		slog.Warn("legacy profiles/ and staff/ both exist; using staff/",
 			"account", t.ID, "legacy_staff_dir", legacyStaffDir, "staff_dir", staffDir)
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -320,10 +320,10 @@ func (t *Account) EnsureDirs() error {
 	}
 ```
 
-In `MigrateLegacyLayout`, change the moved account-scoped list to include `staff` and `legacy staff dirs` so root legacy installs can still be migrated:
+In `MigrateLegacyLayout`, change the moved account-scoped list to include `staff` and `profiles` so root legacy installs can still be migrated:
 
 ```go
-for _, name := range []string{"config.toml", "secrets.json", "data", "skills", "staff", "legacy staff dirs", "packages"} {
+for _, name := range []string{"config.toml", "secrets.json", "data", "skills", "staff", "profiles", "packages"} {
 ```
 
 After committing the staging directory to `accounts/default`, call:
@@ -740,7 +740,7 @@ In `apps/kittypaw/engine/executor.go`, change `resolveSkillCall` cases:
 		return executeRunner(ctx, call, s)
 ```
 
-Rename `executeLegacyStaff` to `executeStaff` and use:
+Rename the old identity tool executor to `executeStaff` and use:
 
 ```go
 func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
@@ -824,7 +824,7 @@ func ConversationIDFromContext(ctx context.Context) string {
 
 - [ ] **Step 5: Rename session staff resolution and prompt loading**
 
-In `apps/kittypaw/engine/session.go`, rename `ResolveLegacyStaffName` to:
+In `apps/kittypaw/engine/session.go`, rename the old identity resolver to:
 
 ```go
 // ResolveStaffName determines which staff identity to use for this request.
@@ -859,7 +859,7 @@ func ResolveStaffName(
 }
 ```
 
-Replace `loadLegacyStaffForPrompt` with:
+Replace the old prompt identity loader with:
 
 ```go
 func loadStaffForPrompt(staffID string, config *core.Config, baseDir string) *core.Staff {

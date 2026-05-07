@@ -568,7 +568,7 @@ func (c *Controller) ensureStarted(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	userDataDir := filepath.Join(c.dataDir, "pro"+"file")
+	userDataDir := filepath.Join(c.dataDir, "profile")
 	if err := os.MkdirAll(userDataDir, 0o700); err != nil {
 		return err
 	}

@@ -5,8 +5,8 @@ Status: Approved for implementation by user design approval
 
 ## Goal
 
-Expose durable Kanban operations to the JavaScript skill sandbox so runners and
-future Kanban staff runners can inspect and update tasks without shelling out to the
+Expose durable Kanban operations to the JavaScript skill sandbox so runners can
+inspect and update tasks without shelling out to the
 CLI.
 
 ## Scope
@@ -22,7 +22,7 @@ This phase adds the `Kanban` sandbox global with:
 - `Kanban.link(parentTaskId, childTaskId)`
 - `Kanban.heartbeat(taskId, options?)`
 
-This phase does not add dispatcher staff execution, hosted API contracts,
+This phase does not add dispatcher-driven execution, hosted API contracts,
 bulk task operations, automatic retries, task listing, Web UI controls, or a new
 work-dir provider.
 
