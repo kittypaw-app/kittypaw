@@ -177,6 +177,7 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, operation protoc
 			"path", fields.Path,
 			"error", err,
 		)
+		w.Header().Set("X-KittySpace-Relay-Source", "relay")
 		switch {
 		case errors.Is(err, broker.ErrDeviceOffline):
 			writeJSONError(w, http.StatusServiceUnavailable, "device offline")

@@ -272,6 +272,9 @@ func TestHandlerReturnsOfflineWhenBrokerHasNoDevice(t *testing.T) {
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rr.Code)
 	}
+	if got := rr.Header().Get("X-KittySpace-Relay-Source"); got != "relay" {
+		t.Fatalf("relay source header = %q, want relay", got)
+	}
 }
 
 func TestHandlerRejectsAPIKeyForAnotherDevice(t *testing.T) {
