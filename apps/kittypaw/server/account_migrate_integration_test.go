@@ -39,9 +39,9 @@ func TestLegacyMigration_PreservesDBRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open legacy db: %v", err)
 	}
-	seed := &core.AgentState{
-		AgentID:      "legacy-agent",
-		SystemPrompt: "legacy system prompt",
+	seed := &core.ConversationState{
+		ConversationID: "legacy-agent",
+		SystemPrompt:   "legacy system prompt",
 		Turns: []core.ConversationTurn{
 			{Role: core.RoleUser, Content: "pre-migration message", Timestamp: "1"},
 			{Role: core.RoleAssistant, Content: "pre-migration reply", Timestamp: "2"},
