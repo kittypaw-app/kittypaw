@@ -52,6 +52,13 @@ portal.kittypaw.app
 | `GOOGLE_AUTH_URL` | Google authorization URL | Override only for local E2E/fake OAuth |
 | `GOOGLE_TOKEN_URL` | Google token URL | Override only for local E2E/fake OAuth |
 | `GOOGLE_USERINFO_URL` | Google userinfo URL | Override only for local E2E/fake OAuth |
+| `CONNECT_BASE_URL` | unset | Connect public origin; enables Connect routes when set |
+| `CONNECT_GOOGLE_CLIENT_ID` | | Connect Gmail OAuth client ID |
+| `CONNECT_GOOGLE_CLIENT_SECRET` | | Connect Gmail OAuth client secret |
+| `CONNECT_X_CLIENT_ID` | | Connect X OAuth client ID |
+| `CONNECT_X_CLIENT_SECRET` | | Connect X OAuth client secret |
+| `CONNECT_TOKEN_ENCRYPTION_KEY` | required for X | Standard base64 of 32 random bytes for server-side X token encryption |
+| `CONNECT_X_API_BASE_URL` | X API origin | Override only for local fake X API |
 | `GITHUB_CLIENT_ID` | | GitHub OAuth client ID |
 | `GITHUB_CLIENT_SECRET` | | GitHub OAuth client secret |
 | `CORS_ORIGINS` | `BASE_URL` | Comma-separated allowed origins |

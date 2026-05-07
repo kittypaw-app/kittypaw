@@ -25,10 +25,18 @@ X/Twitter는 native read-only OAuth 2.0 PKCE flow로 연결합니다.
    CONNECT_BASE_URL=https://connect.kittypaw.app
    CONNECT_X_CLIENT_ID=...
    CONNECT_X_CLIENT_SECRET=...
+   CONNECT_TOKEN_ENCRYPTION_KEY=...
    ```
 
    로컬 fake OAuth 테스트가 아니면 `CONNECT_X_AUTH_URL`,
-   `CONNECT_X_TOKEN_URL`, `CONNECT_X_USERINFO_URL`은 비워둡니다.
+   `CONNECT_X_TOKEN_URL`, `CONNECT_X_USERINFO_URL`,
+   `CONNECT_X_API_BASE_URL`은 비워둡니다.
+
+   `CONNECT_TOKEN_ENCRYPTION_KEY`는 standard base64 32-byte key입니다.
+
+   ```bash
+   openssl rand -base64 32
+   ```
 
 3. 비용과 quota
 
@@ -47,9 +55,10 @@ Before a user can run `kittypaw connect x`, an admin must:
 4. grant X entitlement to the user's email address;
 5. set a small monthly post-read quota, for example `100`, and record the reason.
 
-Phase 0 gates X connection. It does not centrally meter local X API calls after
-the token is stored in the local KittyPaw account. Public X access requires a
-future server-brokered usage path.
+X OAuth token은 local KittyPaw 계정에 저장하지 않고 Portal DB에 암호화
+저장됩니다. KittyPaw local runtime은 일반 KittyPaw login JWT로
+`/connect/x/broker/*`를 호출하고, Portal이 entitlement와
+`monthly_post_reads` quota를 확인한 뒤 X API를 호출합니다.
 
 ## 배포 직후
 
@@ -76,7 +85,9 @@ future server-brokered usage path.
    확인:
 
    - `~/.kittypaw/accounts/<account-id>/secrets.json`에 `oauth-x` namespace가 생깁니다.
-   - token 값은 URL query, 로그, browser callback에 노출되지 않아야 합니다.
+   - `oauth-x/access_token`, `oauth-x/refresh_token` 값은 없어야 합니다.
+   - `oauth-x/token_type`은 `broker`입니다.
+   - X token 값은 URL query, 로그, browser callback에 노출되지 않아야 합니다.
    - `connect_base_url`은 `https://connect.kittypaw.app`로 저장됩니다.
 
 3. 기능 smoke
@@ -87,9 +98,15 @@ future server-brokered usage path.
    X.searchRecent("kittypaw", {limit: 10})
    X.user("XDevelopers")
    X.userPosts("XDevelopers", {limit: 10})
+   X.post("https://x.com/XDevelopers/status/<id>")
    ```
 
-   MCP env source를 쓰는 경우:
+   기존 X direct-token release에서 업그레이드한 사용자는 이 smoke 전에
+   `kittypaw connect x`를 다시 실행해야 서버측 broker token이 저장됩니다.
+
+   MCP env source를 쓰는 경우는 legacy compatibility입니다. 신규 X broker
+   flow는 local X access token을 저장하지 않으므로 X MCP direct-token
+   integration에는 사용할 수 없습니다.
 
    ```toml
    [mcp_servers.env_from]
@@ -101,6 +118,8 @@ future server-brokered usage path.
 - write scope는 추가하지 않습니다. `tweet.write`, `like.write`, `dm.write`는 별도 제품 결정과 승인 UX가 필요합니다.
 - refresh token 장애가 반복되면 사용자는 `kittypaw connect x`를 다시 실행해야 합니다.
 - X API plan, spending cap, per-endpoint quota 변경은 KittyPaw 사용자 경험에 직접 영향을 줍니다.
+- quota 조정은 `https://portal.kittypaw.app/admin/connect/users`에서 사용자별
+  `monthly_post_reads` 값을 수정합니다.
 
 ## 공식 참고
 

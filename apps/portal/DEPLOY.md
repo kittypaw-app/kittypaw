@@ -30,9 +30,11 @@ CONNECT_GOOGLE_CLIENT_SECRET=
 # CONNECT_GOOGLE_USERINFO_URL=   # unset in prod; local fake OAuth only
 CONNECT_X_CLIENT_ID=
 CONNECT_X_CLIENT_SECRET=
+CONNECT_TOKEN_ENCRYPTION_KEY=
 # CONNECT_X_AUTH_URL=            # unset in prod; local fake OAuth only
 # CONNECT_X_TOKEN_URL=           # unset in prod; local fake OAuth only
 # CONNECT_X_USERINFO_URL=        # unset in prod; local fake OAuth only
+# CONNECT_X_API_BASE_URL=        # unset in prod; local fake X API only
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 WEB_REDIRECT_URI_ALLOWLIST=https://chat.kittypaw.app/auth/callback
@@ -48,6 +50,15 @@ X Connect는 `CONNECT_X_CLIENT_ID`/`CONNECT_X_CLIENT_SECRET`을 사용합니다.
 X Developer Portal의 OAuth 2.0 callback URL은
 `https://connect.kittypaw.app/connect/x/callback`로 정확히 등록합니다.
 초기 scope는 read-only `tweet.read users.read offline.access`입니다.
+X token은 Portal DB에 암호화 저장되므로 `CONNECT_TOKEN_ENCRYPTION_KEY`는
+standard base64 32-byte key로 반드시 설정합니다.
+
+```bash
+openssl rand -base64 32
+```
+
+브로커 전환 후 기존 사용자는 한 번 `kittypaw connect x`를 다시 실행해야
+Portal에 서버측 X token이 저장됩니다.
 
 `/admin/connect`는 `portal.kittypaw.app`에서만 제공됩니다. 일반 portal
 login을 먼저 통과한 뒤 `PORTAL_ADMIN_EMAILS` allowlist에 포함된 이메일만
