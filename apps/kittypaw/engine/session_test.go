@@ -128,6 +128,38 @@ func TestStaffSwitch_SetsContext(t *testing.T) {
 	}
 }
 
+func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+	ctx := ContextWithConversationID(context.Background(), "conv-1")
+
+	out, err := executeStaff(ctx, core.SkillCall{
+		Method: "switch",
+		Args:   []json.RawMessage{json.RawMessage(`"finance"`)},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeStaff error: %v", err)
+	}
+	var result struct {
+		Success bool   `json:"success"`
+		Staff   string `json:"staff"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !result.Success || result.Staff != "finance" || result.Error != "" {
+		t.Fatalf("result = %+v, want successful finance switch", result)
+	}
+	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || !ok || got != "finance" {
+		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want finance", got, ok, err)
+	}
+}
+
 func TestStaffSwitch_MissingStaffDoesNotSetContext(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
@@ -156,6 +188,46 @@ func TestStaffSwitch_MissingStaffDoesNotSetContext(t *testing.T) {
 	}
 	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || ok {
 		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want unset", got, ok, err)
+	}
+}
+
+func TestStaffUpdateChangesDescription(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.UpsertStaffMeta("finance", "old desc", `["budget"]`, "test"); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+
+	out, err := executeStaff(context.Background(), core.SkillCall{
+		Method: "update",
+		Args: []json.RawMessage{
+			json.RawMessage(`"finance"`),
+			json.RawMessage(`"new desc"`),
+		},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeStaff error: %v", err)
+	}
+	var result struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !result.Success || result.Error != "" {
+		t.Fatalf("result = %+v, want successful update", result)
+	}
+	meta, ok, err := st.GetStaffMeta("finance")
+	if err != nil || !ok {
+		t.Fatalf("staff meta missing after update: ok=%v err=%v", ok, err)
+	}
+	if meta.Description != "new desc" {
+		t.Fatalf("description = %q, want new desc", meta.Description)
+	}
+	if meta.EquippedSkills != `["budget"]` {
+		t.Fatalf("equipped skills = %q, want preserved skills", meta.EquippedSkills)
 	}
 }
 

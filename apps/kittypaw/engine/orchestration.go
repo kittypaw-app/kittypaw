@@ -253,8 +253,16 @@ func executeDelegateTask(
 
 	// Load staff.
 	meta, ok, err := st.GetStaffMeta(task.StaffID)
-	if err != nil || !ok {
+	if err != nil {
+		result.Result = fmt.Sprintf("staff lookup error: %s", err)
+		return result
+	}
+	if !ok {
 		result.Result = fmt.Sprintf("staff %q not found", task.StaffID)
+		return result
+	}
+	if !meta.Active {
+		result.Result = fmt.Sprintf("staff %q is inactive", task.StaffID)
 		return result
 	}
 

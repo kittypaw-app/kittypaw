@@ -218,7 +218,7 @@ type SkillCall struct {
 	Args      []json.RawMessage `json:"args"`
 }
 
-// Observation holds data from an Agent.observe() call in the sandbox.
+// Observation holds data from a Runner.observe() call in the sandbox.
 type Observation struct {
 	Label string `json:"label"`
 	Data  string `json:"data"`

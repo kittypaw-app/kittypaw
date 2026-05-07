@@ -93,6 +93,25 @@ func TestDelegateTask_StaffNotFound(t *testing.T) {
 	}
 }
 
+func TestDelegateTask_InactiveStaffFails(t *testing.T) {
+	st := newDelegateTestStore(t)
+	if err := st.UpsertStaffMeta("inactive", "Inactive staff", "", "system"); err != nil {
+		t.Fatalf("seed staff: %v", err)
+	}
+	if err := st.SetStaffActive("inactive", false); err != nil {
+		t.Fatalf("deactivate staff: %v", err)
+	}
+
+	spec := PMTaskSpec{StaffID: "inactive", Task: "do something"}
+	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, "")
+	if result.Success {
+		t.Fatal("expected failure for inactive staff")
+	}
+	if result.Result != `staff "inactive" is inactive` {
+		t.Fatalf("result = %q, want inactive staff error", result.Result)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // loadSOUL
 // ---------------------------------------------------------------------------

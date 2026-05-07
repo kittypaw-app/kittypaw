@@ -2189,6 +2189,31 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		}
 		return jsonResult(map[string]any{"success": true})
 
+	case "update":
+		if len(call.Args) < 2 {
+			return jsonResult(map[string]any{"error": "id and description required"})
+		}
+		var id, desc string
+		if err := json.Unmarshal(call.Args[0], &id); err != nil {
+			return jsonResult(map[string]any{"error": "invalid id argument"})
+		}
+		if err := json.Unmarshal(call.Args[1], &desc); err != nil {
+			return jsonResult(map[string]any{"error": "invalid description argument"})
+		}
+		if err := core.ValidateStaffID(id); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		equippedSkills := "[]"
+		if meta, ok, err := s.Store.GetStaffMeta(id); err != nil {
+			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
+		} else if ok {
+			equippedSkills = meta.EquippedSkills
+		}
+		if err := s.Store.UpsertStaffMeta(id, desc, equippedSkills, "runner"); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"success": true})
+
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Staff method: %s", call.Method)})
 	}
