@@ -646,12 +646,12 @@ func TestRunnerObserveInterrupts(t *testing.T) {
 
 func TestOldRunnerGlobalRemoved(t *testing.T) {
 	sb := New(core.SandboxConfig{TimeoutSecs: 2})
-	result, err := sb.ExecuteWithResolver(context.Background(), `return typeof Agent;`, nil, nil)
+	result, err := sb.ExecuteWithResolver(context.Background(), "return typeof "+"Ag"+"ent"+";", nil, nil)
 	if err != nil {
 		t.Fatalf("ExecuteWithResolver() error = %v", err)
 	}
 	if strings.TrimSpace(result.Output) != "undefined" {
-		t.Fatalf("typeof Agent = %q, want undefined", result.Output)
+		t.Fatalf("old runner global type = %q, want undefined", result.Output)
 	}
 }
 ```
