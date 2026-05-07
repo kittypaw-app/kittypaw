@@ -134,6 +134,77 @@ access = "read_write"
 	}
 }
 
+func TestLoadConfigMigratesLegacyProfilesToStaff(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.toml")
+	tomlContent := `
+default_profile = "finance"
+
+[[profiles]]
+id = "finance"
+nick = "Finance"
+channels = ["telegram"]
+
+[[profiles]]
+id = "ops"
+nick = "Ops"
+channels = ["kakao"]
+`
+	if err := os.WriteFile(path, []byte(tomlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DefaultStaff != "finance" {
+		t.Fatalf("DefaultStaff = %q, want finance", cfg.DefaultStaff)
+	}
+	if len(cfg.Staff) != 2 {
+		t.Fatalf("Staff len = %d, want 2: %+v", len(cfg.Staff), cfg.Staff)
+	}
+	if cfg.Staff[0].ID != "finance" || cfg.Staff[0].Nick != "Finance" || len(cfg.Staff[0].Channels) != 1 || cfg.Staff[0].Channels[0] != "telegram" {
+		t.Fatalf("staff[0] = %+v", cfg.Staff[0])
+	}
+	if cfg.Staff[1].ID != "ops" || cfg.Staff[1].Nick != "Ops" || len(cfg.Staff[1].Channels) != 1 || cfg.Staff[1].Channels[0] != "kakao" {
+		t.Fatalf("staff[1] = %+v", cfg.Staff[1])
+	}
+}
+
+func TestLoadConfigPrefersStaffOverLegacyProfiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.toml")
+	tomlContent := `
+default_profile = "legacy"
+default_staff = "modern"
+
+[[profiles]]
+id = "legacy"
+nick = "Legacy"
+channels = ["telegram"]
+
+[[staff]]
+id = "modern"
+nick = "Modern"
+channels = ["web"]
+`
+	if err := os.WriteFile(path, []byte(tomlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DefaultStaff != "modern" {
+		t.Fatalf("DefaultStaff = %q, want modern", cfg.DefaultStaff)
+	}
+	if len(cfg.Staff) != 1 || cfg.Staff[0].ID != "modern" || cfg.Staff[0].Nick != "Modern" || len(cfg.Staff[0].Channels) != 1 || cfg.Staff[0].Channels[0] != "web" {
+		t.Fatalf("Staff = %+v, want only modern staff", cfg.Staff)
+	}
+}
+
 func TestFeatureFlagsUseRunnerVocabulary(t *testing.T) {
 	tomlContent := `
 [features]

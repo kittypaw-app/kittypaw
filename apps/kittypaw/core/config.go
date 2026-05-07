@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -403,6 +404,11 @@ type StaffConfig struct {
 	Channels []string `toml:"channels"`
 }
 
+type legacyProfileConfig struct {
+	DefaultProfile string        `toml:"default_profile"`
+	Profiles       []StaffConfig `toml:"profiles"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
@@ -467,11 +473,32 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if err := applyLegacyProfileConfig(&cfg, data, md); err != nil {
+		return nil, fmt.Errorf("parse legacy profile config: %w", err)
 	}
 	cfg.NormalizeRuntimeFields()
 	return &cfg, nil
+}
+
+func applyLegacyProfileConfig(cfg *Config, data []byte, md toml.MetaData) error {
+	var legacy legacyProfileConfig
+	if err := toml.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+
+	if !md.IsDefined("default_staff") {
+		if defaultProfile := strings.TrimSpace(legacy.DefaultProfile); defaultProfile != "" {
+			cfg.DefaultStaff = defaultProfile
+		}
+	}
+	if !md.IsDefined("staff") && len(legacy.Profiles) > 0 {
+		cfg.Staff = append([]StaffConfig(nil), legacy.Profiles...)
+	}
+	return nil
 }
 
 // ConfigDir returns the user's .kittypaw config directory, creating it if needed.

@@ -42,6 +42,23 @@ func TestRootCommandPropagatesContext(t *testing.T) {
 	}
 }
 
+func TestExecuteRootCommandDoesNotInstallGlobalSignalContext(t *testing.T) {
+	var done <-chan struct{}
+	root := &cobra.Command{
+		Use: "root",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			done = cmd.Context().Done()
+			return nil
+		},
+	}
+	if err := executeRootCommand(root); err != nil {
+		t.Fatalf("executeRootCommand: %v", err)
+	}
+	if done != nil {
+		t.Fatal("root command installed a cancelable global context")
+	}
+}
+
 func TestIsTransportDropErr_StringMatches(t *testing.T) {
 	cases := []string{
 		"EOF",

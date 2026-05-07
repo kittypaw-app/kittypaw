@@ -47,13 +47,14 @@ var (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	root := newRootCmd()
-	if err := root.ExecuteContext(ctx); err != nil {
+	if err := executeRootCommand(root); err != nil {
 		os.Exit(1)
 	}
+}
+
+func executeRootCommand(root *cobra.Command) error {
+	return root.Execute()
 }
 
 // ---------------------------------------------------------------------------
