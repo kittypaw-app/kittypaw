@@ -215,7 +215,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err := srv.StartChannels(ctx); err != nil {
 		return fmt.Errorf("start channels: %w", err)
 	}
-	startChatRelayConnectors(ctx, deps, version, server.NewChatRelayDispatcher(srv))
+	chatRelayManager := newChatRelayConnectorManager(ctx, deps, version, server.NewChatRelayDispatcher(srv))
+	srv.SetPostReloadHook(chatRelayManager.Reload)
+	if err := chatRelayManager.Reload(ctx); err != nil {
+		return fmt.Errorf("start chat relay connectors: %w", err)
+	}
 
 	// Start HTTP server (blocks until shutdown signal).
 	slog.Info("kittypaw serving", "bind", bind)

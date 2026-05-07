@@ -250,7 +250,7 @@ func TestMaybePairChatRelayDeviceSkipsAlreadyPaired(t *testing.T) {
 	}
 	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
 		DeviceID:     "dev_123",
-		AccessToken:  "access-1",
+		AccessToken:  chatRelayTestAccessToken("access-1"),
 		RefreshToken: "refresh-1",
 	}); err != nil {
 		t.Fatal(err)
@@ -265,6 +265,60 @@ func TestMaybePairChatRelayDeviceSkipsAlreadyPaired(t *testing.T) {
 	}
 }
 
+func TestMaybePairChatRelayDeviceRepairsExpiredTokenWhenRefreshFails(t *testing.T) {
+	var refreshCalls int
+	var pairCalls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/devices/refresh":
+			refreshCalls++
+			http.Error(w, "reuse detected", http.StatusUnauthorized)
+		case "/auth/devices/pair":
+			pairCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer user-access" {
+				t.Fatalf("Authorization = %q, want bearer user-access", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"device_id":"dev_repaired","device_access_token":%q,"device_refresh_token":"refresh-new","expires_in":900}`, chatRelayTestAccessToken("access-new"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := "https://portal.kittypaw.app"
+	if err := mgr.SaveAuthBaseURL(apiURL, ts.URL+"/auth"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_old",
+		AccessToken:  chatRelayTestAccessTokenWithExp("access-old", 1),
+		RefreshToken: "refresh-old",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if paired := maybePairChatRelayDevice(apiURL, mgr, "user-access", &out); !paired {
+		t.Fatal("maybePairChatRelayDevice paired = false, want repair pair")
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", refreshCalls)
+	}
+	if pairCalls != 1 {
+		t.Fatalf("pair calls = %d, want 1", pairCalls)
+	}
+	tokens, ok := mgr.LoadChatRelayDeviceTokens(apiURL)
+	if !ok || tokens.DeviceID != "dev_repaired" || tokens.AccessToken != chatRelayTestAccessToken("access-new") || tokens.RefreshToken != "refresh-new" {
+		t.Fatalf("tokens = (%#v, %v), want repaired pair response", tokens, ok)
+	}
+}
+
 func TestMaybePairChatRelayDeviceSkipsWhenNoRelayURL(t *testing.T) {
 	secrets := testSecretsStore(t)
 	mgr := core.NewAPITokenManager("", secrets)
@@ -275,6 +329,41 @@ func TestMaybePairChatRelayDeviceSkipsWhenNoRelayURL(t *testing.T) {
 	}
 	if out.String() != "" {
 		t.Fatalf("output = %q, want empty skip", out.String())
+	}
+}
+
+func TestChatRelayDeviceReadyRequiresConfiguredNonExpiredToken(t *testing.T) {
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := "https://portal.kittypaw.app"
+	if chatRelayDeviceReady(apiURL, mgr) {
+		t.Fatal("ready = true without relay URL or token")
+	}
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if chatRelayDeviceReady(apiURL, mgr) {
+		t.Fatal("ready = true without device tokens")
+	}
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_123",
+		AccessToken:  chatRelayTestAccessTokenWithExp("expired", 1),
+		RefreshToken: "refresh-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if chatRelayDeviceReady(apiURL, mgr) {
+		t.Fatal("ready = true with expired token")
+	}
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_123",
+		AccessToken:  chatRelayTestAccessToken("valid"),
+		RefreshToken: "refresh-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !chatRelayDeviceReady(apiURL, mgr) {
+		t.Fatal("ready = false with configured non-expired token")
 	}
 }
 

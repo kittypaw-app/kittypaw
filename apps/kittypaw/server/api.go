@@ -621,7 +621,7 @@ func (s *Server) handleCheckpointRollback(w http.ResponseWriter, r *http.Request
 // would open a TOCTOU window where a concurrent AddAccount validates
 // against the stale default-account channel list, passes, and spawns a
 // duplicate bot that this reload was about to introduce.
-func (s *Server) handleReload(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	defaultID := s.defaultAccountID()
 	cfgPath, err := core.ConfigPathForAccount(defaultID)
 	if err != nil {
@@ -641,7 +641,6 @@ func (s *Server) handleReload(w http.ResponseWriter, _ *http.Request) {
 	core.HydrateRuntimeSecrets(cfg, secrets)
 
 	s.accountMu.Lock()
-	defer s.accountMu.Unlock()
 
 	// Build the would-be-final snapshot (selected default account substituted with
 	// the proposed cfg, all other accounts as-is) and run the same validators
@@ -674,16 +673,19 @@ func (s *Server) handleReload(w http.ResponseWriter, _ *http.Request) {
 
 	if err := core.ValidateAccountChannels(snapshot); err != nil {
 		slog.Error("reload rejected", "reason", "channel_duplicate", "error", err)
+		s.accountMu.Unlock()
 		writeError(w, http.StatusConflict, "channel validation: "+err.Error())
 		return
 	}
 	if err := core.ValidateTeamSpaceAccounts(accounts); err != nil {
 		slog.Error("reload rejected", "reason", "team_space_account_with_channels", "error", err)
+		s.accountMu.Unlock()
 		writeError(w, http.StatusConflict, "team space validation: "+err.Error())
 		return
 	}
 	if err := core.ValidateTeamSpaceMemberships(accounts); err != nil {
 		slog.Error("reload rejected", "reason", "team_space_membership", "error", err)
+		s.accountMu.Unlock()
 		writeError(w, http.StatusConflict, "team-space membership validation: "+err.Error())
 		return
 	}
@@ -697,11 +699,23 @@ func (s *Server) handleReload(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("config reloaded")
 
 	result := map[string]any{"success": true}
+	var warnings []string
 	if reconcile := s.reconcileFunc(); reconcile != nil {
 		if err := reconcile(defaultID, cfg.Channels); err != nil {
 			slog.Warn("reload: channel reconcile partial failure", "error", err)
-			result["warnings"] = []string{err.Error()}
+			warnings = append(warnings, err.Error())
 		}
+	}
+	s.accountMu.Unlock()
+
+	if s.postReloadHook != nil {
+		if err := s.postReloadHook(r.Context()); err != nil {
+			slog.Warn("reload: post reload hook failed", "error", err)
+			warnings = append(warnings, err.Error())
+		}
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
 	}
 	writeJSON(w, http.StatusOK, result)
 }

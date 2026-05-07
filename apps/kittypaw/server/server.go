@@ -55,6 +55,7 @@ type Server struct {
 	// to observe the synchronous contract; production always leaves this nil
 	// and falls through to the live spawner.
 	reloadReconcile func(accountID string, cfgs []core.ChannelConfig) error
+	postReloadHook  func(context.Context) error
 }
 
 // DefaultAccountID is the legacy account ID retained for migrated installs.
@@ -143,6 +144,14 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 	}
 	s.router = s.setupRoutes()
 	return s
+}
+
+// SetPostReloadHook registers extra work that must happen synchronously after
+// /api/v1/reload swaps config and reconciles channels. The CLI server uses
+// this to refresh outbound hosted-service connectors after login updates
+// secrets on disk while the daemon is already running.
+func (s *Server) SetPostReloadHook(hook func(context.Context) error) {
+	s.postReloadHook = hook
 }
 
 func SelectDefaultAccountDeps(accounts []*AccountDeps, configuredDefault string) *AccountDeps {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/remote/chatrelay"
@@ -20,6 +21,7 @@ func chatRelayConnectorConfigs(deps []*server.AccountDeps, daemonVersion string,
 }
 
 func chatRelayConnectorRuntimeConfigs(deps []*server.AccountDeps, daemonVersion string, dispatchReady bool) []chatRelayConnectorRuntimeConfig {
+	deps = freshChatRelayAccountDeps(deps)
 	configs := make([]chatRelayConnectorRuntimeConfig, 0, len(deps))
 	groupIndex := make(map[chatRelayConnectorKey]int)
 	for _, dep := range deps {
@@ -51,6 +53,27 @@ func chatRelayConnectorRuntimeConfigs(deps []*server.AccountDeps, daemonVersion 
 		}
 	}
 	return configs
+}
+
+func freshChatRelayAccountDeps(deps []*server.AccountDeps) []*server.AccountDeps {
+	out := make([]*server.AccountDeps, 0, len(deps))
+	for _, dep := range deps {
+		if dep == nil || dep.Account == nil || dep.Account.BaseDir == "" {
+			out = append(out, dep)
+			continue
+		}
+		freshSecrets, err := core.LoadSecretsFrom(dep.Account.SecretsPath())
+		if err != nil {
+			slog.Warn("chat relay: failed to reload account secrets", "account", dep.Account.ID, "error", err)
+			out = append(out, dep)
+			continue
+		}
+		copyDep := *dep
+		copyDep.Secrets = freshSecrets
+		copyDep.APITokenMgr = core.NewAPITokenManager(dep.Account.BaseDir, freshSecrets)
+		out = append(out, &copyDep)
+	}
+	return out
 }
 
 type chatRelayConnectorKey struct {
@@ -158,19 +181,59 @@ func buildChatRelayConnectorRuntimeConfig(dep *server.AccountDeps, daemonVersion
 	}, true
 }
 
-func startChatRelayConnectors(ctx context.Context, deps []*server.AccountDeps, daemonVersion string, dispatcher chatrelay.Dispatcher) {
-	for _, runtimeCfg := range chatRelayConnectorRuntimeConfigs(deps, daemonVersion, dispatcher != nil) {
+type chatRelayConnectorManager struct {
+	parentCtx     context.Context
+	deps          []*server.AccountDeps
+	daemonVersion string
+	dispatcher    chatrelay.Dispatcher
+
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
+
+func newChatRelayConnectorManager(ctx context.Context, deps []*server.AccountDeps, daemonVersion string, dispatcher chatrelay.Dispatcher) *chatRelayConnectorManager {
+	return &chatRelayConnectorManager{
+		parentCtx:     ctx,
+		deps:          deps,
+		daemonVersion: daemonVersion,
+		dispatcher:    dispatcher,
+	}
+}
+
+func (m *chatRelayConnectorManager) Reload(_ context.Context) error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	if m.parentCtx.Err() != nil {
+		return nil
+	}
+	runtimeConfigs := chatRelayConnectorRuntimeConfigs(m.deps, m.daemonVersion, m.dispatcher != nil)
+	if len(runtimeConfigs) == 0 {
+		slog.Info("chat relay connector not configured")
+		return nil
+	}
+	connectorCtx, cancel := context.WithCancel(m.parentCtx)
+	m.cancel = cancel
+	slog.Info("chat relay connector reload", "connectors", len(runtimeConfigs))
+	for _, runtimeCfg := range runtimeConfigs {
 		connector := &chatrelay.Connector{
 			Config:            runtimeCfg.Config,
-			Dispatcher:        dispatcher,
+			Dispatcher:        m.dispatcher,
 			RefreshCredential: runtimeCfg.RefreshCredential,
 		}
-		go connector.Run(ctx, chatrelay.RunOptions{
+		go connector.Run(connectorCtx, chatrelay.RunOptions{
 			Logf: func(format string, args ...any) {
-				slog.Debug("chat relay connector", "message", formatLog(format, args...))
+				slog.Info("chat relay connector", "message", formatLog(format, args...))
 			},
 		})
 	}
+	return nil
 }
 
 func accountAPIURL(secrets *core.SecretsStore) string {

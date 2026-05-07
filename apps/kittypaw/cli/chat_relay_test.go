@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
@@ -94,6 +95,51 @@ func TestChatRelayConnectorConfigsPrefersSpaceBaseURL(t *testing.T) {
 	}
 	if got[0].RelayURL != "https://space.kittypaw.app" {
 		t.Fatalf("RelayURL = %q, want Space base URL", got[0].RelayURL)
+	}
+}
+
+func TestChatRelayConnectorConfigsReloadFreshSecretsFromDisk(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	account, err := core.InitAccount(filepath.Join(root, "accounts"), "alice", core.AccountOpts{})
+	if err != nil {
+		t.Fatalf("InitAccount: %v", err)
+	}
+	staleSecrets, err := core.LoadSecretsFrom(account.SecretsPath())
+	if err != nil {
+		t.Fatalf("load stale secrets: %v", err)
+	}
+	staleMgr := core.NewAPITokenManager("", staleSecrets)
+
+	freshSecrets, err := core.LoadSecretsFrom(account.SecretsPath())
+	if err != nil {
+		t.Fatalf("load fresh secrets: %v", err)
+	}
+	freshMgr := core.NewAPITokenManager("", freshSecrets)
+	if err := freshMgr.SaveSpaceBaseURL(core.DefaultAPIServerURL, "https://space.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := freshMgr.SaveChatRelayDeviceTokens(core.DefaultAPIServerURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_fresh",
+		AccessToken:  chatRelayTestAccessToken("fresh-token"),
+		RefreshToken: "refresh-fresh",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := chatRelayConnectorConfigs([]*server.AccountDeps{
+		{
+			Account:     account,
+			Secrets:     staleSecrets,
+			APITokenMgr: staleMgr,
+		},
+	}, "0.5.6", true)
+
+	if len(got) != 1 {
+		t.Fatalf("connector configs = %d, want fresh disk config", len(got))
+	}
+	if got[0].DeviceID != "dev_fresh" || got[0].Credential != chatRelayTestAccessToken("fresh-token") {
+		t.Fatalf("connector = %#v, want fresh disk credential", got[0])
 	}
 }
 

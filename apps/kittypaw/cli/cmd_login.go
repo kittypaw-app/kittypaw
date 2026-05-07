@@ -104,15 +104,25 @@ func maybePairChatRelayDevice(apiURL string, mgr *core.APITokenManager, accessTo
 	if mgr == nil || strings.TrimSpace(accessToken) == "" {
 		return false
 	}
-	if _, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok {
-		return false
-	}
 	relayURL, ok := mgr.LoadSpaceBaseURL(apiURL)
 	if !ok || relayURL == "" {
 		relayURL, ok = mgr.LoadChatRelayURL(apiURL)
 	}
 	if !ok || relayURL == "" {
 		return false
+	}
+	if _, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok {
+		expired, known := mgr.ChatRelayDeviceAccessTokenExpired(apiURL)
+		if !known || !expired {
+			return false
+		}
+		if _, err := mgr.RefreshChatRelayDeviceToken(mgr.ResolveAuthBaseURL(apiURL), apiURL); err == nil {
+			if out == nil {
+				out = io.Discard
+			}
+			_, _ = fmt.Fprintln(out, "Hosted chat ready.")
+			return true
+		}
 	}
 	if out == nil {
 		out = io.Discard
@@ -134,6 +144,37 @@ func maybePairChatRelayDevice(apiURL string, mgr *core.APITokenManager, accessTo
 	}
 	_, _ = fmt.Fprintln(out, "Hosted chat ready.")
 	return true
+}
+
+func maybeReloadServerAfterHostedChatUpdate(stderr io.Writer) {
+	s, err := defaultServerDial()
+	if err != nil || s == nil || !s.IsRunning() {
+		return
+	}
+	if err := s.Reload(); err != nil {
+		if stderr == nil {
+			stderr = io.Discard
+		}
+		_, _ = fmt.Fprintf(stderr, "Hosted chat reload skipped: %v\n", err)
+	}
+}
+
+func chatRelayDeviceReady(apiURL string, mgr *core.APITokenManager) bool {
+	if mgr == nil {
+		return false
+	}
+	relayURL, ok := mgr.LoadSpaceBaseURL(apiURL)
+	if !ok || relayURL == "" {
+		relayURL, ok = mgr.LoadChatRelayURL(apiURL)
+	}
+	if !ok || relayURL == "" {
+		return false
+	}
+	if _, ok := mgr.LoadChatRelayDeviceTokens(apiURL); !ok {
+		return false
+	}
+	expired, ok := mgr.ChatRelayDeviceAccessTokenExpired(apiURL)
+	return ok && !expired
 }
 
 func loginHTTP(apiURL string, mgr *core.APITokenManager) error {
@@ -196,7 +237,9 @@ func loginHTTP(apiURL string, mgr *core.APITokenManager) error {
 		if err := mgr.SaveTokens(apiURL, result.accessToken, result.refreshToken); err != nil {
 			return fmt.Errorf("save tokens: %w", err)
 		}
-		maybePairChatRelayDevice(apiURL, mgr, result.accessToken, os.Stderr)
+		if maybePairChatRelayDevice(apiURL, mgr, result.accessToken, os.Stderr) || chatRelayDeviceReady(apiURL, mgr) {
+			maybeReloadServerAfterHostedChatUpdate(os.Stderr)
+		}
 		return verifyAndPrint(apiURL, result.accessToken)
 
 	case <-time.After(5 * time.Minute):
@@ -249,7 +292,9 @@ func loginCode(apiURL string, mgr *core.APITokenManager) error {
 	if err := mgr.SaveTokens(apiURL, result.AccessToken, result.RefreshToken); err != nil {
 		return fmt.Errorf("save tokens: %w", err)
 	}
-	maybePairChatRelayDevice(apiURL, mgr, result.AccessToken, os.Stderr)
+	if maybePairChatRelayDevice(apiURL, mgr, result.AccessToken, os.Stderr) || chatRelayDeviceReady(apiURL, mgr) {
+		maybeReloadServerAfterHostedChatUpdate(os.Stderr)
+	}
 	return verifyAndPrint(apiURL, result.AccessToken)
 }
 
