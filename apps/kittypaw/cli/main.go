@@ -361,8 +361,8 @@ func runSetup(cmd *cobra.Command, flags *setupFlags) error {
 		}
 	}
 
-	if err := core.EnsureDefaultProfile(accountDir); err != nil {
-		return fmt.Errorf("ensure default profile: %w", err)
+	if err := core.EnsureDefaultStaff(accountDir); err != nil {
+		return fmt.Errorf("ensure default staff: %w", err)
 	}
 
 	// Ask a live server to reload before we display the completion box — a
@@ -1605,7 +1605,7 @@ func runConfigCheck(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("Provider:   %s\n", cfg.LLM.Provider)
 	fmt.Printf("Model:      %s\n", cfg.LLM.Model)
 	fmt.Printf("Channels:   %d\n", len(cfg.Channels))
-	fmt.Printf("Agents:     %d\n", len(cfg.Agents))
+	fmt.Printf("Runners:    %d\n", len(cfg.Runners))
 	fmt.Printf("Models:     %d\n", len(cfg.Models))
 	fmt.Printf("Autonomy:   %s\n", cfg.AutonomyLevel)
 

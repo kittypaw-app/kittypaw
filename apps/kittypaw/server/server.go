@@ -466,10 +466,10 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			// Memory
 			r.Get("/memory/search", s.handleMemorySearch)
 
-			// Profiles
-			r.Get("/profiles", s.handleProfileList)
-			r.Post("/profiles", s.handleProfileCreate)
-			r.Post("/profiles/{id}/activate", s.handleProfileActivate)
+			// Staff
+			r.Get("/staff", s.handleStaffList)
+			r.Post("/staff", s.handleStaffCreate)
+			r.Post("/staff/{id}/activate", s.handleStaffActivate)
 
 			// Workspaces
 			r.Get("/workspaces", s.handleWorkspacesList)

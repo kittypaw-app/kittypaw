@@ -80,27 +80,27 @@ func TestExecutions_WithoutSkill(t *testing.T) {
 	}
 }
 
-func TestProfileList(t *testing.T) {
+func TestStaffList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/profiles" {
-			t.Errorf("path = %q, want /api/v1/profiles", r.URL.Path)
+		if r.URL.Path != "/api/v1/staff" {
+			t.Errorf("path = %q, want /api/v1/staff", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"profiles": []any{}})
+		json.NewEncoder(w).Encode(map[string]any{"staff": []any{}})
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL, "")
-	res, err := c.ProfileList()
+	res, err := c.StaffList()
 	if err != nil {
-		t.Fatalf("ProfileList() error: %v", err)
+		t.Fatalf("StaffList() error: %v", err)
 	}
-	if res["profiles"] == nil {
-		t.Error("expected profiles key")
+	if res["staff"] == nil {
+		t.Error("expected staff key")
 	}
 }
 
-func TestProfileActivate(t *testing.T) {
+func TestStaffActivate(t *testing.T) {
 	var gotPath, gotPreset string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -118,17 +118,17 @@ func TestProfileActivate(t *testing.T) {
 
 	c := New(srv.URL, "")
 	// Without preset.
-	_, err := c.ProfileActivate("42", "")
+	_, err := c.StaffActivate("coder", "")
 	if err != nil {
-		t.Fatalf("ProfileActivate() error: %v", err)
+		t.Fatalf("StaffActivate() error: %v", err)
 	}
-	if gotPath != "/api/v1/profiles/42/activate" {
-		t.Errorf("path = %q, want /api/v1/profiles/42/activate", gotPath)
+	if gotPath != "/api/v1/staff/coder/activate" {
+		t.Errorf("path = %q, want /api/v1/staff/coder/activate", gotPath)
 	}
 	// With preset.
-	_, err = c.ProfileActivate("42", "professional")
+	_, err = c.StaffActivate("coder", "professional")
 	if err != nil {
-		t.Fatalf("ProfileActivate(preset) error: %v", err)
+		t.Fatalf("StaffActivate(preset) error: %v", err)
 	}
 	if gotPreset != "professional" {
 		t.Errorf("preset = %q, want %q", gotPreset, "professional")

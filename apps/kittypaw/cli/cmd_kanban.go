@@ -187,7 +187,7 @@ func newKanbanCreateCmd(shared *kanbanSharedFlags) *cobra.Command {
 	cmd.Flags().StringVar(&flags.board, "board", "", "board id or slug")
 	cmd.Flags().StringVar(&flags.milestone, "milestone", "", "milestone id or slug")
 	cmd.Flags().StringVar(&flags.body, "body", "", "task body")
-	cmd.Flags().StringVar(&flags.assignee, "assignee", "", "assignee profile or name")
+	cmd.Flags().StringVar(&flags.assignee, "assignee", "", "assignee staff ID or name")
 	cmd.Flags().StringVar(&flags.createdBy, "created-by", "", "task creator")
 	cmd.Flags().IntVar(&flags.priority, "priority", 0, "task priority")
 	cmd.Flags().StringVar(&flags.status, "status", "", "initial status")
@@ -258,7 +258,7 @@ func newKanbanEditCmd(shared *kanbanSharedFlags) *cobra.Command {
 	cmd.Flags().StringVar(&flags.body, "body", "", "task body")
 	cmd.Flags().StringVar(&flags.status, "status", "", "task status")
 	cmd.Flags().IntVar(&flags.priority, "priority", 0, "task priority")
-	cmd.Flags().StringVar(&flags.assignee, "assignee", "", "assignee profile or name")
+	cmd.Flags().StringVar(&flags.assignee, "assignee", "", "assignee staff ID or name")
 	cmd.Flags().StringVar(&flags.milestone, "milestone", "", "milestone id or slug")
 	cmd.Flags().BoolVar(&flags.clearMilestone, "clear-milestone", false, "clear task milestone")
 	return cmd
@@ -953,7 +953,7 @@ func parseKanbanDispatchOptions(flags *kanbanDispatchFlags) (kanbanDispatchOptio
 func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store.KanbanProject, command []string, flags *kanbanDispatchFlags, opts kanbanDispatchOptions, workDir, provider string) (int, error) {
 	processed := 0
 	if opts.stale {
-		cutoff := time.Now().UTC().Add(-opts.staleAfter).Format("2006-01-02T15:04:05Z")
+		cutoff := kanbanStaleCutoff(opts.staleAfter)
 		staleRuns, err := st.ListStaleKanbanRuns(store.KanbanStaleRunFilter{
 			ProjectID:   project.ID,
 			StaleBefore: cutoff,
@@ -1009,6 +1009,14 @@ func runKanbanDispatchCycle(ctx context.Context, st *store.Store, project *store
 		processed++
 	}
 	return processed, nil
+}
+
+func kanbanStaleCutoff(staleAfter time.Duration) string {
+	cutoff := time.Now().UTC().Add(-staleAfter)
+	if staleAfter < time.Second {
+		cutoff = cutoff.Add(time.Second)
+	}
+	return cutoff.Format("2006-01-02T15:04:05Z")
 }
 
 func claimAndExecuteKanbanTask(ctx context.Context, st *store.Store, project *store.KanbanProject, task store.KanbanTask, command []string, flags *kanbanDispatchFlags, workDir, provider string) error {

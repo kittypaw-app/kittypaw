@@ -41,7 +41,7 @@ func TestExecuteKanbanCreateShowCommentAndLink(t *testing.T) {
 		t.Fatalf("shown task = %+v", shown)
 	}
 
-	commentRes := resolveKanbanTool(t, sess, "comment", taskID, map[string]any{"author": "agent", "body": "note"})
+	commentRes := resolveKanbanTool(t, sess, "comment", taskID, map[string]any{"author": "runner", "body": "note"})
 	comment := commentRes["comment"].(map[string]any)
 	if comment["task_id"] != taskID || comment["body"] != "note" {
 		t.Fatalf("comment = %+v", comment)
@@ -84,16 +84,16 @@ func TestExecuteKanbanRunLifecycleTools(t *testing.T) {
 		t.Fatalf("CreateKanbanTask: %v", err)
 	}
 
-	claimRes := resolveKanbanTool(t, sess, "claim", task.ID, map[string]any{"actor": "agent"})
+	claimRes := resolveKanbanTool(t, sess, "claim", task.ID, map[string]any{"actor": "runner"})
 	run := claimRes["run"].(map[string]any)
-	if run["task_id"] != task.ID || run["actor"] != "agent" {
+	if run["task_id"] != task.ID || run["actor"] != "runner" {
 		t.Fatalf("claim run = %+v", run)
 	}
-	heartbeatRes := resolveKanbanTool(t, sess, "heartbeat", task.ID, map[string]any{"actor": "agent"})
+	heartbeatRes := resolveKanbanTool(t, sess, "heartbeat", task.ID, map[string]any{"actor": "runner"})
 	if heartbeatRes["run"].(map[string]any)["task_id"] != task.ID {
 		t.Fatalf("heartbeat = %+v", heartbeatRes)
 	}
-	completeRes := resolveKanbanTool(t, sess, "complete", task.ID, map[string]any{"actor": "agent", "summary": "done", "metadata": map[string]any{"source": "test"}})
+	completeRes := resolveKanbanTool(t, sess, "complete", task.ID, map[string]any{"actor": "runner", "summary": "done", "metadata": map[string]any{"source": "test"}})
 	if completeRes["success"] != true {
 		t.Fatalf("complete = %+v", completeRes)
 	}
@@ -109,8 +109,8 @@ func TestExecuteKanbanRunLifecycleTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateKanbanTask blocked: %v", err)
 	}
-	resolveKanbanTool(t, sess, "claim", blockedTask.ID, map[string]any{"actor": "agent"})
-	blockRes := resolveKanbanTool(t, sess, "block", blockedTask.ID, map[string]any{"actor": "agent", "reason": "waiting"})
+	resolveKanbanTool(t, sess, "claim", blockedTask.ID, map[string]any{"actor": "runner"})
+	blockRes := resolveKanbanTool(t, sess, "block", blockedTask.ID, map[string]any{"actor": "runner", "reason": "waiting"})
 	if blockRes["success"] != true {
 		t.Fatalf("block = %+v", blockRes)
 	}
