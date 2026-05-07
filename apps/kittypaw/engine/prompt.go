@@ -252,6 +252,38 @@ func channelHint(channelName string) string {
 	}
 }
 
+func buildChannelDeliverySection(config *core.Config) string {
+	if config == nil || len(config.Channels) == 0 {
+		return ""
+	}
+
+	seen := map[core.ChannelType]bool{}
+	var lines []string
+	lines = append(lines, "## Configured channel delivery")
+	lines = append(lines, "These are configured local channels and their delivery semantics. Use this to distinguish connection status from proactive sending capability.")
+	for _, ch := range config.Channels {
+		if seen[ch.ChannelType] {
+			continue
+		}
+		seen[ch.ChannelType] = true
+		switch ch.ChannelType {
+		case core.ChannelTelegram:
+			lines = append(lines, "- telegram: push-capable. Telegram has a bot token plus chat_id, so Telegram.send/Telegram.sendMessage can send scheduled or direct outbound messages.")
+		case core.ChannelKakaoTalk:
+			lines = append(lines, "- kakao_talk: reply-only. The local channel receives Kakao messages and can reply to the current Kakao callback action_id. That action_id is not a stable chat_id for later sends, so scheduled KakaoTalk delivery and proactive outbound KakaoTalk messages are not available through this relay. Do not say KakaoTalk is disconnected or missing when it is configured; say it is connected for inbound/current replies but not for scheduled/direct outbound delivery.")
+		case core.ChannelSlack:
+			lines = append(lines, "- slack: configured channel. Use Slack-specific output only when supported by the available tools.")
+		case core.ChannelDiscord:
+			lines = append(lines, "- discord: configured channel. Use Discord-specific output only when supported by the available tools.")
+		case core.ChannelWeb:
+			lines = append(lines, "- web_chat: session-only. It can answer the current web session but is not a durable background delivery target.")
+		default:
+			lines = append(lines, fmt.Sprintf("- %s: configured channel. Do not assume it supports scheduled outbound delivery unless a matching send tool exists.", ch.ChannelType))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // FormatEvent extracts the user-facing text from an event.
 func FormatEvent(event *core.Event) string {
 	var payload core.ChatPayload
@@ -314,7 +346,7 @@ func FormatExecResult(result *core.ExecutionResult) string {
 }
 
 // BuildPrompt constructs the LLM message chain from runner state and config.
-// Assembly order: SOUL.md → Identity → Execution → Quality → Channel → Skills → SkillCreation → Memory → MCP → Nick/UserMD → MemoryContext → Observations
+// Assembly order: SOUL.md → Identity → Execution → Quality → Channel → Delivery → Skills → SkillCreation → Memory → MCP → Nick/UserMD → MemoryContext → Observations
 func BuildPrompt(
 	state *core.ConversationState,
 	eventText string,
@@ -354,24 +386,30 @@ func BuildPrompt(
 		sb.WriteString("\n\n")
 	}
 
-	// 6. Available skills (dynamic)
+	// 6. Configured channel delivery semantics (dynamic)
+	if delivery := buildChannelDeliverySection(config); delivery != "" {
+		sb.WriteString(delivery)
+		sb.WriteString("\n\n")
+	}
+
+	// 7. Available skills (dynamic)
 	sb.WriteString(buildSkillsSection(baseDir))
 	sb.WriteString("\n\n")
 
-	// 7. Skill creation guide
+	// 8. Skill creation guide
 	sb.WriteString(SkillCreationBlock)
 	sb.WriteString("\n\n")
 
-	// 8. Memory guide
+	// 9. Memory guide
 	sb.WriteString(MemoryBlock)
 
-	// 9. MCP tools (dynamic)
+	// 10. MCP tools (dynamic)
 	if mcpToolsSection != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(mcpToolsSection)
 	}
 
-	// 10. Staff nick + user markdown
+	// 11. Staff nick + user markdown
 	if staff != nil {
 		if staff.Nick != "" {
 			sb.WriteString("\n\nYour name/nickname is: ")
@@ -383,13 +421,13 @@ func BuildPrompt(
 		}
 	}
 
-	// 11. Memory context
+	// 12. Memory context
 	if memoryContext != "" {
 		sb.WriteString("\n\n## User Memory\n")
 		sb.WriteString(memoryContext)
 	}
 
-	// 12. Observations (volatile — replaced each observe round, not accumulated)
+	// 13. Observations (volatile — replaced each observe round, not accumulated)
 	if len(observations) > 0 {
 		sb.WriteString("\n\n## Current Observations\n")
 		sb.WriteString("You previously called Runner.observe(). Analyze these results and write code to produce your response.\n")

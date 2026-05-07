@@ -67,6 +67,37 @@ func TestBuildSkillsSection_FileWorkspaceGuidance(t *testing.T) {
 	}
 }
 
+func TestChannelDeliverySection_KakaoTalkReplyOnly(t *testing.T) {
+	section := buildChannelDeliverySection(&core.Config{
+		Channels: []core.ChannelConfig{
+			{ChannelType: core.ChannelTelegram},
+			{ChannelType: core.ChannelKakaoTalk},
+		},
+	})
+	for _, phrase := range []string{
+		"## Configured channel delivery",
+		"telegram",
+		"kakao_talk",
+		"reply-only",
+		"not a stable chat_id",
+		"Do not say KakaoTalk is disconnected",
+		"scheduled KakaoTalk delivery",
+	} {
+		if !strings.Contains(section, phrase) {
+			t.Fatalf("channel delivery section missing %q:\n%s", phrase, section)
+		}
+	}
+}
+
+func TestChannelDeliverySection_NoChannels(t *testing.T) {
+	if got := buildChannelDeliverySection(&core.Config{}); got != "" {
+		t.Fatalf("expected empty section without configured channels, got:\n%s", got)
+	}
+	if got := buildChannelDeliverySection(nil); got != "" {
+		t.Fatalf("expected empty section without config, got:\n%s", got)
+	}
+}
+
 func TestParseAtMention(t *testing.T) {
 	tests := []struct {
 		text      string
@@ -449,6 +480,28 @@ func TestBuildPrompt_ChannelHintInjected(t *testing.T) {
 	sys := msgs[0].Content
 	if !strings.Contains(sys, "## Output format (Telegram)") {
 		t.Error("telegram channel hint not injected into prompt")
+	}
+}
+
+func TestBuildPrompt_IncludesConfiguredChannelDelivery(t *testing.T) {
+	state := &core.ConversationState{ConversationID: "test"}
+	cfg := &core.Config{
+		Channels: []core.ChannelConfig{
+			{ChannelType: core.ChannelTelegram},
+			{ChannelType: core.ChannelKakaoTalk},
+		},
+	}
+	msgs := BuildPrompt(state, "10:30에 카톡으로 보내줘", CompactionConfig{RecentWindow: 5}, cfg, "telegram", nil, "", "", nil, "")
+	sys := msgs[0].Content
+	for _, phrase := range []string{
+		"## Configured channel delivery",
+		"kakao_talk",
+		"reply-only",
+		"scheduled KakaoTalk delivery",
+	} {
+		if !strings.Contains(sys, phrase) {
+			t.Fatalf("assembled prompt missing channel delivery phrase %q", phrase)
+		}
 	}
 }
 
