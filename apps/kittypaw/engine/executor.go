@@ -26,18 +26,18 @@ import (
 
 type contextKey string
 
-const ctxKeyAgentID contextKey = "agentID"
+const ctxKeyConversationID contextKey = "conversationID"
 const ctxKeyEvent contextKey = "event"
 const ctxKeyPackageParams contextKey = "packageParams"
 
-// ContextWithAgentID stores the agent ID in context for use by skill handlers.
-func ContextWithAgentID(ctx context.Context, agentID string) context.Context {
-	return context.WithValue(ctx, ctxKeyAgentID, agentID)
+// ContextWithConversationID stores the conversation ID in context for use by skill handlers.
+func ContextWithConversationID(ctx context.Context, conversationID string) context.Context {
+	return context.WithValue(ctx, ctxKeyConversationID, conversationID)
 }
 
-// AgentIDFromContext retrieves the agent ID from context.
-func AgentIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(ctxKeyAgentID).(string); ok {
+// ConversationIDFromContext retrieves the conversation ID from context.
+func ConversationIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyConversationID).(string); ok {
 		return v
 	}
 	return ""
@@ -160,8 +160,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeX(ctx, call, s)
 	case "Skill":
 		return executeSkillMgmt(ctx, call, s)
-	case "Profile":
-		return executeProfile(ctx, call, s)
+	case "Staff":
+		return executeStaff(ctx, call, s)
 	case "Tts":
 		return executeTTS(ctx, call, s)
 	case "Image":
@@ -175,8 +175,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 			return jsonResult(map[string]any{"error": "browser not configured"})
 		}
 		return s.BrowserController.Execute(ctx, call)
-	case "Agent":
-		return executeDelegate(ctx, call, s)
+	case "Runner":
+		return executeRunner(ctx, call, s)
 	case "Share":
 		return executeShare(ctx, call, s)
 	case "Fanout":
@@ -2127,46 +2127,46 @@ func unwrapHTTPBody(jsonStr string) string {
 	return wrapper.Body
 }
 
-// --- Profile Management ---
+// --- Staff Management ---
 
-func executeProfile(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	switch call.Method {
 	case "list":
-		profiles, err := s.Store.ListActiveProfiles()
+		staff, err := s.Store.ListActiveStaff()
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"profiles": profiles})
+		return jsonResult(map[string]any{"staff": staff})
 
 	case "switch":
 		if len(call.Args) == 0 {
-			return jsonResult(map[string]any{"error": "profile id required"})
+			return jsonResult(map[string]any{"error": "staff id required"})
 		}
 		var id string
 		if err := json.Unmarshal(call.Args[0], &id); err != nil {
-			return jsonResult(map[string]any{"error": "invalid profile id argument"})
+			return jsonResult(map[string]any{"error": "invalid staff id argument"})
 		}
-		if err := core.ValidateProfileID(id); err != nil {
+		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		// Verify profile exists on disk.
+		// Verify staff exists on disk.
 		base, err := core.ResolveBaseDir(s.BaseDir)
 		if err != nil {
 			return jsonResult(map[string]any{"error": "config dir: " + err.Error()})
 		}
-		if _, err := core.LoadProfile(base, id); err != nil {
-			return jsonResult(map[string]any{"error": fmt.Sprintf("profile %q not found", id)})
+		if _, err := core.LoadStaff(base, id); err != nil {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q not found", id)})
 		}
-		// Store active_profile:{agentID} so next message uses this profile.
-		agentID := AgentIDFromContext(ctx)
-		if agentID == "" {
-			agentID = "default"
+		// Store active_staff:{conversationID} so next message uses this staff member.
+		conversationID := ConversationIDFromContext(ctx)
+		if conversationID == "" {
+			conversationID = "default"
 		}
-		key := fmt.Sprintf("active_profile:%s", agentID)
-		if err := s.Store.SetUserContext(key, id, "agent"); err != nil {
+		key := fmt.Sprintf("active_staff:%s", conversationID)
+		if err := s.Store.SetUserContext(key, id, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"success": true, "profile": id})
+		return jsonResult(map[string]any{"success": true, "staff": id})
 
 	case "create":
 		if len(call.Args) < 2 {
@@ -2179,16 +2179,16 @@ func executeProfile(ctx context.Context, call core.SkillCall, s *Session) (strin
 		if err := json.Unmarshal(call.Args[1], &desc); err != nil {
 			return jsonResult(map[string]any{"error": "invalid description argument"})
 		}
-		if err := core.ValidateProfileID(id); err != nil {
+		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		if err := s.Store.UpsertProfileMeta(id, desc, "[]", "agent"); err != nil {
+		if err := s.Store.UpsertStaffMeta(id, desc, "[]", "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"success": true})
 
 	default:
-		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Profile method: %s", call.Method)})
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Staff method: %s", call.Method)})
 	}
 }
 
@@ -2265,19 +2265,19 @@ func executeMCP(ctx context.Context, call core.SkillCall, s *Session) (string, e
 	}
 }
 
-func executeDelegate(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeRunner(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	switch call.Method {
 	case "delegate":
-		// Agent.delegate(task, profileId, background)
+		// Runner.delegate(staffId, task, background)
 		if len(call.Args) < 2 {
-			return jsonResult(map[string]any{"error": "Agent.delegate requires (task, profileId)"})
+			return jsonResult(map[string]any{"error": "Runner.delegate requires (staffId, task)"})
 		}
-		var task, profileID string
-		if err := json.Unmarshal(call.Args[0], &task); err != nil {
+		var staffID, task string
+		if err := json.Unmarshal(call.Args[0], &staffID); err != nil {
+			return jsonResult(map[string]any{"error": "invalid staffId argument"})
+		}
+		if err := json.Unmarshal(call.Args[1], &task); err != nil {
 			return jsonResult(map[string]any{"error": "invalid task argument"})
-		}
-		if err := json.Unmarshal(call.Args[1], &profileID); err != nil {
-			return jsonResult(map[string]any{"error": "invalid profileId argument"})
 		}
 		var background bool
 		if len(call.Args) > 2 {
@@ -2292,7 +2292,7 @@ func executeDelegate(ctx context.Context, call core.SkillCall, s *Session) (stri
 		}
 
 		// Execute delegation.
-		spec := PMTaskSpec{ProfileID: profileID, Task: task, Background: background}
+		spec := PMTaskSpec{StaffID: staffID, Task: task, Background: background}
 		maxDepth := 3
 		if s.Config.Orchestration.MaxDepth > 0 {
 			maxDepth = int(s.Config.Orchestration.MaxDepth)
@@ -2306,7 +2306,7 @@ func executeDelegate(ctx context.Context, call core.SkillCall, s *Session) (stri
 		})
 
 	default:
-		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Agent method: %s", call.Method)})
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Runner method: %s", call.Method)})
 	}
 }
 

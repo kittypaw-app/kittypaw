@@ -22,22 +22,22 @@ func TestExecuteKanbanCreateShowCommentAndLink(t *testing.T) {
 
 	createRes := resolveKanbanTool(t, sess, "create", map[string]any{
 		"project":    "kitty",
-		"title":      "Agent task",
+		"title":      "Runner task",
 		"body":       "from tool",
 		"status":     store.KanbanStatusReady,
 		"priority":   7,
 		"assignee":   "coder",
-		"created_by": "agent",
+		"created_by": "runner",
 	})
 	task := createRes["task"].(map[string]any)
 	taskID := task["id"].(string)
-	if task["project_id"] != project.ID || task["title"] != "Agent task" || task["status"] != store.KanbanStatusReady {
+	if task["project_id"] != project.ID || task["title"] != "Runner task" || task["status"] != store.KanbanStatusReady {
 		t.Fatalf("created task = %+v", task)
 	}
 
 	showRes := resolveKanbanTool(t, sess, "show", taskID)
 	shown := showRes["task"].(map[string]any)
-	if shown["id"] != taskID || shown["title"] != "Agent task" {
+	if shown["id"] != taskID || shown["title"] != "Runner task" {
 		t.Fatalf("shown task = %+v", shown)
 	}
 

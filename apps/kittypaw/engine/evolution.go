@@ -24,7 +24,7 @@ func TriggerEvolution(
 	s *Session,
 	config *core.EvolutionConfig,
 ) error {
-	if err := core.ValidateProfileID(profileID); err != nil {
+	if err := core.ValidateStaffID(profileID); err != nil {
 		return err
 	}
 	if !config.Enabled {

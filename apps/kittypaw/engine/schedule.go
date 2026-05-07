@@ -145,7 +145,7 @@ func (s *Scheduler) runReflectionTick(ctx context.Context) {
 
 	// After reflection, check evolution trigger conditions.
 	if s.session.Config.Evolution.Enabled {
-		profiles, err := s.session.Store.ListActiveProfiles()
+		profiles, err := s.session.Store.ListActiveStaff()
 		if err == nil {
 			for _, p := range profiles {
 				_ = TriggerEvolution(ctx, p.ID, s.session, &s.session.Config.Evolution)

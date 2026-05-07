@@ -308,12 +308,12 @@ func FormatExecResult(result *core.ExecutionResult) string {
 // BuildPrompt constructs the LLM message chain from agent state and config.
 // Assembly order: SOUL.md → Identity → Execution → Quality → Channel → Skills → SkillCreation → Memory → MCP → Nick/UserMD → MemoryContext → Observations
 func BuildPrompt(
-	state *core.AgentState,
+	state *core.ConversationState,
 	eventText string,
 	compaction CompactionConfig,
 	config *core.Config,
 	channelName string,
-	profile *core.Profile,
+	staff *core.Staff,
 	memoryContext string,
 	mcpToolsSection string,
 	observations []core.Observation,
@@ -322,9 +322,9 @@ func BuildPrompt(
 	var sb strings.Builder
 
 	// 1. SOUL.md first — identity takes highest priority
-	if profile != nil && profile.Soul != "" {
+	if staff != nil && staff.Soul != "" {
 		sb.WriteString("## Your Identity (SOUL.md)\n")
-		sb.WriteString(profile.Soul)
+		sb.WriteString(staff.Soul)
 		sb.WriteString("\n\n")
 	}
 
@@ -363,15 +363,15 @@ func BuildPrompt(
 		sb.WriteString(mcpToolsSection)
 	}
 
-	// 10. Profile nick + user markdown
-	if profile != nil {
-		if profile.Nick != "" {
+	// 10. Staff nick + user markdown
+	if staff != nil {
+		if staff.Nick != "" {
 			sb.WriteString("\n\nYour name/nickname is: ")
-			sb.WriteString(profile.Nick)
+			sb.WriteString(staff.Nick)
 		}
-		if profile.UserMD != "" {
+		if staff.UserMD != "" {
 			sb.WriteString("\n\n## User Profile (USER.md)\n")
-			sb.WriteString(profile.UserMD)
+			sb.WriteString(staff.UserMD)
 		}
 	}
 
@@ -384,8 +384,8 @@ func BuildPrompt(
 	// 12. Observations (volatile — replaced each observe round, not accumulated)
 	if len(observations) > 0 {
 		sb.WriteString("\n\n## Current Observations\n")
-		sb.WriteString("You previously called Agent.observe(). Analyze these results and write code to produce your response.\n")
-		sb.WriteString("Do NOT call Agent.observe() again unless you need additional data.\n\n")
+		sb.WriteString("You previously called Runner.observe(). Analyze these results and write code to produce your response.\n")
+		sb.WriteString("Do NOT call Runner.observe() again unless you need additional data.\n\n")
 		for _, obs := range observations {
 			if obs.Label != "" {
 				sb.WriteString("### ")
@@ -577,8 +577,8 @@ func sanitizeMCPField(s string, maxLen int) string {
 	return s
 }
 
-// ParseAtMention extracts @profile_id from the start of user text.
-// Returns (profileID, remainingText, matched).
+// ParseAtMention extracts @staff_id from the start of user text.
+// Returns (staffID, remainingText, matched).
 func ParseAtMention(text string) (string, string, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "@") {
@@ -589,7 +589,7 @@ func ParseAtMention(text string) (string, string, bool) {
 		return "", text, false
 	}
 
-	// Find end of profile ID (first whitespace)
+	// Find end of staff ID (first whitespace)
 	idEnd := strings.IndexFunc(rest, func(r rune) bool {
 		return r == ' ' || r == '\t' || r == '\n'
 	})

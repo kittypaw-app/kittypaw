@@ -37,11 +37,11 @@ func tryHandleCommand(ctx context.Context, text string, s *Session) (string, boo
 			return handleTeach(ctx, strings.Join(parts[1:], " "), s), true
 		}
 		return "사용법: /teach <설명>", true
-	case "/persona":
+	case "/staff":
 		if len(parts) > 1 {
-			return handlePersona(parts[1], s), true
+			return handleStaff(parts[1], s), true
 		}
-		return "사용법: /persona <profile-id>", true
+		return "사용법: /staff <staff-id>", true
 	case "/model":
 		return handleModel(parts[1:], s), true
 	default:
@@ -56,7 +56,7 @@ func handleHelp() string {
 /skills — 스킬 목록
 /run <name> — 스킬 실행
 /teach <설명> — 새 스킬 학습
-/persona <profile-id> — 기본 대화상대 변경
+/staff <staff-id> — 기본 staff 변경
 /model — 현재 LLM 정보 표시
 /model <id> — 채팅 중에 모델 변경 (재시작 시 기본값 복귀)`
 }
@@ -285,32 +285,32 @@ func formatModelInfo(current string, models []core.ModelConfig, s *Session) stri
 	return sb.String()
 }
 
-func handlePersona(id string, s *Session) string {
+func handleStaff(id string, s *Session) string {
 	if s == nil || s.Store == nil {
-		return "persona 변경을 위한 저장소가 준비되지 않았습니다."
+		return "staff 변경을 위한 저장소가 준비되지 않았습니다."
 	}
-	if err := core.ValidateProfileID(id); err != nil {
-		return fmt.Sprintf("profile id가 올바르지 않습니다: %s", err)
+	if err := core.ValidateStaffID(id); err != nil {
+		return fmt.Sprintf("staff id가 올바르지 않습니다: %s", err)
 	}
-	meta, ok, err := s.Store.GetProfileMeta(id)
+	meta, ok, err := s.Store.GetStaffMeta(id)
 	if err != nil {
-		return fmt.Sprintf("profile 조회 실패: %s", err)
+		return fmt.Sprintf("staff 조회 실패: %s", err)
 	}
 	if ok && !meta.Active {
-		return fmt.Sprintf("profile %q는 비활성화되어 있습니다.", id)
+		return fmt.Sprintf("staff %q는 비활성화되어 있습니다.", id)
 	}
 	if !ok {
 		base, err := core.ResolveBaseDir(s.BaseDir)
 		if err != nil {
-			return fmt.Sprintf("profile 조회 실패: %s", err)
+			return fmt.Sprintf("staff 조회 실패: %s", err)
 		}
-		if _, err := core.LoadProfile(base, id); err != nil {
-			return fmt.Sprintf("profile %q를 찾지 못했습니다.", id)
+		if _, err := core.LoadStaff(base, id); err != nil {
+			return fmt.Sprintf("staff %q를 찾지 못했습니다.", id)
 		}
 	}
-	key := fmt.Sprintf("active_profile:%s", conversationKey(s))
+	key := fmt.Sprintf("active_staff:%s", conversationKey(s))
 	if err := s.Store.SetUserContext(key, id, "chat_command"); err != nil {
-		return fmt.Sprintf("persona 변경 실패: %s", err)
+		return fmt.Sprintf("staff 변경 실패: %s", err)
 	}
-	return fmt.Sprintf("기본 대화상대를 %q로 바꿨습니다.", id)
+	return fmt.Sprintf("기본 staff를 %q로 변경했습니다.", id)
 }

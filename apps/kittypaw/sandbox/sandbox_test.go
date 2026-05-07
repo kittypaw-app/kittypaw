@@ -266,11 +266,11 @@ func TestResolverErrorUncaughtFails(t *testing.T) {
 	}
 }
 
-func TestAgentObserve(t *testing.T) {
+func TestRunnerObserve(t *testing.T) {
 	sb := New(core.SandboxConfig{TimeoutSecs: 5})
 	code := `
 		var data = "search results here";
-		Agent.observe({data: data, label: "search"});
+		Runner.observe({data: data, label: "search"});
 		return "should not reach";
 	`
 	result, err := sb.ExecuteWithResolver(context.Background(), code, nil, nil)
@@ -292,14 +292,14 @@ func TestAgentObserve(t *testing.T) {
 	}
 	// Output should contain any console.log before observe, not "should not reach"
 	if strings.Contains(result.Output, "should not reach") {
-		t.Error("code after Agent.observe should not execute")
+		t.Error("code after Runner.observe should not execute")
 	}
 }
 
-func TestAgentObserveTruncation(t *testing.T) {
+func TestRunnerObserveTruncation(t *testing.T) {
 	sb := New(core.SandboxConfig{TimeoutSecs: 5})
 	bigData := strings.Repeat("x", 6000)
-	code := fmt.Sprintf(`Agent.observe({data: "%s", label: "big"});`, bigData)
+	code := fmt.Sprintf(`Runner.observe({data: "%s", label: "big"});`, bigData)
 	result, err := sb.ExecuteWithResolver(context.Background(), code, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -312,9 +312,9 @@ func TestAgentObserveTruncation(t *testing.T) {
 	}
 }
 
-func TestAgentObserveStringArg(t *testing.T) {
+func TestRunnerObserveStringArg(t *testing.T) {
 	sb := New(core.SandboxConfig{TimeoutSecs: 5})
-	code := `Agent.observe("plain string");`
+	code := `Runner.observe("plain string");`
 	result, err := sb.ExecuteWithResolver(context.Background(), code, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -328,7 +328,7 @@ func TestAgentObserveStringArg(t *testing.T) {
 }
 
 func TestNoObserve_ExistingBehaviorUnchanged(t *testing.T) {
-	// AC #10: When Agent.observe is not called, behavior is identical to before.
+	// AC #10: When Runner.observe is not called, behavior is identical to before.
 	sb := New(core.SandboxConfig{TimeoutSecs: 5})
 	code := `return "hello";`
 	result, err := sb.ExecuteWithResolver(context.Background(), code, nil, nil)
@@ -346,6 +346,17 @@ func TestNoObserve_ExistingBehaviorUnchanged(t *testing.T) {
 	}
 	if result.Output != "hello" {
 		t.Errorf("output = %q, want %q", result.Output, "hello")
+	}
+}
+
+func TestAgentGlobalRemoved(t *testing.T) {
+	sb := New(core.SandboxConfig{TimeoutSecs: 5})
+	result, err := sb.ExecuteWithResolver(context.Background(), `return typeof Agent;`, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Output != "undefined" {
+		t.Fatalf("typeof Agent = %q, want undefined", result.Output)
 	}
 }
 
