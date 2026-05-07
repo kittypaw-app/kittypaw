@@ -99,6 +99,16 @@ var SkillRegistry = []SkillMeta{
 		{Name: "update", Signature: "Todo.update(id, text)"},
 		{Name: "delete", Signature: "Todo.delete(id)"},
 	}},
+	{Name: "Kanban", Methods: []SkillMethodMeta{
+		{Name: "show", Signature: "Kanban.show(taskId) — returns {task, comments, runs, events}"},
+		{Name: "create", Signature: "Kanban.create({project, title, body?, status?, priority?, assignee?, milestone?, created_by?}) — creates a task and returns {task}"},
+		{Name: "claim", Signature: "Kanban.claim(taskId, options?) — starts a Run; options: {actor, work_dir}. Returns {run}"},
+		{Name: "complete", Signature: "Kanban.complete(taskId, options?) — completes a running task; options: {actor, summary, metadata}. Returns {success}"},
+		{Name: "block", Signature: "Kanban.block(taskId, reasonOrOptions) — blocks a task; options: {actor, reason}. Returns {success}"},
+		{Name: "comment", Signature: "Kanban.comment(taskId, bodyOrOptions) — adds a comment; options: {author, body}. Returns {comment}"},
+		{Name: "link", Signature: "Kanban.link(parentTaskId, childTaskId) — marks parent as blocking child. Returns {success}"},
+		{Name: "heartbeat", Signature: "Kanban.heartbeat(taskId, options?) — refreshes a running Run heartbeat. Returns {run}"},
+	}},
 	{Name: "Env", Methods: []SkillMethodMeta{
 		{Name: "get", Signature: "Env.get(name)"},
 	}},

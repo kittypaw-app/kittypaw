@@ -71,6 +71,31 @@ func TestExecuteSkillCall(t *testing.T) {
 	}
 }
 
+func TestExecuteKanbanSkillCall(t *testing.T) {
+	sb := New(core.SandboxConfig{TimeoutSecs: 5})
+	code := `
+		Kanban.show("tsk_123");
+		Kanban.complete("tsk_123", {summary: "done"});
+		return "ok";
+	`
+	result, err := sb.Execute(context.Background(), code, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if len(result.SkillCalls) != 2 {
+		t.Fatalf("expected 2 skill calls, got %d", len(result.SkillCalls))
+	}
+	if result.SkillCalls[0].SkillName != "Kanban" || result.SkillCalls[0].Method != "show" {
+		t.Fatalf("call 0 = %+v", result.SkillCalls[0])
+	}
+	if result.SkillCalls[1].SkillName != "Kanban" || result.SkillCalls[1].Method != "complete" {
+		t.Fatalf("call 1 = %+v", result.SkillCalls[1])
+	}
+}
+
 func TestExecuteWithContext(t *testing.T) {
 
 	sb := New(core.SandboxConfig{TimeoutSecs: 5})
