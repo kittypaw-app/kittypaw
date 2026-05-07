@@ -290,6 +290,47 @@ func TestHandlerXLoginRequiresPreauthSession(t *testing.T) {
 	}
 }
 
+func TestHandlerXCallbackStoresServerTokenAndReturnsBrokerMarker(t *testing.T) {
+	h, states, _, _ := testHandler(t)
+	tokenStore := NewMemoryTokenStore(time.Now())
+	h.TokenStore = tokenStore
+	state, err := states.CreateWithMeta("verifier-1", map[string]string{"mode": "code", "provider": XProviderID, "user_id": "user-1"})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+
+	callback := httptest.NewRecorder()
+	h.HandleXCallback()(callback, httptest.NewRequest(http.MethodGet, "/connect/x/callback?code=x-code&state="+url.QueryEscape(state), nil))
+	if callback.Code != http.StatusOK {
+		t.Fatalf("callback status = %d; body=%s", callback.Code, callback.Body.String())
+	}
+
+	stored, err := tokenStore.LoadProviderToken(context.Background(), "user-1", XProviderID)
+	if err != nil {
+		t.Fatalf("LoadProviderToken: %v", err)
+	}
+	if stored.AccessToken != "x-access" || stored.RefreshToken != "x-refresh" || stored.Username != "jaypark" {
+		t.Fatalf("stored token = %#v", stored)
+	}
+
+	displayCode := extractDisplayCode(t, callback.Body.String())
+	exchange := httptest.NewRecorder()
+	h.HandleCLIExchange()(exchange, httptest.NewRequest(http.MethodPost, "/connect/cli/exchange", strings.NewReader(fmt.Sprintf(`{"code":%q}`, displayCode))))
+	if exchange.Code != http.StatusOK {
+		t.Fatalf("exchange status = %d; body=%s", exchange.Code, exchange.Body.String())
+	}
+	var tokens TokenSet
+	if err := json.NewDecoder(exchange.Body).Decode(&tokens); err != nil {
+		t.Fatalf("decode exchange: %v", err)
+	}
+	if tokens.Provider != XProviderID || tokens.TokenType != "broker" || tokens.Username != "jaypark" {
+		t.Fatalf("tokens = %#v, want x broker marker", tokens)
+	}
+	if tokens.AccessToken != "" || tokens.RefreshToken != "" {
+		t.Fatalf("exchange leaked X token: %#v", tokens)
+	}
+}
+
 func TestHandlerXLoginCallbackAndRefresh(t *testing.T) {
 	h, states, _, fakeOAuth := testHandler(t)
 	h.PreauthStore = NewPreauthStore(PreauthStoreOptions{})

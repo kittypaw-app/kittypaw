@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kittypaw-app/kittyportal/internal/auth"
 )
@@ -22,6 +23,7 @@ type Handler struct {
 	StateStore   *auth.StateStore
 	CodeStore    *CodeStore
 	PreauthStore *PreauthStore
+	TokenStore   BrokerTokenStore
 	Entitlements EntitlementChecker
 }
 
@@ -39,7 +41,7 @@ func (h *Handler) HandleGmailLogin() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		h.startOAuthLogin(w, r, GmailProviderID, mode, port, h.Gmail.AuthURL)
+		h.startOAuthLogin(w, r, GmailProviderID, mode, port, "", h.Gmail.AuthURL)
 	}
 }
 
@@ -63,7 +65,7 @@ func (h *Handler) HandleXLogin() http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		h.startOAuthLogin(w, r, XProviderID, session.Mode, session.Port, h.X.AuthURL)
+		h.startOAuthLogin(w, r, XProviderID, session.Mode, session.Port, session.UserID, h.X.AuthURL)
 	}
 }
 
@@ -147,10 +149,13 @@ func normalizeModePort(w http.ResponseWriter, mode, port string) (string, bool) 
 	return strconv.Itoa(portNum), true
 }
 
-func (h *Handler) startOAuthLogin(w http.ResponseWriter, r *http.Request, provider, mode, port string, authURL func(state, verifier string) string) {
+func (h *Handler) startOAuthLogin(w http.ResponseWriter, r *http.Request, provider, mode, port, userID string, authURL func(state, verifier string) string) {
 	meta := map[string]string{"mode": mode, "provider": provider}
 	if mode == "http" {
 		meta["port"] = port
+	}
+	if userID != "" {
+		meta["user_id"] = userID
 	}
 
 	verifier, err := auth.GenerateVerifier()
@@ -198,6 +203,26 @@ func (h *Handler) handleCallback(provider string, exchange func(context.Context,
 			http.Error(w, "authentication failed", http.StatusBadGateway)
 			return
 		}
+		if provider == XProviderID && h.TokenStore != nil {
+			expiresAt := tokenExpiresAt(tokens)
+			if err := h.TokenStore.SaveProviderToken(r.Context(), ProviderTokenRecord{
+				UserID:       meta["user_id"],
+				ProviderID:   XProviderID,
+				AccessToken:  tokens.AccessToken,
+				RefreshToken: tokens.RefreshToken,
+				TokenType:    tokens.TokenType,
+				Scope:        tokens.Scope,
+				Username:     tokens.Username,
+				ExpiresAt:    expiresAt,
+			}); err != nil {
+				slog.Error("connect token store failed", "provider", provider, "err", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			tokens.AccessToken = ""
+			tokens.RefreshToken = ""
+			tokens.TokenType = "broker"
+		}
 		displayCode, err := h.CodeStore.Create(tokens)
 		if err != nil {
 			slog.Error("connect code create failed", "err", err)
@@ -221,6 +246,18 @@ func (h *Handler) handleCallback(provider string, exchange func(context.Context,
 			http.Error(w, "invalid mode in state", http.StatusBadRequest)
 		}
 	}
+}
+
+func tokenExpiresAt(tokens TokenSet) *time.Time {
+	if tokens.ExpiresIn <= 0 {
+		return nil
+	}
+	issuedAt := tokens.IssuedAt
+	if issuedAt.IsZero() {
+		issuedAt = time.Now().UTC()
+	}
+	expiresAt := issuedAt.Add(time.Duration(tokens.ExpiresIn) * time.Second).UTC()
+	return &expiresAt
 }
 
 func (h *Handler) HandleCLIExchange() http.HandlerFunc {

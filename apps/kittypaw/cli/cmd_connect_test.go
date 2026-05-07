@@ -121,7 +121,7 @@ func TestConnectXCreatesPreauthSessionWithPortalToken(t *testing.T) {
 			fmt.Fprintf(w, `{"login_url":%q}`, ts.URL+"/connect/x/login?session=s-1")
 		case "/connect/cli/exchange":
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"provider":"x","access_token":"x-access-1","refresh_token":"x-refresh-1","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access","username":"jaypark"}`)
+			fmt.Fprint(w, `{"provider":"x","token_type":"broker","scope":"tweet.read users.read offline.access","username":"jaypark"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -151,6 +151,15 @@ func TestConnectXCreatesPreauthSessionWithPortalToken(t *testing.T) {
 	}
 	if err := exchangeConnectCode(ts.URL, "code-1", serviceMgr); err != nil {
 		t.Fatalf("exchangeConnectCode: %v", err)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "token_type"); !ok || got != "broker" {
+		t.Fatalf("stored x token_type = (%q, %v), want broker", got, ok)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "access_token"); ok || got != "" {
+		t.Fatalf("stored x access_token = (%q, %v), want absent", got, ok)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "refresh_token"); ok || got != "" {
+		t.Fatalf("stored x refresh_token = (%q, %v), want absent", got, ok)
 	}
 }
 
@@ -188,7 +197,7 @@ func TestConnectXCodeFlowCreatesPreauthSessionAndExchangesOnConnectBaseURL(t *te
 			}
 			gotExchangeCode = payload.Code
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"provider":"x","access_token":"x-access-1","refresh_token":"x-refresh-1","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access","username":"jaypark"}`)
+			fmt.Fprint(w, `{"provider":"x","token_type":"broker","scope":"tweet.read users.read offline.access","username":"jaypark"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -243,6 +252,12 @@ func TestConnectXCodeFlowCreatesPreauthSessionAndExchangesOnConnectBaseURL(t *te
 	}
 	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "connect_base_url"); !ok || got != connectTS.URL {
 		t.Fatalf("stored x connect_base_url = (%q, %v), want %q", got, ok, connectTS.URL)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "access_token"); ok || got != "" {
+		t.Fatalf("stored x access_token = (%q, %v), want absent", got, ok)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "refresh_token"); ok || got != "" {
+		t.Fatalf("stored x refresh_token = (%q, %v), want absent", got, ok)
 	}
 }
 
@@ -381,7 +396,7 @@ func TestConnectXHTTPFlowCreatesPreauthSessionAndExchangesOnConnectBaseURL(t *te
 			}
 			gotExchangeCode = payload.Code
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"provider":"x","access_token":"x-access-1","refresh_token":"x-refresh-1","token_type":"bearer","expires_in":7200,"scope":"tweet.read users.read offline.access","username":"jaypark"}`)
+			fmt.Fprint(w, `{"provider":"x","token_type":"broker","scope":"tweet.read users.read offline.access","username":"jaypark"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -443,6 +458,12 @@ func TestConnectXHTTPFlowCreatesPreauthSessionAndExchangesOnConnectBaseURL(t *te
 	}
 	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "connect_base_url"); !ok || got != connectTS.URL {
 		t.Fatalf("stored x connect_base_url = (%q, %v), want %q", got, ok, connectTS.URL)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "access_token"); ok || got != "" {
+		t.Fatalf("stored x access_token = (%q, %v), want absent", got, ok)
+	}
+	if got, ok := secrets.Get(core.ServiceTokenNamespace("x"), "refresh_token"); ok || got != "" {
+		t.Fatalf("stored x refresh_token = (%q, %v), want absent", got, ok)
 	}
 }
 
