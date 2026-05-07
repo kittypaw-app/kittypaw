@@ -1207,7 +1207,7 @@ macOS LaunchAgent
 .agents/skills or upstream agent registry paths
 OAuth scope literal "profile"
 historical migration comments that explicitly describe old data being moved
-root CLI tests asserting persona and agent commands are absent
+tests asserting old persona, profile, or agent surfaces are absent
 ```
 
 - [ ] **Step 2: Update docs with Staff and Runner wording**
