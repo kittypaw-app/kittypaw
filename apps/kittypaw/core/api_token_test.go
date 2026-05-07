@@ -357,6 +357,24 @@ func TestAPITokenManager_SaveLoadAndResolveConnectBaseURL(t *testing.T) {
 	}
 }
 
+func TestAPITokenManager_ResolveAPIURL(t *testing.T) {
+	secrets := &SecretsStore{
+		path: t.TempDir() + "/secrets.json",
+		data: make(map[string]map[string]string),
+	}
+	mgr := NewAPITokenManager("", secrets)
+
+	if got := mgr.ResolveAPIURL(); got != DefaultAPIServerURL {
+		t.Fatalf("default ResolveAPIURL = %q", got)
+	}
+	if err := mgr.SaveTokens("http://localhost:9714/", makeJWT(time.Now().Add(10*time.Minute).Unix()), "refresh"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.ResolveAPIURL(); got != "http://localhost:9714" {
+		t.Fatalf("ResolveAPIURL = %q", got)
+	}
+}
+
 func TestAPITokenManager_ResolveConnectBaseURLFallbacks(t *testing.T) {
 	secrets := &SecretsStore{
 		path: t.TempDir() + "/secrets.json",

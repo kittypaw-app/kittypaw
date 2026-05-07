@@ -197,6 +197,12 @@ func (s *PostgresTokenStore) RecordUsage(ctx context.Context, record UsageRecord
 	}
 	defer tx.Rollback(ctx)
 
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))
+	`, record.UserID+"\x00"+record.ProviderID+"\x00post_reads", window.Format("2006-01")); err != nil {
+		return false, err
+	}
+
 	var used int
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(quantity), 0)::int

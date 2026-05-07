@@ -27,6 +27,16 @@ func NewAPITokenManager(_ string, secrets *SecretsStore) *APITokenManager {
 	}
 }
 
+func (m *APITokenManager) ResolveAPIURL() string {
+	if m == nil || m.secrets == nil {
+		return DefaultAPIServerURL
+	}
+	if got, ok := m.secrets.Get("kittypaw-api", "api_url"); ok && strings.TrimSpace(got) != "" {
+		return strings.TrimRight(strings.TrimSpace(got), "/")
+	}
+	return DefaultAPIServerURL
+}
+
 // NamespaceForURL converts an API URL to a secrets namespace.
 // "http://localhost:8080" → "kittypaw-api/localhost:8080"
 func NamespaceForURL(apiURL string) string {

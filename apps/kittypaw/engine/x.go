@@ -96,7 +96,8 @@ func xClientForSession(s *Session) (*core.XBrokerClient, string, string) {
 	if s == nil || s.APITokenMgr == nil {
 		return nil, "", jsonResultMust(map[string]any{"error": xLoginGuidance(s)})
 	}
-	accessToken, err := s.APITokenMgr.LoadAccessToken(core.DefaultAPIServerURL)
+	apiURL := s.APITokenMgr.ResolveAPIURL()
+	accessToken, err := s.APITokenMgr.LoadAccessToken(apiURL)
 	if err != nil || accessToken == "" {
 		msg := xLoginGuidance(s)
 		if err != nil {
@@ -104,7 +105,7 @@ func xClientForSession(s *Session) (*core.XBrokerClient, string, string) {
 		}
 		return nil, "", jsonResultMust(map[string]any{"error": msg})
 	}
-	return core.NewXBrokerClient(s.APITokenMgr.ResolveConnectBaseURL(core.DefaultAPIServerURL), nil), accessToken, ""
+	return core.NewXBrokerClient(s.APITokenMgr.ResolveConnectBaseURL(apiURL), nil), accessToken, ""
 }
 
 func xBrokerErrorMessage(err error, s *Session) string {

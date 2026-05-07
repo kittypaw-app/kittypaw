@@ -18,6 +18,8 @@ import (
 
 const xBrokerRefreshSkew = 5 * time.Minute
 
+var ErrProviderTokenReconnectRequired = errors.New("connect provider token reconnect required")
+
 type EntitlementQuotaReader interface {
 	UserQuotaJSON(context.Context, string, string) (map[string]any, error)
 }
@@ -191,6 +193,10 @@ func (h *Handler) prepareXBrokerRequest(w http.ResponseWriter, r *http.Request) 
 			writeBrokerError(w, http.StatusForbidden, "x_not_connected", "x account not connected")
 			return nil, ProviderTokenRecord{}, 0, false
 		}
+		if errors.Is(err, ErrProviderTokenReconnectRequired) {
+			writeBrokerError(w, http.StatusForbidden, "x_reconnect_required", "x account must be reconnected")
+			return nil, ProviderTokenRecord{}, 0, false
+		}
 		slog.Error("x broker token load failed", "user_id", user.ID, "err", err)
 		writeBrokerError(w, http.StatusInternalServerError, "token_failed", "x token unavailable")
 		return nil, ProviderTokenRecord{}, 0, false
@@ -207,11 +213,11 @@ func (h *Handler) loadXBrokerToken(ctx context.Context, userID string) (Provider
 		return token, nil
 	}
 	if token.RefreshToken == "" {
-		return ProviderTokenRecord{}, fmt.Errorf("x token expired without refresh token")
+		return ProviderTokenRecord{}, ErrProviderTokenReconnectRequired
 	}
 	refreshed, err := h.X.Refresh(ctx, token.RefreshToken)
 	if err != nil {
-		return ProviderTokenRecord{}, fmt.Errorf("refresh x token: %w", err)
+		return ProviderTokenRecord{}, fmt.Errorf("%w: refresh x token: %v", ErrProviderTokenReconnectRequired, err)
 	}
 	if refreshed.RefreshToken == "" {
 		refreshed.RefreshToken = token.RefreshToken
