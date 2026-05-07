@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,28 @@ import (
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/server"
 )
+
+func TestRootCommandPropagatesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	root := newRootCmd()
+	var sawCanceled bool
+	root.AddCommand(&cobra.Command{
+		Use: "context-probe",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sawCanceled = errors.Is(cmd.Context().Err(), context.Canceled)
+			return nil
+		},
+	})
+	root.SetArgs([]string{"context-probe"})
+	if err := root.ExecuteContext(ctx); err != nil {
+		t.Fatalf("ExecuteContext: %v", err)
+	}
+	if !sawCanceled {
+		t.Fatal("command did not observe canceled context")
+	}
+}
 
 func TestIsTransportDropErr_StringMatches(t *testing.T) {
 	cases := []string{

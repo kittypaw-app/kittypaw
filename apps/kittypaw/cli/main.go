@@ -47,8 +47,11 @@ var (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	root := newRootCmd()
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }

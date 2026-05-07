@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -784,6 +786,64 @@ func TestKanbanDispatchPrintsEmptyReadyQueue(t *testing.T) {
 	}
 	if !strings.Contains(out, "No ready tasks.") {
 		t.Fatalf("dispatch output = %q", out)
+	}
+}
+
+func TestKanbanDispatchRecordsCanceledWorker(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+	projectRoot := t.TempDir()
+
+	st, err := openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	project, err := st.CreateKanbanProject(store.CreateKanbanProjectRequest{Slug: "kitty", Name: "KittyPaw", RootPath: projectRoot})
+	if err != nil {
+		t.Fatalf("CreateKanbanProject: %v", err)
+	}
+	task, err := st.CreateKanbanTask(store.CreateKanbanTaskRequest{ProjectID: project.ID, Title: "Cancel dispatch", Status: store.KanbanStatusReady})
+	if err != nil {
+		t.Fatalf("CreateKanbanTask: %v", err)
+	}
+	_ = st.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err = runKanbanDispatch(
+		ctx,
+		[]string{"sh", "-c", "sleep 5"},
+		&kanbanDispatchFlags{
+			shared:  &kanbanSharedFlags{accountID: "alice"},
+			project: "kitty",
+			actor:   "dispatcher",
+			limit:   1,
+		},
+	)
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("runKanbanDispatch error = %v, want context canceled", err)
+	}
+
+	st, err = openStoreForAccount("alice")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetKanbanTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetKanbanTask: %v", err)
+	}
+	if got.Status != store.KanbanStatusTodo {
+		t.Fatalf("task status = %q, want todo", got.Status)
+	}
+	runs, err := st.ListKanbanRuns(task.ID)
+	if err != nil {
+		t.Fatalf("ListKanbanRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Outcome != store.KanbanRunFailed || !strings.Contains(runs[0].Summary, "command canceled") {
+		t.Fatalf("runs = %+v", runs)
 	}
 }
 

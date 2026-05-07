@@ -965,9 +965,13 @@ func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *
 	exitCode := kanbanExecExitCode(runErr)
 	metadata := kanbanExecMetadata(command, run.ID, exitCode, duration)
 	if runErr != nil {
+		summaryPrefix := "command failed"
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			summaryPrefix = "command canceled"
+		}
 		summary := strings.TrimSpace(flags.summary)
 		if summary == "" {
-			summary = kanbanExecDefaultSummary("command failed", command)
+			summary = kanbanExecDefaultSummary(summaryPrefix, command)
 		}
 		recordErr := st.FailKanbanTask(task.ID, store.FailKanbanTaskRequest{
 			Actor:        strings.TrimSpace(flags.actor),
@@ -977,6 +981,9 @@ func executeDispatchedKanbanTask(ctx context.Context, st *store.Store, project *
 		})
 		if recordErr != nil {
 			return fmt.Errorf("command failed (%v); record kanban failure: %w", runErr, recordErr)
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("command canceled: %w", ctxErr)
 		}
 		return fmt.Errorf("command failed with exit code %d: %w", exitCode, runErr)
 	}
