@@ -5,7 +5,7 @@ REPO="${KITTYPAW_INSTALL_REPO:-kittypaw-app/kitty}"
 BINARY="kittypaw"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 CHANNEL="${KITTYPAW_CHANNEL:-stable}"
-STABLE_URL="${KITTYPAW_STABLE_URL:-https://raw.githubusercontent.com/${REPO}/main/apps/kittypaw/stable.json}"
+STABLE_URL="${KITTYPAW_STABLE_URL:-https://space.kittypaw.app/downloads/kittypaw/stable.json}"
 
 restart_after_install() {
   case "$OS" in

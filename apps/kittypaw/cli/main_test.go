@@ -751,6 +751,54 @@ func TestWaitForProcessExitPollsUntilProcessStops(t *testing.T) {
 	}
 }
 
+func TestEnsureSingleServerProcessRejectsOtherRunningServer(t *testing.T) {
+	oldProcessRunning := processRunning
+	defer func() { processRunning = oldProcessRunning }()
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("12345\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+	processRunning = func(pid int) bool {
+		return pid == 12345
+	}
+
+	err := ensureSingleServerProcess(pidPath, 99999)
+	if err == nil {
+		t.Fatal("ensureSingleServerProcess returned nil for another running server")
+	}
+	for _, want := range []string{"already running", "kittypaw server stop"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want containing %q", err.Error(), want)
+		}
+	}
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("pid file should remain for running server: %v", err)
+	}
+}
+
+func TestEnsureSingleServerProcessRemovesStalePidFile(t *testing.T) {
+	oldProcessRunning := processRunning
+	defer func() { processRunning = oldProcessRunning }()
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "daemon.pid")
+	if err := os.WriteFile(pidPath, []byte("12345\n"), 0o600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+	processRunning = func(pid int) bool {
+		return false
+	}
+
+	if err := ensureSingleServerProcess(pidPath, 99999); err != nil {
+		t.Fatalf("ensureSingleServerProcess returned error for stale pid: %v", err)
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid file should be removed for stale server, stat err=%v", err)
+	}
+}
+
 func mustWriteTestConfig(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

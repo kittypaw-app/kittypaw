@@ -17,9 +17,10 @@ Experimental Go framework for local AI runners. Single binary, goja JS sandbox,
 curl -fsSL https://raw.githubusercontent.com/kittypaw-app/kitty/main/install-kittypaw.sh | sh
 ```
 
-Without `VERSION`, the installer follows `apps/kittypaw/stable.json`, not the
-newest GitHub release. Use `VERSION` to install a specific candidate release
-for testing:
+Without `VERSION`, the installer follows hosted stable metadata at
+`https://space.kittypaw.app/downloads/kittypaw/stable.json`, not the newest
+GitHub release. Use `VERSION` to install a specific candidate release for
+testing:
 
 ```bash
 VERSION=0.4.9 curl -fsSL https://raw.githubusercontent.com/kittypaw-app/kitty/main/install-kittypaw.sh | sh
@@ -149,6 +150,7 @@ Operational environment variables:
 | `KITTYPAW_INSTALL_REPO` | Root installer repository override, e.g. `owner/repo` |
 | `KITTYPAW_INSTALL_SCRIPT_URL` | Root installer script URL override |
 | `KITTYPAW_CHANNEL=latest` | Installer override that follows the newest GitHub release instead of stable |
+| `KITTYPAW_STABLE_URL` | Installer override for stable metadata JSON |
 | `VERSION` | Installer override for a specific release, e.g. `0.4.9` |
 
 ## Build from Source
@@ -175,9 +177,9 @@ The workflow builds archives directly with `go build`, signs and notarizes the
 macOS binaries, and updates release checksums. Do not use plain `vX.Y.Z` tags
 for monorepo product releases.
 
-Binary releases are candidates until `apps/kittypaw/stable.json` is manually
-promoted. The default install command follows stable; use `VERSION=X.Y.Z` to
-test a candidate before promotion.
+Binary releases are candidates until hosted stable metadata is promoted with
+the Space deploy task. The default install command follows stable; use
+`VERSION=X.Y.Z` to test a candidate before promotion.
 
 ## Stop / Uninstall
 

@@ -18,6 +18,9 @@ func TestLoadDefaultsToSpaceURLs(t *testing.T) {
 	if cfg.BindAddr != ":8080" {
 		t.Fatalf("BindAddr = %q, want :8080", cfg.BindAddr)
 	}
+	if cfg.KittyPawStableFile != "/home/jinto/kittyspace/public/kittypaw/stable.json" {
+		t.Fatalf("KittyPawStableFile = %q, want hosted stable metadata file", cfg.KittyPawStableFile)
+	}
 }
 
 func TestLoadAcceptsStaticFallbackForLocalSmoke(t *testing.T) {

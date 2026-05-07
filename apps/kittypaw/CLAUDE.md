@@ -217,15 +217,18 @@ Binary release and stable auto-update promotion are two separate approvals:
 
 - `kittypaw/vX.Y.Z` binary releases require an explicit user instruction before
   tagging or pushing.
-- `stable.json` updates require a separate explicit user instruction after the
-  released binary has been downloaded and tested locally. Treat this as the
-  "allow installed servers to auto-download" switch, not as part of ordinary
-  release automation.
-- Do not auto-update `stable.json` from CI or from the release workflow.
+- Hosted stable metadata updates require a separate explicit user instruction
+  after the released binary has been downloaded and tested locally. Treat this
+  as the "allow installed servers to auto-download" switch, not as part of
+  ordinary release automation.
+- Do not auto-update stable metadata from CI or from the release workflow.
 - The default installer (`curl .../install-kittypaw.sh | sh`) follows
-  `apps/kittypaw/stable.json`, not the newest GitHub release. Test candidate
-  releases with `VERSION=X.Y.Z curl .../install-kittypaw.sh | sh`.
-- Before creating a new binary release, check the current `stable.json`. If it
+  `https://space.kittypaw.app/downloads/kittypaw/stable.json`, not the newest
+  GitHub release. Promote it with `cd apps/space && uv run fab
+  promote-kittypaw-stable --version=X.Y.Z --commit=<release commit>`; this
+  uploads JSON to the server by scp and does not create a git commit. Test
+  candidate releases with `VERSION=X.Y.Z curl .../install-kittypaw.sh | sh`.
+- Before creating a new binary release, check the hosted stable metadata. If it
   still points at an older version and the previous binary release was never
   promoted to stable, warn the user once before proceeding. This may be
   intentional, but it can also indicate repeated binary releases without stable

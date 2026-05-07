@@ -157,6 +157,12 @@ func (c *Connector) Run(ctx context.Context, opts RunOptions) {
 			if ctx.Err() != nil {
 				return
 			}
+			if isDeviceConnectionReplaced(readErr) {
+				if opts.Logf != nil {
+					opts.Logf("chat relay stopped: device connection replaced by another server using the same device credential")
+				}
+				return
+			}
 			if readErr != nil && opts.Logf != nil {
 				opts.Logf("chat relay disconnected: %v", readErr)
 			}
@@ -196,6 +202,18 @@ func (c *Connector) Run(ctx context.Context, opts RunOptions) {
 			delay = maxDelay
 		}
 	}
+}
+
+func isDeviceConnectionReplaced(err error) bool {
+	var closeErr websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		return false
+	}
+	if closeErr.Code != websocket.StatusNormalClosure {
+		return false
+	}
+	reason := strings.ToLower(strings.TrimSpace(closeErr.Reason))
+	return reason == "device disconnected" || reason == "device connection replaced"
 }
 
 func (c *Connector) readLoop(ctx context.Context, conn *websocket.Conn) error {

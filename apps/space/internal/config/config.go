@@ -6,34 +6,36 @@ import (
 )
 
 type Config struct {
-	BindAddr       string
-	APIToken       string
-	DeviceToken    string
-	JWTSecret      string
-	JWKSURL        string
-	UserID         string
-	DeviceID       string
-	LocalAccountID string
-	PublicBaseURL  string
-	APIAuthBaseURL string
-	Version        string
-	Commit         string
+	BindAddr           string
+	APIToken           string
+	DeviceToken        string
+	JWTSecret          string
+	JWKSURL            string
+	UserID             string
+	DeviceID           string
+	LocalAccountID     string
+	PublicBaseURL      string
+	APIAuthBaseURL     string
+	KittyPawStableFile string
+	Version            string
+	Commit             string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		BindAddr:       bindAddr(),
-		APIToken:       os.Getenv("KITTYSPACE_API_TOKEN"),
-		DeviceToken:    os.Getenv("KITTYSPACE_DEVICE_TOKEN"),
-		JWTSecret:      env("KITTYSPACE_JWT_SECRET", os.Getenv("JWT_SECRET")),
-		JWKSURL:        os.Getenv("KITTYSPACE_JWKS_URL"),
-		UserID:         os.Getenv("KITTYSPACE_USER_ID"),
-		DeviceID:       os.Getenv("KITTYSPACE_DEVICE_ID"),
-		LocalAccountID: os.Getenv("KITTYSPACE_LOCAL_ACCOUNT_ID"),
-		PublicBaseURL:  env("KITTYSPACE_PUBLIC_BASE_URL", "https://space.kittypaw.app"),
-		APIAuthBaseURL: env("KITTYSPACE_API_AUTH_BASE_URL", "https://portal.kittypaw.app/auth"),
-		Version:        env("KITTYSPACE_VERSION", "dev"),
-		Commit:         os.Getenv("KITTYSPACE_COMMIT"),
+		BindAddr:           bindAddr(),
+		APIToken:           os.Getenv("KITTYSPACE_API_TOKEN"),
+		DeviceToken:        os.Getenv("KITTYSPACE_DEVICE_TOKEN"),
+		JWTSecret:          env("KITTYSPACE_JWT_SECRET", os.Getenv("JWT_SECRET")),
+		JWKSURL:            os.Getenv("KITTYSPACE_JWKS_URL"),
+		UserID:             os.Getenv("KITTYSPACE_USER_ID"),
+		DeviceID:           os.Getenv("KITTYSPACE_DEVICE_ID"),
+		LocalAccountID:     os.Getenv("KITTYSPACE_LOCAL_ACCOUNT_ID"),
+		PublicBaseURL:      env("KITTYSPACE_PUBLIC_BASE_URL", "https://space.kittypaw.app"),
+		APIAuthBaseURL:     env("KITTYSPACE_API_AUTH_BASE_URL", "https://portal.kittypaw.app/auth"),
+		KittyPawStableFile: env("KITTYSPACE_KITTYPAW_STABLE_FILE", "/home/jinto/kittyspace/public/kittypaw/stable.json"),
+		Version:            env("KITTYSPACE_VERSION", "dev"),
+		Commit:             os.Getenv("KITTYSPACE_COMMIT"),
 	}
 
 	hasJWTVerifier := cfg.JWTSecret != "" || cfg.JWKSURL != ""

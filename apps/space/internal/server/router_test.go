@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,6 +95,45 @@ func TestKanbanRouteRedirectsToSlash(t *testing.T) {
 	}
 	if got := w.Header().Get("Location"); got != "/kanban/" {
 		t.Fatalf("Location = %q, want /kanban/", got)
+	}
+}
+
+func TestKittyPawStableMetadataRouteServesConfiguredFile(t *testing.T) {
+	dir := t.TempDir()
+	stablePath := filepath.Join(dir, "stable.json")
+	body := `{"channel":"stable","version":"0.5.9","tag":"kittypaw/v0.5.9","commit":"abc123"}` + "\n"
+	if err := os.WriteFile(stablePath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write stable metadata: %v", err)
+	}
+	r := NewRouter(Config{KittyPawStableFile: stablePath})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/downloads/kittypaw/stable.json", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if w.Body.String() != body {
+		t.Fatalf("body = %q, want %q", w.Body.String(), body)
+	}
+}
+
+func TestKittyPawStableMetadataRoute404WhenMissing(t *testing.T) {
+	r := NewRouter(Config{KittyPawStableFile: filepath.Join(t.TempDir(), "stable.json")})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/downloads/kittypaw/stable.json", nil)
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
 	}
 }
 

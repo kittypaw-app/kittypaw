@@ -1,10 +1,12 @@
 """
 KittySpace deployment - fab setup / fab deploy / fab smoke / fab logs / fab status / fab rollback
 """
+import json
 import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fabric import task
@@ -62,6 +64,30 @@ def _build_metadata():
     version = os.environ.get("VERSION") or _git("describe", "--tags", "--always", default="dev")
     commit = os.environ.get("COMMIT") or _git("rev-parse", "--short=12", "HEAD")
     return version, commit
+
+
+def _kittypaw_tag(version, tag=None):
+    if tag:
+        return tag
+    if version.startswith("kittypaw/v"):
+        return version
+    if version.startswith("v"):
+        return f"kittypaw/{version}"
+    return f"kittypaw/v{version}"
+
+
+def _kittypaw_stable_payload(version, commit=None, tag=None):
+    resolved_tag = _kittypaw_tag(version, tag)
+    resolved_commit = commit or _git("rev-list", "-n", "1", resolved_tag, default="")
+    if not resolved_commit:
+        raise SystemExit(f"Could not resolve commit for {resolved_tag}; pass --commit explicitly.")
+    return {
+        "channel": "stable",
+        "version": resolved_tag.removeprefix("kittypaw/v"),
+        "tag": resolved_tag,
+        "commit": resolved_commit,
+        "promoted_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _remote_binary_path(suffix=""):
@@ -147,6 +173,29 @@ def smoke(ctx):
     if result.returncode != 0:
         print("Smoke failed; see above for the failing endpoint.")
         sys.exit(result.returncode)
+
+
+@task
+def promote_kittypaw_stable(ctx, version, commit="", tag=""):
+    """Publish kittypaw stable metadata without committing stable.json."""
+    payload = _kittypaw_stable_payload(version, commit=commit or None, tag=tag or None)
+    rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    remote_dir = f"{REMOTE_DIR}/public/kittypaw"
+    remote_path = f"{remote_dir}/stable.json"
+    c = _conn()
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tmp:
+        tmp.write(rendered)
+        tmp_path = tmp.name
+    try:
+        c.run(f"mkdir -p {remote_dir}")
+        c.put(tmp_path, remote_path + ".new")
+        c.run(f"cp {remote_path} {remote_path}.prev 2>/dev/null || true")
+        c.run(f"mv {remote_path}.new {remote_path}")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    url = f"https://{DOMAIN}/downloads/kittypaw/stable.json"
+    print(f"Published {payload['tag']} to {url}")
 
 
 @task

@@ -75,9 +75,10 @@ func newRouter(cfg config.Config) (http.Handler, error) {
 		return nil, fmt.Errorf("web app: %w", err)
 	}
 	return server.NewRouter(server.Config{
-		Version:    cfg.Version,
-		Commit:     cfg.Commit,
-		WebHandler: hostedWebHandler,
+		Version:            cfg.Version,
+		Commit:             cfg.Commit,
+		KittyPawStableFile: cfg.KittyPawStableFile,
+		WebHandler:         hostedWebHandler,
 		DaemonHandler: daemonws.NewHandler(identity.DeviceAuthenticator{
 			Verifier: verifier,
 		}, b),

@@ -459,6 +459,7 @@ func TestBuildPrompt_XTwitterRequestsDoNotFallBackToGmail(t *testing.T) {
 	for _, want := range []string{
 		"Do not call Gmail for explicit X/Twitter requests",
 		"X.homeTimeline is reverse chronological and is not the For You recommendation feed",
+		"x_credits_depleted",
 		"Do not substitute email results when X is empty or unavailable",
 	} {
 		if !strings.Contains(sys, want) {

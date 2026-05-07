@@ -196,6 +196,61 @@ func TestRunRetriesUntilRelayAccepts(t *testing.T) {
 	}
 }
 
+func TestRunStopsAfterDeviceConnectionIsReplaced(t *testing.T) {
+	var attempts atomic.Int32
+	helloCh := make(chan struct{}, 4)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/daemon/connect" {
+			http.NotFound(w, r)
+			return
+		}
+		attempts.Add(1)
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Logf("accept: %v", err)
+			return
+		}
+		defer conn.CloseNow()
+		_, data, err := conn.Read(r.Context())
+		if err != nil {
+			t.Logf("read hello: %v", err)
+			return
+		}
+		var hello HelloFrame
+		if err := json.Unmarshal(data, &hello); err != nil {
+			t.Logf("decode hello: %v", err)
+			return
+		}
+		helloCh <- struct{}{}
+		_ = conn.Close(websocket.StatusNormalClosure, "device disconnected")
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connector := &Connector{Config: ConnectorConfig{
+		RelayURL:      ts.URL,
+		Credential:    "device-token-1",
+		DeviceID:      "dev_1",
+		LocalAccounts: []string{"alice"},
+		DaemonVersion: "0.1.5",
+	}}
+	go connector.Run(ctx, RunOptions{
+		RetryInitialDelay: 5 * time.Millisecond,
+		RetryMaxDelay:     5 * time.Millisecond,
+	})
+
+	select {
+	case <-helloCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first relay connection")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("relay attempts = %d, want connector to stop after device replacement", got)
+	}
+}
+
 func TestRunRefreshesCredentialAfterUnauthorizedDial(t *testing.T) {
 	var attempts atomic.Int32
 	var refreshes atomic.Int32

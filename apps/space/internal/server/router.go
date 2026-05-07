@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -25,6 +26,7 @@ type Config struct {
 	OpenAIHandler interface {
 		Routes() http.Handler
 	}
+	KittyPawStableFile string
 }
 
 func NewRouter(cfg Config) http.Handler {
@@ -61,6 +63,7 @@ func NewRouter(cfg Config) http.Handler {
 		http.Redirect(w, r, "/kanban/", http.StatusMovedPermanently)
 	})
 	r.Get("/kanban/", serveStaticFile("web/kanban.html"))
+	r.Get("/downloads/kittypaw/stable.json", serveKittyPawStableMetadata(cfg.KittyPawStableFile))
 	r.Handle("/assets/*", http.StripPrefix("/assets/", assetHandler()))
 	if cfg.OpenAIHandler != nil {
 		r.Mount("/", cfg.OpenAIHandler.Routes())
@@ -69,6 +72,24 @@ func NewRouter(cfg Config) http.Handler {
 		r.Mount("/daemon", cfg.DaemonHandler.Routes())
 	}
 	return r
+}
+
+func serveKittyPawStableMetadata(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if path == "" {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+	}
 }
 
 func serveStaticFile(name string) http.HandlerFunc {

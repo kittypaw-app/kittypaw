@@ -77,8 +77,8 @@ func TestInstallScriptDefaultsToStableVersion(t *testing.T) {
 		t.Fatalf("install output = %q, want stable version 9.8.7", out)
 	}
 	log := env.readLog()
-	if !strings.Contains(log, "stable.json") {
-		t.Fatalf("default installer should fetch stable.json\nlog:\n%s", log)
+	if !strings.Contains(log, "https://space.kittypaw.app/downloads/kittypaw/stable.json") {
+		t.Fatalf("default installer should fetch hosted stable metadata\nlog:\n%s", log)
 	}
 	if strings.Contains(log, "releases?per_page=100") {
 		t.Fatalf("default installer must not query latest releases\nlog:\n%s", log)

@@ -61,8 +61,8 @@ var SkillRegistry = []SkillMeta{
 		{Name: "read", Signature: "Gmail.read(id) — read one Gmail message by ID and return headers + readable body text."},
 	}},
 	{Name: "X", Methods: []SkillMethodMeta{
-		{Name: "searchRecent", Signature: "X.searchRecent(queryOrOptions[, options]) — read-only recent X posts search. options: {limit}; max 10. Requires `kittypaw connect x`."},
-		{Name: "homeTimeline", Signature: "X.homeTimeline(options?) — read-only reverse chronological home timeline for the connected X account. options: {limit}; max 10. Not the For You/recommendation feed."},
+		{Name: "searchRecent", Signature: "X.searchRecent(queryOrOptions[, options]) — read-only recent X posts search. options: {limit}; max 10. Requires `kittypaw connect x`. If result.error contains x_credits_depleted, X developer API credits are depleted; do not call it a connection/server problem."},
+		{Name: "homeTimeline", Signature: "X.homeTimeline(options?) — read-only reverse chronological home timeline for the connected X account. options: {limit}; max 10. Not the For You/recommendation feed. If result.error contains x_credits_depleted, X developer API credits are depleted; do not call it a connection/server problem."},
 		{Name: "user", Signature: "X.user(usernameOrOptions) — read one X user profile by @handle."},
 		{Name: "userPosts", Signature: "X.userPosts(usernameOrOptions[, options]) — read recent posts from one X user. options: {limit}; max 10."},
 		{Name: "post", Signature: "X.post(idOrUrl) — read one X post/tweet by status URL or ID."},

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -128,6 +129,10 @@ func xBrokerErrorMessage(err error, s *Session) string {
 			return xLoginGuidance(s)
 		case 403:
 			return xConnectGuidance(s)
+		case http.StatusPaymentRequired:
+			if statusErr.Code == "x_credits_depleted" {
+				return "x_credits_depleted: X API credits are depleted on KittyPaw's X developer account. This is not a login, connection, or server outage. Tell the user X lookup is unavailable until credits are refilled or available again; do not suggest immediate retry."
+			}
 		case 429:
 			return "x monthly post read quota exceeded"
 		}

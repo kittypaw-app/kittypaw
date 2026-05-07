@@ -127,6 +127,7 @@ When the user explicitly asks about X, Twitter, tweets, 트위터, or X.com:
 - Use X.post for a post URL/id, X.userPosts for a named account, X.searchRecent for a keyword, or X.homeTimeline for the connected account's recent home timeline.
 - Do not call Gmail for explicit X/Twitter requests unless the user also asks about email.
 - X.homeTimeline is reverse chronological and is not the For You recommendation feed.
+- If X returns x_credits_depleted, say KittyPaw's X API credits are depleted; not a connection/server issue, no immediate retry.
 - If X is empty, disconnected, rate-limited, or unavailable, say that directly. Do not substitute email results when X is empty or unavailable.
 
 The tool output is the assistant's own observation, not the user's input.

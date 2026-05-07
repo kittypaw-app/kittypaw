@@ -198,6 +198,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}()
 	bind := resolveServeBind(cmd, serverCfg, deps)
 
+	pidPath, err := serverPidPath()
+	if err != nil {
+		return err
+	}
+	if err := ensureSingleServerProcess(pidPath, os.Getpid()); err != nil {
+		return err
+	}
+
 	// Check port availability before starting channels.
 	if err := checkPort(bind); err != nil {
 		return err
@@ -1771,6 +1779,26 @@ func printPortInUseMessage(addr string) {
 		fmt.Println("    kittypaw server start    # restart")
 		fmt.Println()
 	}
+}
+
+func ensureSingleServerProcess(pidPath string, currentPID int) error {
+	pid, recordedStart, ok := client.ReadPidFile(pidPath)
+	if !ok {
+		return nil
+	}
+	if pid == currentPID {
+		return nil
+	}
+	if !processRunning(pid) || !client.VerifyDaemonStartTime(pid, recordedStart) {
+		_ = os.Remove(pidPath)
+		return nil
+	}
+	return fmt.Errorf(
+		"KittyPaw server is already running (pid %d).\n\n"+
+			"  Stop the existing server first:\n"+
+			"    kittypaw server stop\n\n"+
+			"  Then start it again with the bind address you want.",
+		pid)
 }
 
 func writePidFile() {

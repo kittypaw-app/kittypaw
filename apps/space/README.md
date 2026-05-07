@@ -25,6 +25,7 @@ WebSocket connections and relays only supported capability operations.
 - `GET /kanban/api/nodes/*`
 - `POST /kanban/api/nodes/*`
 - `PATCH /kanban/api/nodes/*`
+- `GET /downloads/kittypaw/stable.json`
 - `GET /daemon/connect`
 - `GET /v1/routes`
 - `GET /nodes/{device_id}/accounts/{account_id}/v1/models`
@@ -46,6 +47,7 @@ WebSocket connections and relays only supported capability operations.
 | `KITTYSPACE_BIND_ADDR` | `:$PORT` or `:8080` | TCP bind address or Unix socket path |
 | `KITTYSPACE_PUBLIC_BASE_URL` | `https://space.kittypaw.app` | Public Space origin |
 | `KITTYSPACE_API_AUTH_BASE_URL` | `https://portal.kittypaw.app/auth` | Portal auth base URL |
+| `KITTYSPACE_KITTYPAW_STABLE_FILE` | `/home/jinto/kittyspace/public/kittypaw/stable.json` | Hosted kittypaw stable metadata JSON path |
 | `KITTYSPACE_VERSION` | `dev` | Health version |
 | `KITTYSPACE_COMMIT` | unset | Health commit |
 

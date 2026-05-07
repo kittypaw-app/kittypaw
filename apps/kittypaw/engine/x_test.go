@@ -21,6 +21,7 @@ func TestBuildSkillsSection_XGuidance(t *testing.T) {
 		"X.homeTimeline",
 		"X.user",
 		"X.userPosts",
+		"x_credits_depleted",
 		"kittypaw connect x",
 	} {
 		if !strings.Contains(section, phrase) {
@@ -200,6 +201,46 @@ func TestExecuteXBrokerForbiddenShowsConnectGuidance(t *testing.T) {
 	}
 	if !strings.Contains(got, "kittypaw connect x --account jinto") {
 		t.Fatalf("missing connect guidance: %s", got)
+	}
+}
+
+func TestExecuteXBrokerCreditsDepletedIsNotServerGuidance(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		fmt.Fprint(w, `{"error":{"code":"x_credits_depleted","message":"X API credits depleted. Refill the X developer account credits or wait until credits are available again."}}`)
+	}))
+	defer ts.Close()
+
+	secrets, err := core.LoadSecretsFrom(t.TempDir() + "/secrets.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiMgr := core.NewAPITokenManager("", secrets)
+	if err := apiMgr.SaveTokens(core.DefaultAPIServerURL, testJWT(time.Now().Add(time.Hour)), "refresh-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := apiMgr.SaveConnectBaseURL(core.DefaultAPIServerURL, ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	sess := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, APITokenMgr: apiMgr, AccountID: "jinto"}
+
+	got, err := resolveSkillCall(context.Background(), core.SkillCall{
+		SkillName: "X",
+		Method:    "homeTimeline",
+		Args:      []json.RawMessage{json.RawMessage(`{"limit":10}`)},
+	}, sess, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"x_credits_depleted",
+		"X API credits are depleted",
+		"not a login, connection, or server outage",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("credit depletion guidance missing %q:\n%s", want, got)
+		}
 	}
 }
 
