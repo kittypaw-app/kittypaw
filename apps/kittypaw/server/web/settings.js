@@ -1,6 +1,8 @@
 // KittyPaw Settings Panel — Channel & LLM status
 
 const Settings = {
+  _selectedWorkspacePath: '',
+
   mount(container) {
     container.innerHTML = `
       <div class="settings-view">
@@ -135,6 +137,7 @@ const Settings = {
   },
 
   _showWorkspaceForm(container) {
+    this._selectedWorkspacePath = '';
     container.innerHTML = `
       <section class="settings-section">
         <h2>Workspace</h2>
@@ -142,7 +145,13 @@ const Settings = {
           <label>Alias</label>
           <input class="input" id="settings-workspace-alias" autocomplete="off">
           <label>Path</label>
-          <input class="input input--mono" id="settings-workspace-path" autocomplete="off">
+          <div class="settings-dir-picker">
+            <div class="settings-dir-toolbar">
+              <button class="btn btn--ghost btn--sm" id="settings-directory-parent" type="button">Up</button>
+              <div class="settings-dir-path" id="settings-workspace-path"></div>
+            </div>
+            <div class="settings-dir-list" id="settings-directory-list"></div>
+          </div>
           <div class="settings-actions">
             <button class="btn btn--primary btn--sm" id="settings-workspace-save">Save</button>
             <button class="btn btn--ghost btn--sm" id="settings-back">Cancel</button>
@@ -151,15 +160,17 @@ const Settings = {
         </div>
       </section>`;
     document.getElementById('settings-back').onclick = () => this._load(container);
+    this._loadDirectoryPicker('');
     document.getElementById('settings-workspace-save').onclick = async () => {
       const button = document.getElementById('settings-workspace-save');
       const error = document.getElementById('settings-form-error');
       button.disabled = true;
       error.hidden = true;
       try {
+        if (!this._selectedWorkspacePath) throw new Error('Select a workspace path.');
         await this._postJSON('/api/settings/workspaces', {
           alias: document.getElementById('settings-workspace-alias').value.trim(),
-          path: document.getElementById('settings-workspace-path').value.trim(),
+          path: this._selectedWorkspacePath,
         });
         await this._load(container);
       } catch (e) {
@@ -169,6 +180,46 @@ const Settings = {
         button.disabled = false;
       }
     };
+  },
+
+  async _loadDirectoryPicker(path) {
+    const list = document.getElementById('settings-directory-list');
+    const current = document.getElementById('settings-workspace-path');
+    const parentButton = document.getElementById('settings-directory-parent');
+    const error = document.getElementById('settings-form-error');
+    if (!list || !current || !parentButton) return;
+    list.innerHTML = '<div class="settings-dir-empty">Loading...</div>';
+    parentButton.disabled = true;
+    if (error) error.hidden = true;
+    try {
+      const suffix = path ? `?path=${encodeURIComponent(path)}` : '';
+      const data = await apiRaw(`/api/settings/directories${suffix}`);
+      this._selectedWorkspacePath = data.path || '';
+      current.textContent = this._selectedWorkspacePath;
+      parentButton.disabled = !data.parent;
+      parentButton.onclick = () => {
+        if (data.parent) this._loadDirectoryPicker(data.parent);
+      };
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+      if (!entries.length) {
+        list.innerHTML = '<div class="settings-dir-empty">No folders</div>';
+        return;
+      }
+      list.innerHTML = entries.map(entry => `
+        <button class="settings-dir-item" type="button" data-path="${esc(entry.path || '')}">
+          <span class="settings-dir-name">${esc(entry.name || '')}</span>
+          <span class="settings-dir-sub">${esc(entry.path || '')}</span>
+        </button>`).join('');
+      list.querySelectorAll('.settings-dir-item').forEach(button => {
+        button.addEventListener('click', () => this._loadDirectoryPicker(button.dataset.path || ''));
+      });
+    } catch (e) {
+      list.innerHTML = '';
+      if (error) {
+        error.textContent = String(e.message || e);
+        error.hidden = false;
+      }
+    }
   },
 
   _showLLMForm(container, status) {

@@ -174,6 +174,61 @@ func (s *Server) handleSettingsWorkspacesList(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleSettingsDirectoriesBrowse(w http.ResponseWriter, r *http.Request) {
+	if _, status, err := s.settingsAccount(r); err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	dir, browseStatus, err := settingsBrowseDirectoryPath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, browseStatus, err.Error())
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsPermission(err) {
+			writeError(w, http.StatusForbidden, "directory is not readable")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "directory is not readable")
+		return
+	}
+
+	type directoryEntryJSON struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	out := make([]directoryEntryJSON, 0, len(entries))
+	truncated := false
+	for _, entry := range entries {
+		fullPath := filepath.Join(dir, entry.Name())
+		isDir := entry.IsDir()
+		if !isDir && entry.Type()&os.ModeSymlink != 0 {
+			if info, statErr := os.Stat(fullPath); statErr == nil && info.IsDir() {
+				isDir = true
+			}
+		}
+		if !isDir {
+			continue
+		}
+		out = append(out, directoryEntryJSON{Name: entry.Name(), Path: fullPath})
+		if len(out) >= 500 {
+			truncated = true
+			break
+		}
+	}
+	parent := filepath.Dir(dir)
+	if parent == dir {
+		parent = ""
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":      dir,
+		"parent":    parent,
+		"entries":   out,
+		"truncated": truncated,
+	})
+}
+
 func (s *Server) handleSettingsWorkspacesCreate(w http.ResponseWriter, r *http.Request) {
 	acct, status, err := s.settingsAccount(r)
 	if err != nil {
@@ -281,6 +336,33 @@ func (s *Server) isSettingsReady(acct *requestAccount) bool {
 		cfg = acct.Deps.Account.Config
 	}
 	return s.isOnboardingCompletedFor(acct.Deps.Store, cfg)
+}
+
+func settingsBrowseDirectoryPath(requestedPath string) (string, int, error) {
+	requestedPath = strings.TrimSpace(requestedPath)
+	if requestedPath == "" || requestedPath == "~" || strings.HasPrefix(requestedPath, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return "", http.StatusInternalServerError, fmt.Errorf("home directory unavailable")
+		}
+		if requestedPath == "" || requestedPath == "~" {
+			requestedPath = home
+		} else {
+			requestedPath = filepath.Join(home, strings.TrimPrefix(requestedPath, "~/"))
+		}
+	}
+	if !filepath.IsAbs(requestedPath) {
+		return "", http.StatusBadRequest, fmt.Errorf("absolute path is required")
+	}
+	canonical := filepath.Clean(requestedPath)
+	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = resolved
+	}
+	info, err := os.Stat(canonical)
+	if err != nil || !info.IsDir() {
+		return "", http.StatusBadRequest, fmt.Errorf("path does not exist or is not a directory")
+	}
+	return canonical, http.StatusOK, nil
 }
 
 func (s *Server) createSettingsWorkspace(acct *requestAccount, requestedPath, alias string) (*store.Workspace, int, error) {

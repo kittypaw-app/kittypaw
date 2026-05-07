@@ -125,7 +125,7 @@ func TestWebAppDoesNotStartBrowserOnboarding(t *testing.T) {
 	}
 }
 
-func TestWebAppNonDefaultShellExposesAccountScopedKanban(t *testing.T) {
+func TestWebAppShellOmitsKanbanFromSidebar(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatalf("read web app: %v", err)
@@ -140,11 +140,8 @@ func TestWebAppNonDefaultShellExposesAccountScopedKanban(t *testing.T) {
 		t.Fatal("showShell method end not found")
 	}
 	showShell := body[start : start+end]
-	if strings.Contains(showShell, "const adminNav = this.isDefault") {
-		t.Fatal("showShell must not hide Kanban inside the default-account-only nav")
-	}
-	if !strings.Contains(showShell, `href="/kanban"`) {
-		t.Fatalf("showShell must expose account-scoped Kanban link for every logged-in account, got:\n%s", showShell)
+	if strings.Contains(showShell, `href="/kanban"`) || strings.Contains(showShell, "Kanban") {
+		t.Fatalf("showShell must not expose Kanban in the sidebar, got:\n%s", showShell)
 	}
 	if strings.Contains(showShell, `data-tab="kanban"`) {
 		t.Fatalf("showShell must not mount Kanban as a settings tab, got:\n%s", showShell)
@@ -238,9 +235,6 @@ func TestWebAppKanbanSurfaceUsesDirectKanbanMount(t *testing.T) {
 	}
 	if strings.Contains(body, `data-tab="kanban"`) || strings.Contains(body, "tab === 'kanban'") {
 		t.Fatal("control shell must not mount Kanban as a settings tab; /kanban is the only Kanban surface")
-	}
-	if !strings.Contains(body, `href="/kanban"`) {
-		t.Fatal("control shell must link to the standalone /kanban surface")
 	}
 	if !strings.Contains(body, "this.chatOnly || this.kanbanOnly") {
 		t.Fatal("successful direct-surface login must stay on /chat or /kanban")

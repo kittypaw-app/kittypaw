@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -371,5 +373,61 @@ func TestSettingsWorkspacesUseLoggedInAccount(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Name != "notes" || listed[0].RootPath != canonicalWorkspaceDir {
 		t.Fatalf("listed workspaces = %#v, want bob notes workspace", listed)
+	}
+}
+
+func TestSettingsDirectoriesBrowseListsDirectoriesForLoggedInAccount(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.Mkdir(filepath.Join(home, "project-a"), 0o755); err != nil {
+		t.Fatalf("mkdir project-a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "notes.txt"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write notes file: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "alice-key"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/directories?path="+url.QueryEscape(home), nil)
+	req.AddCookie(loginSessionCookie(t, srv, "alice", "pw"))
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings directory browse code = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		Path    string `json:"path"`
+		Parent  string `json:"parent"`
+		Entries []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode directory browse: %v", err)
+	}
+	wantPath, err := filepath.EvalSymlinks(filepath.Clean(home))
+	if err != nil {
+		t.Fatalf("canonical home: %v", err)
+	}
+	if body.Path != wantPath {
+		t.Fatalf("path = %q, want %q", body.Path, wantPath)
+	}
+	if body.Parent == "" {
+		t.Fatal("parent should be set for the selected directory")
+	}
+	if len(body.Entries) != 1 || body.Entries[0].Name != "project-a" || body.Entries[0].Path != filepath.Join(wantPath, "project-a") {
+		t.Fatalf("entries = %#v, want only project-a directory", body.Entries)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/settings/directories?path=relative", nil)
+	req.AddCookie(loginSessionCookie(t, srv, "alice", "pw"))
+	rr = httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("relative directory browse code = %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
 }

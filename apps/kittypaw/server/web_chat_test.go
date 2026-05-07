@@ -51,7 +51,24 @@ func TestWebSettingsManagesAccountWorkspaces(t *testing.T) {
 	if !strings.Contains(body, "/api/settings/workspaces") {
 		t.Fatalf("settings must use account-scoped workspace settings APIs, got:\n%s", body)
 	}
-	if !strings.Contains(body, "Workspace") || !strings.Contains(body, "Alias") || !strings.Contains(body, "Path") {
-		t.Fatalf("settings must expose workspace alias and path controls, got:\n%s", body)
+	if !strings.Contains(body, "/api/settings/directories") || !strings.Contains(body, "settings-directory-list") {
+		t.Fatalf("settings must browse workspace directories instead of requiring typed paths, got:\n%s", body)
+	}
+	if strings.Contains(body, `id="settings-workspace-path" autocomplete`) {
+		t.Fatalf("settings must not expose a free-text workspace path input, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Workspace") || !strings.Contains(body, "Alias") {
+		t.Fatalf("settings must expose workspace alias controls, got:\n%s", body)
+	}
+}
+
+func TestWebShellDoesNotExposeKanbanInSidebar(t *testing.T) {
+	src, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read web app: %v", err)
+	}
+	body := string(src)
+	if strings.Contains(body, `href="/kanban">Kanban`) || strings.Contains(body, "kanbanNav") {
+		t.Fatalf("main settings shell must not expose Kanban in the sidebar, got:\n%s", body)
 	}
 }

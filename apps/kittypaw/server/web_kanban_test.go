@@ -22,9 +22,6 @@ func TestKanbanWebAssetsAreLoadedAndMounted(t *testing.T) {
 	}
 
 	app := readWebAssetForKanbanTest(t, "web/app.js")
-	if !strings.Contains(app, `href="/kanban"`) {
-		t.Fatal("control shell must link to the standalone Kanban surface")
-	}
 	if strings.Contains(app, `data-tab="kanban"`) || strings.Contains(app, "tab === 'kanban'") {
 		t.Fatal("control shell must not mount Kanban as a settings tab")
 	}

@@ -254,7 +254,6 @@ const App = {
     const defaultNav = this.isDefault
       ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="skills">Skills</button>'
       : '';
-    const kanbanNav = '<a class="nav-item nav-link" href="/kanban">Kanban</a>';
 
     // Override #app centering from stylesheet
     this.root.style.display = 'block';
@@ -266,7 +265,6 @@ const App = {
           <div class="sidebar-logo">Kitty<span class="accent">Paw</span></div>
           <nav class="sidebar-nav">
             ${defaultNav}
-            ${kanbanNav}
             <button class="nav-item" data-tab="settings">Settings</button>
           </nav>
           <div class="sidebar-footer">

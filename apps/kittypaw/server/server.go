@@ -379,6 +379,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			r.Post("/llm", s.handleSettingsLLM)
 			r.Post("/telegram", s.handleSettingsTelegram)
 			r.Post("/telegram/chat-id", s.handleSettingsTelegramChatID)
+			r.Get("/directories", s.handleSettingsDirectoriesBrowse)
 			r.Get("/workspaces", s.handleSettingsWorkspacesList)
 			r.Post("/workspaces", s.handleSettingsWorkspacesCreate)
 			r.Delete("/workspaces/{id}", s.handleSettingsWorkspacesDelete)
