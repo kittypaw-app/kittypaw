@@ -63,6 +63,8 @@ func TestWebSettingsManagesAccountWorkspaces(t *testing.T) {
 		"keydown",
 		"_workspaceBreadcrumbs",
 		"_suggestWorkspaceAlias",
+		"pathInput.value = previousPath;",
+		"selected.textContent = previousPath || 'No folder selected';",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("settings workspace picker missing token %s, got:\n%s", token, body)

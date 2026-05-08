@@ -238,10 +238,8 @@ const Settings = {
       });
     } catch (e) {
       this._selectedWorkspacePath = previousPath;
-      if (previousPath) {
-        pathInput.value = previousPath;
-        selected.textContent = previousPath;
-      }
+      pathInput.value = previousPath;
+      selected.textContent = previousPath || 'No folder selected';
       list.innerHTML = '';
       if (error) {
         error.textContent = String(e.message || e);
