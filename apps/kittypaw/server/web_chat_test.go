@@ -51,14 +51,47 @@ func TestWebSettingsManagesAccountWorkspaces(t *testing.T) {
 	if !strings.Contains(body, "/api/settings/workspaces") {
 		t.Fatalf("settings must use account-scoped workspace settings APIs, got:\n%s", body)
 	}
-	if !strings.Contains(body, "/api/settings/directories") || !strings.Contains(body, "settings-directory-list") {
-		t.Fatalf("settings must browse workspace directories instead of requiring typed paths, got:\n%s", body)
-	}
-	if strings.Contains(body, `id="settings-workspace-path" autocomplete`) {
-		t.Fatalf("settings must not expose a free-text workspace path input, got:\n%s", body)
+	for _, token := range []string{
+		"/api/settings/directories",
+		`id="settings-workspace-path"`,
+		`id="settings-directory-breadcrumb"`,
+		`id="settings-workspace-selected"`,
+		"settings-dir-body",
+		"settings-dir-sidebar",
+		"settings-dir-list",
+		"Add Workspace",
+		"keydown",
+		"_workspaceBreadcrumbs",
+		"_suggestWorkspaceAlias",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("settings workspace picker missing token %s, got:\n%s", token, body)
+		}
 	}
 	if !strings.Contains(body, "Workspace") || !strings.Contains(body, "Alias") {
 		t.Fatalf("settings must expose workspace alias controls, got:\n%s", body)
+	}
+}
+
+func TestWebSettingsWorkspacePickerHasFinderStyleLayout(t *testing.T) {
+	src, err := os.ReadFile("web/style.css")
+	if err != nil {
+		t.Fatalf("read web style: %v", err)
+	}
+	body := string(src)
+	for _, token := range []string{
+		".settings-dir-body",
+		".settings-dir-sidebar",
+		".settings-dir-breadcrumb",
+		".settings-dir-crumb",
+		".settings-dir-main",
+		".settings-dir-footer",
+		".settings-dir-selected-path",
+		"grid-template-columns",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("settings workspace picker CSS missing token %s, got:\n%s", token, body)
+		}
 	}
 }
 

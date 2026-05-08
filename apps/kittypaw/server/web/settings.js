@@ -141,25 +141,40 @@ const Settings = {
     container.innerHTML = `
       <section class="settings-section">
         <h2>Workspace</h2>
-        <div class="settings-form">
+        <div class="settings-form settings-form--wide">
           <label>Alias</label>
           <input class="input" id="settings-workspace-alias" autocomplete="off">
           <label>Path</label>
+          <input class="input input--mono" id="settings-workspace-path" autocomplete="off" spellcheck="false">
           <div class="settings-dir-picker">
-            <div class="settings-dir-toolbar">
-              <button class="btn btn--ghost btn--sm" id="settings-directory-parent" type="button">Up</button>
-              <div class="settings-dir-path" id="settings-workspace-path"></div>
+            <div class="settings-dir-body">
+              <div class="settings-dir-sidebar">
+                <button class="btn btn--ghost btn--sm settings-dir-up" id="settings-directory-parent" type="button">Up</button>
+                <div class="settings-dir-breadcrumb" id="settings-directory-breadcrumb"></div>
+              </div>
+              <div class="settings-dir-main">
+                <div class="settings-dir-list" id="settings-directory-list"></div>
+              </div>
             </div>
-            <div class="settings-dir-list" id="settings-directory-list"></div>
+            <div class="settings-dir-footer">
+              <span class="settings-dir-footer-label">Selected</span>
+              <span class="settings-dir-selected-path" id="settings-workspace-selected"></span>
+            </div>
           </div>
           <div class="settings-actions">
-            <button class="btn btn--primary btn--sm" id="settings-workspace-save">Save</button>
+            <button class="btn btn--primary btn--sm" id="settings-workspace-save">Add Workspace</button>
             <button class="btn btn--ghost btn--sm" id="settings-back">Cancel</button>
           </div>
           <div class="error-box mt-12" id="settings-form-error" hidden></div>
         </div>
       </section>`;
     document.getElementById('settings-back').onclick = () => this._load(container);
+    const pathInput = document.getElementById('settings-workspace-path');
+    pathInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      this._loadDirectoryPicker(pathInput.value.trim());
+    });
     this._loadDirectoryPicker('');
     document.getElementById('settings-workspace-save').onclick = async () => {
       const button = document.getElementById('settings-workspace-save');
@@ -184,10 +199,14 @@ const Settings = {
 
   async _loadDirectoryPicker(path) {
     const list = document.getElementById('settings-directory-list');
-    const current = document.getElementById('settings-workspace-path');
+    const pathInput = document.getElementById('settings-workspace-path');
+    const selected = document.getElementById('settings-workspace-selected');
     const parentButton = document.getElementById('settings-directory-parent');
+    const breadcrumb = document.getElementById('settings-directory-breadcrumb');
     const error = document.getElementById('settings-form-error');
-    if (!list || !current || !parentButton) return;
+    if (!list || !pathInput || !selected || !parentButton || !breadcrumb) return;
+
+    const previousPath = this._selectedWorkspacePath;
     list.innerHTML = '<div class="settings-dir-empty">Loading...</div>';
     parentButton.disabled = true;
     if (error) error.hidden = true;
@@ -195,7 +214,11 @@ const Settings = {
       const suffix = path ? `?path=${encodeURIComponent(path)}` : '';
       const data = await apiRaw(`/api/settings/directories${suffix}`);
       this._selectedWorkspacePath = data.path || '';
-      current.textContent = this._selectedWorkspacePath;
+      pathInput.value = this._selectedWorkspacePath;
+      selected.textContent = this._selectedWorkspacePath || 'No folder selected';
+      this._renderDirectoryBreadcrumb(breadcrumb, this._selectedWorkspacePath);
+      this._suggestWorkspaceAlias(this._selectedWorkspacePath);
+
       parentButton.disabled = !data.parent;
       parentButton.onclick = () => {
         if (data.parent) this._loadDirectoryPicker(data.parent);
@@ -214,12 +237,66 @@ const Settings = {
         button.addEventListener('click', () => this._loadDirectoryPicker(button.dataset.path || ''));
       });
     } catch (e) {
+      this._selectedWorkspacePath = previousPath;
+      if (previousPath) {
+        pathInput.value = previousPath;
+        selected.textContent = previousPath;
+      }
       list.innerHTML = '';
       if (error) {
         error.textContent = String(e.message || e);
         error.hidden = false;
       }
     }
+  },
+
+  _renderDirectoryBreadcrumb(container, path) {
+    const parts = this._workspaceBreadcrumbs(path);
+    if (!parts.length) {
+      container.innerHTML = '<span class="settings-dir-empty-inline">No path</span>';
+      return;
+    }
+    container.innerHTML = parts.map(part => `
+      <button class="settings-dir-crumb" type="button" data-path="${esc(part.path)}">${esc(part.label)}</button>
+    `).join('');
+    container.querySelectorAll('.settings-dir-crumb').forEach(button => {
+      button.addEventListener('click', () => this._loadDirectoryPicker(button.dataset.path || ''));
+    });
+  },
+
+  _workspaceBreadcrumbs(path) {
+    const raw = String(path || '').trim();
+    if (!raw) return [];
+    const windowsDrive = /^[A-Za-z]:[\\/]/.test(raw);
+    const separator = raw.includes('\\') && !raw.includes('/') ? '\\' : '/';
+    const tokens = raw.split(/[\\/]+/).filter(Boolean);
+    if (!tokens.length) return [{ label: separator, path: separator }];
+
+    if (windowsDrive) {
+      let current = tokens[0] + separator;
+      const out = [{ label: tokens[0], path: current }];
+      tokens.slice(1).forEach(token => {
+        current = current.endsWith(separator) ? current + token : current + separator + token;
+        out.push({ label: token, path: current });
+      });
+      return out;
+    }
+
+    let current = separator;
+    const out = [{ label: separator, path: separator }];
+    tokens.forEach(token => {
+      current = current === separator ? separator + token : current + separator + token;
+      out.push({ label: token, path: current });
+    });
+    return out;
+  },
+
+  _suggestWorkspaceAlias(path) {
+    const input = document.getElementById('settings-workspace-alias');
+    if (!input || input.value.trim()) return;
+    const parts = String(path || '').split(/[\\/]+/).filter(Boolean);
+    const last = parts[parts.length - 1] || '';
+    if (last) input.value = last;
   },
 
   _showLLMForm(container, status) {
