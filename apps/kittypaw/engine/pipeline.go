@@ -72,12 +72,12 @@ func classifyIntent(text string, state *PipelineState, sess *Session) Intent {
 	}
 	if sess != nil && sess.Store != nil {
 		convKey := conversationKey(sess)
-		if staffID, ok, _ := loadPendingStaffSwitch(sess.Store, convKey); ok && staffID != "" && (isBareAffirmative(t) || isBareNegative(t) || isStaffDraftCancel(t)) {
+		if staffID, ok, _ := loadPendingStaffSwitch(sess.Store, convKey); ok && staffID != "" && (isStaffAffirmative(t) || isBareNegative(t) || isStaffDraftCancel(t)) {
 			return Intent{
 				Kind: IntentStaffPostCreateSwitch,
 				Params: map[string]any{
 					"staff_id": staffID,
-					"accept":   isBareAffirmative(t),
+					"accept":   isStaffAffirmative(t),
 				},
 				Confidence: 1.0,
 			}
@@ -99,7 +99,7 @@ func classifyIntent(text string, state *PipelineState, sess *Session) Intent {
 				return Intent{Kind: IntentStaffDraftApprove, Confidence: 1.0}
 			}
 		}
-		if role, ok, _ := loadPendingStaffOffer(sess.Store, convKey); ok && role != "" && isBareAffirmative(t) {
+		if role, ok, _ := loadPendingStaffOffer(sess.Store, convKey); ok && role != "" && isStaffAffirmative(t) {
 			return Intent{
 				Kind: IntentStaffCreateOptIn,
 				Params: map[string]any{
@@ -804,7 +804,7 @@ func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, e
 	if err := savePendingStaffOffer(sess.Store, conversationKey(sess), role); err != nil {
 		return "staff 생성 제안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
-	return "KittyPaw Staff 기능으로 새 역할을 만들까요?", nil
+	return "Staff 기능으로 새 역할을 만들까요?", nil
 }
 
 type StaffCreateOptInBranch struct{}
@@ -1546,10 +1546,22 @@ func staffCreateRoleFromText(text string) (string, bool) {
 
 func isStaffDraftApproval(text string) bool {
 	t := strings.TrimSpace(strings.ToLower(text))
-	if isBareAffirmative(t) {
+	if isStaffAffirmative(t) {
 		return true
 	}
 	return containsAny(t, "생성해", "만들어", "진행", "승인", "좋아", "ok", "ㅇㅋ")
+}
+
+func isStaffAffirmative(text string) bool {
+	t := strings.TrimSpace(strings.ToLower(text))
+	if isBareAffirmative(t) {
+		return true
+	}
+	if runeCount(t) > 24 {
+		return false
+	}
+	t = strings.Trim(t, " .,!?\t\n\r~。！？")
+	return containsAny(t, "좋아", "좋아요", "해주세요", "해줘", "진행", "만들", "생성", "채용", "고용", "ok", "okay", "yes")
 }
 
 func isStaffDraftCancel(text string) bool {

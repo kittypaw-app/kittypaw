@@ -454,6 +454,53 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	}
 }
 
+func TestStaffNaturalLanguageAcceptsCasualOptInAndSwitchConfirmation(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   t.TempDir(),
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("개발PM 을 한명 채용해주세요."), nil)
+	if err != nil {
+		t.Fatalf("Run request error: %v", err)
+	}
+	if !strings.Contains(out, "Staff 기능") {
+		t.Fatalf("first response = %q, want Staff opt-in question", out)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("오.. 좋아요."), nil)
+	if err != nil {
+		t.Fatalf("Run casual opt-in error: %v", err)
+	}
+	if !strings.Contains(out, "초안") || !strings.Contains(out, "dev-pm") {
+		t.Fatalf("casual opt-in response = %q, want dev-pm draft", out)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("이대로 생성해주세요."), nil)
+	if err != nil {
+		t.Fatalf("Run approval error: %v", err)
+	}
+	if !strings.Contains(out, "만들었어요") || !strings.Contains(out, "지금 이 대화") {
+		t.Fatalf("approval response = %q, want creation plus switch question", out)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("오.. 좋아요."), nil)
+	if err != nil {
+		t.Fatalf("Run casual switch confirmation error: %v", err)
+	}
+	if !strings.Contains(out, "dev-pm") {
+		t.Fatalf("switch response = %q, want dev-pm", out)
+	}
+	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || !ok || got != "dev-pm" {
+		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want dev-pm", got, ok, err)
+	}
+}
+
 func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
