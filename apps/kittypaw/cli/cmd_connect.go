@@ -108,10 +108,6 @@ func runConnectService(provider, label, apiURL, accountID string, useCode bool) 
 	return connectServiceHTTP(provider, label, apiURL, apiMgr, serviceMgr)
 }
 
-func connectGmailCode(apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
-	return connectServiceCode("gmail", apiURL, apiMgr, serviceMgr)
-}
-
 func connectServiceCode(provider, apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
 	var loginURL string
 	if provider == "x" {
@@ -136,10 +132,6 @@ func connectServiceCode(provider, apiURL string, apiMgr *core.APITokenManager, s
 		return fmt.Errorf("empty code")
 	}
 	return exchangeConnectCode(connectBaseURL, code, serviceMgr)
-}
-
-func connectGmailHTTP(apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {
-	return connectServiceHTTP("gmail", "Gmail", apiURL, apiMgr, serviceMgr)
 }
 
 func connectServiceHTTP(provider, label, apiURL string, apiMgr *core.APITokenManager, serviceMgr *core.ServiceTokenManager) error {

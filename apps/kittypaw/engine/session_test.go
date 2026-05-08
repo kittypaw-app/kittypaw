@@ -438,6 +438,72 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	}
 }
 
+func TestStaffNaturalLanguageContextualRequestUsesLLMConversationForDraft(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	baseDir := t.TempDir()
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		Role:    core.RoleUser,
+		Content: "이번 릴리즈는 요구사항 정리와 우선순위 조율이 계속 필요해요.",
+	}); err != nil {
+		t.Fatalf("seed user turn: %v", err)
+	}
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		Role:    core.RoleAssistant,
+		Content: "진행상황과 블로커를 정리해서 관리하는 역할이 있으면 좋겠습니다.",
+	}); err != nil {
+		t.Fatalf("seed assistant turn: %v", err)
+	}
+	provider := &promptCaptureProvider{response: `{
+		"id": "pm",
+		"display_name": "PM",
+		"description": "요구사항 정리, 우선순위 조율, 진행상황 추적, 블로커 관리",
+		"aliases": ["pm", "피엠"],
+		"soul": "You are PM, a KittyPaw staff member.\n\n## Role\n요구사항 정리, 우선순위 조율, 진행상황 추적, 블로커 관리\n\n## Working Style\n- Keep plans practical.\n- Respond in Korean."
+	}`}
+	sess := &Session{
+		Provider:  provider,
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("우리 대화내용을 보고 pm 을 한사람 채용해주세요."), nil)
+	if err != nil {
+		t.Fatalf("Run request error: %v", err)
+	}
+	if !strings.Contains(out, "Staff 기능") {
+		t.Fatalf("first response = %q, want Staff opt-in question", out)
+	}
+
+	out, err = sess.Run(context.Background(), webChatEvent("네네"), nil)
+	if err != nil {
+		t.Fatalf("Run opt-in error: %v", err)
+	}
+	if !strings.Contains(out, "시스템 이름: pm") || strings.Contains(out, "우리 대화내용") {
+		t.Fatalf("draft response = %q, want LLM-authored pm draft without copied request preamble", out)
+	}
+	if len(provider.messages) == 0 {
+		t.Fatal("staff draft LLM was not called")
+	}
+	prompt := provider.messages[len(provider.messages)-1].Content
+	if !strings.Contains(prompt, "이번 릴리즈는 요구사항 정리") || !strings.Contains(prompt, "우리 대화내용을 보고 pm") {
+		t.Fatalf("staff draft prompt missing conversation/request context:\n%s", prompt)
+	}
+	draft, ok, err := loadPendingStaffDraft(baseDir, "alice")
+	if err != nil || !ok {
+		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
+	}
+	if draft.ID != "pm" || draft.DisplayName != "PM" {
+		t.Fatalf("draft = %+v, want id pm display PM", draft)
+	}
+	if strings.Contains(draft.Description, "우리 대화내용") {
+		t.Fatalf("draft description copied request preamble: %q", draft.Description)
+	}
+}
+
 func TestStaffNaturalLanguageAcceptsCasualOptInAndSwitchConfirmation(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()

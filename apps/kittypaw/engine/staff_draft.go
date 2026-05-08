@@ -29,13 +29,6 @@ type StaffDraft struct {
 
 var staffIDUnsafe = regexp.MustCompile(`[^a-z0-9_-]+`)
 
-func pendingStaffDraftKey(conversationID string) string {
-	if strings.TrimSpace(conversationID) == "" {
-		conversationID = "default"
-	}
-	return "pending_staff_draft:" + conversationID
-}
-
 func pendingStaffOfferKey(conversationID string) string {
 	if strings.TrimSpace(conversationID) == "" {
 		conversationID = "default"

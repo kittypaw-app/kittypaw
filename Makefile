@@ -6,7 +6,7 @@ help:
 	@echo "  contracts-check  Validate JSON contract files with jq"
 	@echo "  smoke-local      Run repeatable local cross-service smoke"
 	@echo "  e2e-local        Run Docker-backed local auth/space E2E"
-	@echo "  full-local-live  Run smoke, Docker E2E, and live public-data integrations"
+	@echo "  full-local-live  Run smoke, Docker E2E, live public-data integrations, and live Kittypaw LLM E2E"
 
 list:
 	@find . -maxdepth 5 -type f | sort
@@ -27,3 +27,4 @@ full-local-live:
 		trap 'make -C apps/kittyapi test-integration-down >/dev/null' EXIT; \
 		make -C apps/kittyapi test-integration; \
 		scripts/with-kittyapi-public-env.sh -- make -C apps/kittyapi test-integration-public
+	@$(MAKE) -C apps/kittypaw test-e2e-live

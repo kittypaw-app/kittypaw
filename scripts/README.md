@@ -17,7 +17,8 @@ make smoke-local
 It validates contracts, checks deploy script syntax, runs deterministic
 Kittypaw runner/channel critical flows early, runs Go/Rust package tests, and
 runs the Chat in-process e2e smoke. It intentionally does not run production
-endpoint smoke scripts, DB-backed integration tests, or LLM-judged evals.
+endpoint smoke scripts, DB-backed integration tests, live LLM E2E, or
+LLM-judged evals.
 
 The early Kittypaw flow checks are deterministic engine/channel regressions,
 not CLI workflow tests. They cover chat-driven skill install/run, staff
@@ -48,3 +49,21 @@ using fake KittyAPI geo resolution, and installed weather skill reuse.
 Set `KITTY_E2E_KEEP_DB=1` to keep the database container after the run. Set
 `KITTY_E2E_SKIP_COMPOSE=1` and provide `DATABASE_URL` to use an already-running
 test database.
+
+## `full-local-live`
+
+Runs the broad local suite including live integrations:
+
+```bash
+make full-local-live
+```
+
+In addition to smoke, Docker-backed E2E, and live KittyAPI public-data checks,
+this runs Kittypaw's live LLM staff-draft E2E. That E2E replays the regression
+where a contextual request such as "우리 대화내용을 보고 pm 을 한사람 채용해주세요."
+must produce a PM staff draft from the recent conversation instead of copying
+the request preamble into the staff name, role, or SOUL draft.
+
+The Kittypaw LLM portion uses the local configured account model. It defaults to
+`KITTYPAW_E2E_ACCOUNT=jinto`; override that environment variable when running
+with another local account.

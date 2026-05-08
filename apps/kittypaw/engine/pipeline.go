@@ -801,7 +801,11 @@ func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, e
 	if role == "" {
 		role = strings.TrimSpace(FormatEvent(&event))
 	}
-	if err := savePendingStaffOffer(sess.Store, conversationKey(sess), role); err != nil {
+	request := strings.TrimSpace(FormatEvent(&event))
+	if request == "" {
+		request = role
+	}
+	if err := savePendingStaffOffer(sess.Store, conversationKey(sess), request); err != nil {
 		return "staff 생성 제안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
 	return "Staff 기능으로 새 역할을 만들까요?", nil
@@ -822,7 +826,13 @@ func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, eve
 			return "진행할 staff 생성 요청을 찾지 못했어요.", nil
 		}
 	}
-	draft := buildStaffDraft(role, "natural_language")
+	draft, clarification, err := buildStaffDraftFromRequest(ctx, sess, role)
+	if err != nil {
+		return "staff 초안을 만들지 못했어요. 역할을 조금 더 구체적으로 말해 주세요.", nil
+	}
+	if clarification != "" {
+		return clarification, nil
+	}
 	base, err := core.ResolveBaseDir(sess.BaseDir)
 	if err != nil {
 		return "staff 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil

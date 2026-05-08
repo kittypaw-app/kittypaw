@@ -1797,7 +1797,7 @@ func ensureSingleServerProcess(pidPath string, currentPID int) error {
 		"KittyPaw server is already running (pid %d).\n\n"+
 			"  Stop the existing server first:\n"+
 			"    kittypaw server stop\n\n"+
-			"  Then start it again with the bind address you want.",
+			"  Then start it again with the bind address you want",
 		pid)
 }
 

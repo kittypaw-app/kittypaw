@@ -24,6 +24,7 @@ linters:
       exclude-functions:
         # io / close patterns (defer x.Close() is idiomatic Go)
         - (io.Closer).Close
+        - (*github.com/jinto/kittypaw/store.Store).Close
         - (*os.File).Close
         - (*database/sql.Rows).Close
         - (*database/sql.Stmt).Close

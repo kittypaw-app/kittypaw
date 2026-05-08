@@ -268,8 +268,7 @@ func TestConnectGmailCodeFlowDoesNotRequirePortalLoginToken(t *testing.T) {
 
 	var sessionHits int
 	var exchangeHits int
-	var connectTS *httptest.Server
-	connectTS = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	connectTS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/connect/gmail/sessions":
 			sessionHits++
