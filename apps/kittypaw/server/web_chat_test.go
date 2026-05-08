@@ -65,9 +65,29 @@ func TestWebSettingsManagesAccountWorkspaces(t *testing.T) {
 		"_suggestWorkspaceAlias",
 		"pathInput.value = previousPath;",
 		"selected.textContent = previousPath || 'No folder selected';",
+		"_directoryPickerRequestID",
+		"const requestID = ++this._directoryPickerRequestID;",
+		"if (requestID !== this._directoryPickerRequestID) return;",
+		"_renderDirectoryEntries",
+		"document.createElement('button')",
+		"button.dataset.path =",
+		"name.textContent =",
+		"sub.textContent =",
+		"_workspaceAliasAuto",
+		"aliasInput.addEventListener('input'",
+		"pathInput.classList.add('is-loading')",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("settings workspace picker missing token %s, got:\n%s", token, body)
+		}
+	}
+	for _, token := range []string{
+		`data-path="${esc`,
+		"entries.map(entry =>",
+		"list.innerHTML =",
+	} {
+		if strings.Contains(body, token) {
+			t.Fatalf("settings workspace picker must not build dynamic path HTML with %s, got:\n%s", token, body)
 		}
 	}
 	if !strings.Contains(body, "Workspace") || !strings.Contains(body, "Alias") {
@@ -90,6 +110,8 @@ func TestWebSettingsWorkspacePickerHasFinderStyleLayout(t *testing.T) {
 		".settings-dir-footer",
 		".settings-dir-selected-path",
 		"grid-template-columns",
+		"overflow-y: auto",
+		"max-height",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("settings workspace picker CSS missing token %s, got:\n%s", token, body)

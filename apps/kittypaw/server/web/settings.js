@@ -2,6 +2,8 @@
 
 const Settings = {
   _selectedWorkspacePath: '',
+  _directoryPickerRequestID: 0,
+  _workspaceAliasAuto: true,
 
   mount(container) {
     container.innerHTML = `
@@ -138,6 +140,7 @@ const Settings = {
 
   _showWorkspaceForm(container) {
     this._selectedWorkspacePath = '';
+    this._workspaceAliasAuto = true;
     container.innerHTML = `
       <section class="settings-section">
         <h2>Workspace</h2>
@@ -149,7 +152,7 @@ const Settings = {
           <div class="settings-dir-picker">
             <div class="settings-dir-body">
               <div class="settings-dir-sidebar">
-                <button class="btn btn--ghost btn--sm settings-dir-up" id="settings-directory-parent" type="button">Up</button>
+                <button class="btn btn--ghost btn--sm settings-dir-up" id="settings-directory-parent" type="button" disabled>Up</button>
                 <div class="settings-dir-breadcrumb" id="settings-directory-breadcrumb"></div>
               </div>
               <div class="settings-dir-main">
@@ -169,6 +172,10 @@ const Settings = {
         </div>
       </section>`;
     document.getElementById('settings-back').onclick = () => this._load(container);
+    const aliasInput = document.getElementById('settings-workspace-alias');
+    aliasInput.addEventListener('input', () => {
+      this._workspaceAliasAuto = false;
+    });
     const pathInput = document.getElementById('settings-workspace-path');
     pathInput.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
@@ -206,13 +213,14 @@ const Settings = {
     const error = document.getElementById('settings-form-error');
     if (!list || !pathInput || !selected || !parentButton || !breadcrumb) return;
 
+    const requestID = ++this._directoryPickerRequestID;
     const previousPath = this._selectedWorkspacePath;
-    list.innerHTML = '<div class="settings-dir-empty">Loading...</div>';
-    parentButton.disabled = true;
+    pathInput.classList.add('is-loading');
     if (error) error.hidden = true;
     try {
       const suffix = path ? `?path=${encodeURIComponent(path)}` : '';
       const data = await apiRaw(`/api/settings/directories${suffix}`);
+      if (requestID !== this._directoryPickerRequestID) return;
       this._selectedWorkspacePath = data.path || '';
       pathInput.value = this._selectedWorkspacePath;
       selected.textContent = this._selectedWorkspacePath || 'No folder selected';
@@ -224,42 +232,78 @@ const Settings = {
         if (data.parent) this._loadDirectoryPicker(data.parent);
       };
       const entries = Array.isArray(data.entries) ? data.entries : [];
-      if (!entries.length) {
-        list.innerHTML = '<div class="settings-dir-empty">No folders</div>';
-        return;
-      }
-      list.innerHTML = entries.map(entry => `
-        <button class="settings-dir-item" type="button" data-path="${esc(entry.path || '')}">
-          <span class="settings-dir-name">${esc(entry.name || '')}</span>
-          <span class="settings-dir-sub">${esc(entry.path || '')}</span>
-        </button>`).join('');
-      list.querySelectorAll('.settings-dir-item').forEach(button => {
-        button.addEventListener('click', () => this._loadDirectoryPicker(button.dataset.path || ''));
-      });
+      this._renderDirectoryEntries(list, entries);
     } catch (e) {
+      if (requestID !== this._directoryPickerRequestID) return;
       this._selectedWorkspacePath = previousPath;
       pathInput.value = previousPath;
       selected.textContent = previousPath || 'No folder selected';
-      list.innerHTML = '';
+      this._renderDirectoryBreadcrumb(breadcrumb, previousPath);
       if (error) {
         error.textContent = String(e.message || e);
         error.hidden = false;
       }
+    } finally {
+      if (requestID === this._directoryPickerRequestID) {
+        pathInput.classList.remove('is-loading');
+      }
     }
+  },
+
+  _renderDirectoryEntries(container, entries) {
+    if (!entries.length) {
+      this._renderDirectoryEmpty(container, 'No folders');
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    entries.forEach(entry => {
+      const button = document.createElement('button');
+      button.className = 'settings-dir-item';
+      button.type = 'button';
+      button.dataset.path = entry.path || '';
+      button.addEventListener('click', () => this._loadDirectoryPicker(button.dataset.path || ''));
+
+      const name = document.createElement('span');
+      name.className = 'settings-dir-name';
+      name.textContent = entry.name || '';
+
+      const sub = document.createElement('span');
+      sub.className = 'settings-dir-sub';
+      sub.textContent = entry.path || '';
+
+      button.append(name, sub);
+      fragment.appendChild(button);
+    });
+    container.replaceChildren(fragment);
+  },
+
+  _renderDirectoryEmpty(container, message) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-dir-empty';
+    empty.textContent = message;
+    container.replaceChildren(empty);
   },
 
   _renderDirectoryBreadcrumb(container, path) {
     const parts = this._workspaceBreadcrumbs(path);
     if (!parts.length) {
-      container.innerHTML = '<span class="settings-dir-empty-inline">No path</span>';
+      const empty = document.createElement('span');
+      empty.className = 'settings-dir-empty-inline';
+      empty.textContent = 'No path';
+      container.replaceChildren(empty);
       return;
     }
-    container.innerHTML = parts.map(part => `
-      <button class="settings-dir-crumb" type="button" data-path="${esc(part.path)}">${esc(part.label)}</button>
-    `).join('');
-    container.querySelectorAll('.settings-dir-crumb').forEach(button => {
+    const fragment = document.createDocumentFragment();
+    parts.forEach(part => {
+      const button = document.createElement('button');
+      button.className = 'settings-dir-crumb';
+      button.type = 'button';
+      button.dataset.path = part.path;
+      button.textContent = part.label;
       button.addEventListener('click', () => this._loadDirectoryPicker(button.dataset.path || ''));
+      fragment.appendChild(button);
     });
+    container.replaceChildren(fragment);
   },
 
   _workspaceBreadcrumbs(path) {
@@ -291,7 +335,7 @@ const Settings = {
 
   _suggestWorkspaceAlias(path) {
     const input = document.getElementById('settings-workspace-alias');
-    if (!input || input.value.trim()) return;
+    if (!input || !this._workspaceAliasAuto) return;
     const parts = String(path || '').split(/[\\/]+/).filter(Boolean);
     const last = parts[parts.length - 1] || '';
     if (last) input.value = last;
