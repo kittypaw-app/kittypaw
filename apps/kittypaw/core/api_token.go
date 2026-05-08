@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -127,6 +128,10 @@ const (
 	connectBaseURLKey       = "connect_base_url"
 	spaceBaseURLKey         = "space_base_url"
 )
+
+// ErrChatRelayDeviceRefreshInvalid means the hosted relay rejected the stored
+// device refresh token, so the local device credential has been cleared.
+var ErrChatRelayDeviceRefreshInvalid = errors.New("chat relay device refresh token invalid")
 
 // SaveChatRelayURL stores the chat relay server base URL from GET /discovery.
 // Empty value deletes the key so stale URLs don't survive relay migrations.
@@ -318,6 +323,9 @@ func (m *APITokenManager) PairChatRelayDevice(authBaseURL, apiURL, userAccessTok
 // RefreshChatRelayDeviceToken rotates the stored chat relay access/refresh
 // token pair by calling POST {auth_base_url}/devices/refresh.
 func (m *APITokenManager) RefreshChatRelayDeviceToken(authBaseURL, apiURL string) (ChatRelayDeviceTokens, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	current, ok := m.LoadChatRelayDeviceTokens(apiURL)
 	if !ok {
 		return ChatRelayDeviceTokens{}, fmt.Errorf("hosted chat is not configured; run `kittypaw login`")
@@ -334,7 +342,14 @@ func (m *APITokenManager) RefreshChatRelayDeviceToken(authBaseURL, apiURL string
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return ChatRelayDeviceTokens{}, fmt.Errorf("device refresh failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		body := strings.TrimSpace(string(b))
+		if resp.StatusCode == http.StatusUnauthorized {
+			if err := m.ClearChatRelayDeviceTokens(apiURL); err != nil {
+				return ChatRelayDeviceTokens{}, fmt.Errorf("%w: device refresh failed (%d): %s; clear local device tokens: %v", ErrChatRelayDeviceRefreshInvalid, resp.StatusCode, body, err)
+			}
+			return ChatRelayDeviceTokens{}, fmt.Errorf("%w: device refresh failed (%d): %s", ErrChatRelayDeviceRefreshInvalid, resp.StatusCode, body)
+		}
+		return ChatRelayDeviceTokens{}, fmt.Errorf("device refresh failed (%d): %s", resp.StatusCode, body)
 	}
 	rotated, err := decodeChatRelayDeviceTokenResponse(resp.Body)
 	if err != nil {

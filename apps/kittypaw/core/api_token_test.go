@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -553,6 +554,37 @@ func TestAPITokenManager_RefreshChatRelayDeviceTokenRotatesStoredTokens(t *testi
 	stored, ok := mgr.LoadChatRelayDeviceTokens(apiURL)
 	if !ok || stored != want {
 		t.Fatalf("stored tokens = (%#v, %v), want %#v true", stored, ok, want)
+	}
+}
+
+func TestAPITokenManager_RefreshChatRelayDeviceTokenInvalidRefreshClearsStoredTokens(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devices/refresh" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid refresh token"}`, http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	secrets := &SecretsStore{path: t.TempDir() + "/secrets.json", data: make(map[string]map[string]string)}
+	mgr := NewAPITokenManager("", secrets)
+	apiURL := "https://portal.kittypaw.app"
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, ChatRelayDeviceTokens{
+		DeviceID:     "dev_123",
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := mgr.RefreshChatRelayDeviceToken(ts.URL, apiURL)
+	if !errors.Is(err, ErrChatRelayDeviceRefreshInvalid) {
+		t.Fatalf("RefreshChatRelayDeviceToken error = %v, want ErrChatRelayDeviceRefreshInvalid", err)
+	}
+	if got, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok || got != (ChatRelayDeviceTokens{}) {
+		t.Fatalf("stored tokens after invalid refresh = (%#v, %v), want cleared", got, ok)
 	}
 }
 

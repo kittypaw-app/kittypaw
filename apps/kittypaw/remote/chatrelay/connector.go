@@ -18,6 +18,10 @@ const maxRelayFrameBytes = 1 << 20
 
 var ErrUnauthorized = errors.New("chat relay unauthorized")
 
+// ErrCredentialInvalid tells the connector that refreshing credentials cannot
+// recover without user login or device re-pairing.
+var ErrCredentialInvalid = errors.New("chat relay credential invalid")
+
 type ConnectorConfig struct {
 	RelayURL      string
 	Credential    string
@@ -170,6 +174,12 @@ func (c *Connector) Run(ctx context.Context, opts RunOptions) {
 			if errors.Is(err, ErrUnauthorized) && c.RefreshCredential != nil {
 				nextCredential, refreshErr := c.RefreshCredential(ctx)
 				if ctx.Err() != nil {
+					return
+				}
+				if errors.Is(refreshErr, ErrCredentialInvalid) {
+					if opts.Logf != nil {
+						opts.Logf("chat relay credential invalid for local accounts %s; run `kittypaw login` to reconnect hosted chat", strings.Join(c.Config.LocalAccounts, ","))
+					}
 					return
 				}
 				if refreshErr == nil && strings.TrimSpace(nextCredential) != "" {

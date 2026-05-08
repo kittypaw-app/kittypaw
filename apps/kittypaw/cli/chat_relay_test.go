@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/remote/chatrelay"
 	"github.com/jinto/kittypaw/server"
 )
 
@@ -367,6 +369,98 @@ func TestChatRelayConnectorRuntimeConfigsRefreshExpiredCredentialOnceForGroup(t 
 		if !ok || tokens.AccessToken != chatRelayTestAccessToken("access-2") || tokens.RefreshToken != "refresh-2" {
 			t.Fatalf("%s tokens = (%#v, %v), want group-rotated tokens", name, tokens, ok)
 		}
+	}
+}
+
+func TestChatRelayConnectorRuntimeConfigsDropsInvalidDeviceCredential(t *testing.T) {
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devices/refresh" {
+			http.NotFound(w, r)
+			return
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid refresh token"}`, http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := core.DefaultAPIServerURL
+	if err := mgr.SaveAuthBaseURL(apiURL, ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_123",
+		AccessToken:  chatRelayTestAccessTokenWithExp("expired", 1),
+		RefreshToken: "refresh-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := chatRelayConnectorRuntimeConfigs([]*server.AccountDeps{
+		{Account: &core.Account{ID: "alice"}, Secrets: secrets, APITokenMgr: mgr},
+	}, "0.1.5", false)
+	if len(got) != 0 {
+		t.Fatalf("runtime configs = %#v, want none after terminal invalid credential", got)
+	}
+	if calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", calls)
+	}
+	if tokens, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok || tokens != (core.ChatRelayDeviceTokens{}) {
+		t.Fatalf("stored device tokens = (%#v, %v), want cleared", tokens, ok)
+	}
+}
+
+func TestChatRelayConnectorRuntimeRefreshMapsInvalidRefreshToTerminalCredential(t *testing.T) {
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devices/refresh" {
+			http.NotFound(w, r)
+			return
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid refresh token"}`, http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	secrets := testSecretsStore(t)
+	mgr := core.NewAPITokenManager("", secrets)
+	apiURL := core.DefaultAPIServerURL
+	if err := mgr.SaveAuthBaseURL(apiURL, ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveSpaceBaseURL(apiURL, "https://space.kittypaw.app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SaveChatRelayDeviceTokens(apiURL, core.ChatRelayDeviceTokens{
+		DeviceID:     "dev_123",
+		AccessToken:  chatRelayTestAccessToken("access-1"),
+		RefreshToken: "refresh-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := chatRelayConnectorRuntimeConfigs([]*server.AccountDeps{
+		{Account: &core.Account{ID: "alice"}, Secrets: secrets, APITokenMgr: mgr},
+	}, "0.1.5", false)
+	if len(got) != 1 {
+		t.Fatalf("runtime configs = %d, want connector before relay rejects access token", len(got))
+	}
+	_, err := got[0].RefreshCredential(context.Background())
+	if !errors.Is(err, chatrelay.ErrCredentialInvalid) {
+		t.Fatalf("RefreshCredential error = %v, want ErrCredentialInvalid", err)
+	}
+	if calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", calls)
+	}
+	if tokens, ok := mgr.LoadChatRelayDeviceTokens(apiURL); ok || tokens != (core.ChatRelayDeviceTokens{}) {
+		t.Fatalf("stored device tokens = (%#v, %v), want cleared", tokens, ok)
 	}
 }
 

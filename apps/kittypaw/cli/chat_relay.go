@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -47,12 +48,21 @@ func chatRelayConnectorRuntimeConfigs(deps []*server.AccountDeps, daemonVersion 
 			configs = append(configs, runtimeCfg)
 		}
 	}
+	filtered := configs[:0]
 	for i := range configs {
-		if credential, ok := configs[i].EnsureFreshCredential(); ok {
+		credential, ok, invalid := configs[i].EnsureFreshCredential()
+		if ok {
 			configs[i].Config.Credential = credential
+			filtered = append(filtered, configs[i])
+			continue
 		}
+		if invalid {
+			slog.Warn("chat relay credential invalid; cleared local device tokens; run kittypaw login", "accounts", configs[i].Config.LocalAccounts)
+			continue
+		}
+		filtered = append(filtered, configs[i])
 	}
-	return configs
+	return filtered
 }
 
 func freshChatRelayAccountDeps(deps []*server.AccountDeps) []*server.AccountDeps {
@@ -95,6 +105,7 @@ type chatRelayCredentialSource struct {
 
 func (cfg chatRelayConnectorRuntimeConfig) RefreshCredential(ctx context.Context) (string, error) {
 	var lastErr error
+	var invalidErr error
 	for i, source := range cfg.sources {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -104,6 +115,9 @@ func (cfg chatRelayConnectorRuntimeConfig) RefreshCredential(ctx context.Context
 		}
 		tokens, err := source.mgr.RefreshChatRelayDeviceToken(source.authBaseURL, source.apiURL)
 		if err != nil {
+			if errors.Is(err, core.ErrChatRelayDeviceRefreshInvalid) {
+				invalidErr = err
+			}
 			lastErr = err
 			continue
 		}
@@ -118,18 +132,25 @@ func (cfg chatRelayConnectorRuntimeConfig) RefreshCredential(ctx context.Context
 		return tokens.AccessToken, nil
 	}
 	if lastErr != nil {
+		if invalidErr != nil {
+			return "", fmt.Errorf("%w: %w", chatrelay.ErrCredentialInvalid, invalidErr)
+		}
 		return "", lastErr
 	}
 	return "", fmt.Errorf("no chat relay credential refresh source")
 }
 
-func (cfg chatRelayConnectorRuntimeConfig) EnsureFreshCredential() (string, bool) {
+func (cfg chatRelayConnectorRuntimeConfig) EnsureFreshCredential() (string, bool, bool) {
+	var invalid bool
 	for i, source := range cfg.sources {
 		if source.mgr == nil {
 			continue
 		}
 		tokens, err := source.mgr.EnsureChatRelayDeviceAccessToken(source.authBaseURL, source.apiURL)
 		if err != nil {
+			if errors.Is(err, core.ErrChatRelayDeviceRefreshInvalid) {
+				invalid = true
+			}
 			continue
 		}
 		for j, target := range cfg.sources {
@@ -138,9 +159,9 @@ func (cfg chatRelayConnectorRuntimeConfig) EnsureFreshCredential() (string, bool
 			}
 			_ = target.mgr.SaveChatRelayDeviceTokens(target.apiURL, tokens)
 		}
-		return tokens.AccessToken, true
+		return tokens.AccessToken, true, false
 	}
-	return "", false
+	return "", false, invalid
 }
 
 func buildChatRelayConnectorRuntimeConfig(dep *server.AccountDeps, daemonVersion string, dispatchReady bool) (chatRelayConnectorRuntimeConfig, bool) {

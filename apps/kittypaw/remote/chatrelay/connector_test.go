@@ -3,6 +3,7 @@ package chatrelay
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -319,6 +320,63 @@ func TestRunRefreshesCredentialAfterUnauthorizedDial(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for refreshed hello")
+	}
+}
+
+func TestRunStopsWhenCredentialRefreshIsInvalid(t *testing.T) {
+	var attempts atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/daemon/connect" {
+			http.NotFound(w, r)
+			return
+		}
+		attempts.Add(1)
+		http.Error(w, "expired", http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logCh := make(chan string, 4)
+	done := make(chan struct{})
+	connector := &Connector{
+		Config: ConnectorConfig{
+			RelayURL:      ts.URL,
+			Credential:    "access-1",
+			DeviceID:      "dev_1",
+			LocalAccounts: []string{"alice"},
+			DaemonVersion: "0.1.5",
+		},
+		RefreshCredential: func(context.Context) (string, error) {
+			return "", ErrCredentialInvalid
+		},
+	}
+	go func() {
+		connector.Run(ctx, RunOptions{
+			RetryInitialDelay: time.Hour,
+			RetryMaxDelay:     time.Hour,
+			Logf: func(format string, args ...any) {
+				logCh <- fmt.Sprintf(format, args...)
+			},
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("connector did not stop after terminal invalid credential")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("dial attempts = %d, want 1", got)
+	}
+	select {
+	case msg := <-logCh:
+		if !strings.Contains(msg, "credential invalid") {
+			t.Fatalf("log = %q, want credential invalid", msg)
+		}
+	default:
+		t.Fatal("missing terminal credential log")
 	}
 }
 
