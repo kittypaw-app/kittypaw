@@ -3,7 +3,6 @@ package engine
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -171,43 +170,114 @@ func staffSoulDraft(draft StaffDraft) string {
 `, draft.DisplayName, draft.Description)
 }
 
-func savePendingStaffDraft(st *store.Store, conversationID string, draft StaffDraft) error {
-	if st == nil {
-		return fmt.Errorf("store is required")
-	}
-	data, err := json.Marshal(draft)
+func savePendingStaffDraft(baseDir, conversationID string, draft StaffDraft) error {
+	base, err := core.ResolveBaseDir(baseDir)
 	if err != nil {
 		return err
 	}
-	return st.SetUserContext(pendingStaffDraftKey(conversationID), string(data), "staff_draft")
+	if core.StaffHasSoul(base, draft.ID) {
+		return fmt.Errorf("staff %q already exists", draft.ID)
+	}
+	if existing, ok, err := loadPendingStaffDraft(baseDir, conversationID); err != nil {
+		return err
+	} else if ok && existing.ID != draft.ID {
+		return fmt.Errorf("pending staff draft %q already exists", existing.ID)
+	}
+	for _, alias := range draft.Aliases {
+		resolved, ok, err := core.ResolveStaffReference(base, alias)
+		if err != nil {
+			return err
+		}
+		if ok && resolved != draft.ID {
+			return fmt.Errorf("staff alias %q already belongs to %q", alias, resolved)
+		}
+	}
+	meta := core.StaffMetaFile{
+		ID:                      draft.ID,
+		DisplayName:             draft.DisplayName,
+		Aliases:                 draft.Aliases,
+		Description:             draft.Description,
+		CreatedFromConversation: conversationKeyFromID(conversationID),
+		CreatedAt:               draft.CreatedAt,
+		DraftSource:             draft.Source,
+		DraftExpiresAt:          draft.ExpiresAt,
+	}
+	return core.WriteStaffDraft(base, meta, draft.Soul)
 }
 
-func loadPendingStaffDraft(st *store.Store, conversationID string) (StaffDraft, bool, error) {
-	if st == nil {
-		return StaffDraft{}, false, nil
-	}
-	raw, ok, err := st.GetUserContext(pendingStaffDraftKey(conversationID))
-	if err != nil || !ok {
+func loadPendingStaffDraft(baseDir, conversationID string) (StaffDraft, bool, error) {
+	base, err := core.ResolveBaseDir(baseDir)
+	if err != nil {
 		return StaffDraft{}, false, err
 	}
-	var draft StaffDraft
-	if err := json.Unmarshal([]byte(raw), &draft); err != nil {
+	records, err := core.ListStaffDraftRecords(base)
+	if err != nil {
 		return StaffDraft{}, false, err
 	}
-	expiresAt, err := time.Parse(time.RFC3339, draft.ExpiresAt)
-	if err == nil && time.Now().UTC().After(expiresAt) {
-		_, _ = st.DeleteUserContext(pendingStaffDraftKey(conversationID))
-		return StaffDraft{}, false, nil
+	conv := conversationKeyFromID(conversationID)
+	for _, record := range records {
+		if record.CreatedFromConversation != conv {
+			continue
+		}
+		if record.DraftExpiresAt != "" {
+			expiresAt, err := time.Parse(time.RFC3339, record.DraftExpiresAt)
+			if err == nil && time.Now().UTC().After(expiresAt) {
+				_ = removeStaffDraftFiles(base, record.ID)
+				return StaffDraft{}, false, nil
+			}
+		}
+		soul, err := os.ReadFile(filepath.Join(base, "staff", record.ID, "SOUL.draft.md"))
+		if err != nil {
+			return StaffDraft{}, false, err
+		}
+		return StaffDraft{
+			ID:          record.ID,
+			DisplayName: record.DisplayName,
+			Description: record.Description,
+			Aliases:     record.Aliases,
+			Soul:        string(soul),
+			Source:      record.DraftSource,
+			CreatedAt:   record.CreatedAt,
+			ExpiresAt:   record.DraftExpiresAt,
+		}, true, nil
 	}
-	return draft, true, nil
+	return StaffDraft{}, false, nil
 }
 
-func clearPendingStaffDraft(st *store.Store, conversationID string) error {
-	if st == nil {
-		return nil
+func clearPendingStaffDraft(baseDir, conversationID string) error {
+	base, err := core.ResolveBaseDir(baseDir)
+	if err != nil {
+		return err
 	}
-	_, err := st.DeleteUserContext(pendingStaffDraftKey(conversationID))
-	return err
+	records, err := core.ListStaffDraftRecords(base)
+	if err != nil {
+		return err
+	}
+	conv := conversationKeyFromID(conversationID)
+	for _, record := range records {
+		if record.CreatedFromConversation == conv {
+			return removeStaffDraftFiles(base, record.ID)
+		}
+	}
+	return nil
+}
+
+func removeStaffDraftFiles(base, id string) error {
+	if core.StaffHasSoul(base, id) {
+		err := os.Remove(filepath.Join(base, "staff", id, "SOUL.draft.md"))
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return os.RemoveAll(filepath.Join(base, "staff", id))
+}
+
+func conversationKeyFromID(conversationID string) string {
+	if strings.TrimSpace(conversationID) == "" {
+		return "default"
+	}
+	return conversationID
 }
 
 func savePendingStaffOffer(st *store.Store, conversationID, role string) error {
@@ -254,20 +324,19 @@ func clearPendingStaffSwitch(st *store.Store, conversationID string) error {
 	return err
 }
 
-func commitStaffDraft(baseDir string, st *store.Store, draft StaffDraft) error {
-	if st == nil {
-		return fmt.Errorf("store is required")
-	}
+func commitStaffDraft(baseDir string, draft StaffDraft) error {
 	if err := core.ValidateStaffID(draft.ID); err != nil {
 		return err
 	}
-	if _, ok, err := st.GetStaffMeta(draft.ID); err != nil {
+	base, err := core.ResolveBaseDir(baseDir)
+	if err != nil {
 		return err
-	} else if ok {
+	}
+	if core.StaffHasSoul(base, draft.ID) {
 		return fmt.Errorf("staff %q already exists", draft.ID)
 	}
 	for _, alias := range draft.Aliases {
-		resolved, ok, err := st.ResolveStaffID(alias)
+		resolved, ok, err := core.ResolveStaffReference(base, alias)
 		if err != nil {
 			return err
 		}
@@ -275,26 +344,20 @@ func commitStaffDraft(baseDir string, st *store.Store, draft StaffDraft) error {
 			return fmt.Errorf("staff alias %q already belongs to %q", alias, resolved)
 		}
 	}
-	base, err := core.ResolveBaseDir(baseDir)
-	if err != nil {
-		return err
+	return core.ActivateStaffDraft(base, draft.ID)
+}
+
+func staffToolOverrideOutput(baseDir, conversationID string, calls []core.SkillCall) string {
+	for _, call := range calls {
+		if call.SkillName != "Staff" || call.Method != "create" {
+			continue
+		}
+		draft, ok, err := loadPendingStaffDraft(baseDir, conversationID)
+		if err == nil && ok {
+			return formatStaffDraftPreview(draft)
+		}
 	}
-	staffDir := filepath.Join(base, "staff", draft.ID)
-	if err := os.MkdirAll(staffDir, 0o755); err != nil {
-		return fmt.Errorf("create staff dir: %w", err)
-	}
-	soulPath := filepath.Join(staffDir, "SOUL.md")
-	if err := os.WriteFile(soulPath, []byte(draft.Soul), 0o644); err != nil {
-		return fmt.Errorf("write SOUL.md: %w", err)
-	}
-	if err := st.UpsertStaffMetaWithDisplayName(draft.ID, draft.DisplayName, draft.Description, "[]", "chat"); err != nil {
-		_ = os.Remove(soulPath)
-		return err
-	}
-	if err := st.ReplaceStaffAliases(draft.ID, draft.Aliases); err != nil {
-		return err
-	}
-	return nil
+	return ""
 }
 
 func uniqueStrings(items []string) []string {

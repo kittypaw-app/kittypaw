@@ -62,9 +62,10 @@ const (
 
 // ConversationState holds the mutable runtime state for the account conversation.
 type ConversationState struct {
-	ConversationID string             `json:"conversation_id,omitempty"`
-	SystemPrompt   string             `json:"system_prompt"`
-	Turns          []ConversationTurn `json:"turns"`
+	ConversationID      string             `json:"conversation_id,omitempty"`
+	SystemPrompt        string             `json:"system_prompt"`
+	ConversationStaffID string             `json:"conversation_staff_id,omitempty"`
+	Turns               []ConversationTurn `json:"turns"`
 }
 
 // ConversationTurn is a single message in a conversation.

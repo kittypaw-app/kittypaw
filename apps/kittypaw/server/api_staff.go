@@ -12,13 +12,16 @@ import (
 
 // GET /api/v1/staff - list staff with preset status.
 func (s *Server) handleStaffList(w http.ResponseWriter, _ *http.Request) {
-	staff, err := s.store.ListActiveStaff()
+	base, err := core.ResolveBaseDir(s.session.BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	base := s.session.BaseDir
+	staff, err := core.ListStaffRecords(base)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	type staffEntry struct {
 		ID           string `json:"id"`
@@ -34,12 +37,8 @@ func (s *Server) handleStaffList(w http.ResponseWriter, _ *http.Request) {
 		e := staffEntry{
 			ID:          sm.ID,
 			Description: sm.Description,
-			Active:      sm.Active,
-		}
-		// Check if SOUL.md exists on disk.
-		soulPath := filepath.Join(base, "staff", sm.ID, "SOUL.md")
-		if _, err := os.Stat(soulPath); err == nil {
-			e.HasSoul = true
+			Active:      true,
+			HasSoul:     true,
 		}
 		status := core.StaffPresetStatus(base, sm.ID)
 		switch status.Kind {
@@ -75,8 +74,17 @@ func (s *Server) handleStaffCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	base, err := core.ResolveBaseDir(s.session.BaseDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if core.StaffHasSoul(base, req.ID) {
+		writeError(w, http.StatusConflict, "staff already exists: "+req.ID)
+		return
+	}
 
-	// Validate preset before creating DB entry (prevent orphan rows).
+	// Validate preset before writing files.
 	if req.PresetID != "" {
 		if _, ok := core.Presets[req.PresetID]; !ok {
 			writeError(w, http.StatusBadRequest, "unknown preset: "+req.PresetID)
@@ -84,15 +92,25 @@ func (s *Server) handleStaffCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create DB entry.
-	if err := s.store.UpsertStaffMeta(req.ID, req.Description, "[]", "api"); err != nil {
+	meta := core.StaffMetaFile{
+		ID:          req.ID,
+		DisplayName: req.Nick,
+		Description: req.Description,
+	}
+	if err := core.WriteStaffMetaFile(base, meta); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	// Apply preset if specified (already validated above).
 	if req.PresetID != "" {
-		if err := core.ApplyStaffPreset(s.session.BaseDir, req.ID, req.PresetID); err != nil {
+		if err := core.ApplyStaffPreset(base, req.ID, req.PresetID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		soul := "You are " + req.ID + ", a KittyPaw staff member.\n\n## Role\n" + req.Description + "\n"
+		if err := os.WriteFile(filepath.Join(base, "staff", req.ID, "SOUL.md"), []byte(soul), 0o644); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -109,12 +127,9 @@ func (s *Server) handleStaffActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Verify staff exists before activating.
-	if _, exists, err := s.store.GetStaffMeta(id); err != nil {
+	base, err := core.ResolveBaseDir(s.session.BaseDir)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	} else if !exists {
-		writeError(w, http.StatusNotFound, "staff not found: "+id)
 		return
 	}
 
@@ -128,13 +143,29 @@ func (s *Server) handleStaffActivate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.PresetID != "" {
-		if err := core.ApplyStaffPreset(s.session.BaseDir, id, body.PresetID); err != nil {
+		if err := core.ApplyStaffPreset(base, id, body.PresetID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	} else if !core.StaffHasSoul(base, id) {
+		if _, err := os.Stat(filepath.Join(base, "staff", id, "meta.json")); err != nil {
+			if os.IsNotExist(err) {
+				writeError(w, http.StatusNotFound, "staff not found: "+id)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, "staff has no SOUL.md: "+id)
+		return
 	}
 
-	if err := s.store.SetStaffActive(id, true); err != nil {
+	meta, err := core.ReadStaffMetaFile(base, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := core.WriteStaffMetaFile(base, meta); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

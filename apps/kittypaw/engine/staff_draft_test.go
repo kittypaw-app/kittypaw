@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jinto/kittypaw/core"
 )
 
 func TestStaffDraftBuildsDevelopmentPM(t *testing.T) {
@@ -27,42 +29,47 @@ func TestStaffDraftBuildsDevelopmentPM(t *testing.T) {
 }
 
 func TestStaffDraftSaveLoadAndClear(t *testing.T) {
-	st := openTestStore(t)
+	baseDir := t.TempDir()
 	draft := buildStaffDraft("개발PM", "test")
 
-	if err := savePendingStaffDraft(st, "conv-1", draft); err != nil {
+	if err := savePendingStaffDraft(baseDir, "conv-1", draft); err != nil {
 		t.Fatalf("savePendingStaffDraft() error = %v", err)
 	}
-	loaded, ok, err := loadPendingStaffDraft(st, "conv-1")
+	loaded, ok, err := loadPendingStaffDraft(baseDir, "conv-1")
 	if err != nil || !ok {
 		t.Fatalf("loadPendingStaffDraft() = ok %v err %v", ok, err)
 	}
 	if loaded.ID != "dev-pm" || loaded.DisplayName != "개발 PM" {
 		t.Fatalf("loaded draft = %+v", loaded)
 	}
+	if core.StaffHasSoul(baseDir, "dev-pm") {
+		t.Fatal("draft save created active SOUL.md, want only draft")
+	}
 
-	if err := clearPendingStaffDraft(st, "conv-1"); err != nil {
+	if err := clearPendingStaffDraft(baseDir, "conv-1"); err != nil {
 		t.Fatalf("clearPendingStaffDraft() error = %v", err)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "conv-1"); err != nil || ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, "conv-1"); err != nil || ok {
 		t.Fatalf("load after clear = ok %v err %v, want ok false nil", ok, err)
 	}
 }
 
-func TestStaffDraftCommitCreatesMetadataSoulAndAliases(t *testing.T) {
-	st := openTestStore(t)
+func TestStaffDraftCommitCreatesMetaAndSoul(t *testing.T) {
 	baseDir := t.TempDir()
 	draft := buildStaffDraft("개발PM", "test")
+	if err := savePendingStaffDraft(baseDir, "conv-1", draft); err != nil {
+		t.Fatalf("savePendingStaffDraft() error = %v", err)
+	}
 
-	if err := commitStaffDraft(baseDir, st, draft); err != nil {
+	if err := commitStaffDraft(baseDir, draft); err != nil {
 		t.Fatalf("commitStaffDraft() error = %v", err)
 	}
 
-	meta, ok, err := st.GetStaffMeta("dev-pm")
-	if err != nil || !ok {
-		t.Fatalf("GetStaffMeta(dev-pm) = ok %v err %v", ok, err)
+	meta, err := core.ReadStaffMetaFile(baseDir, "dev-pm")
+	if err != nil {
+		t.Fatalf("ReadStaffMetaFile(dev-pm): %v", err)
 	}
-	if meta.DisplayName != "개발 PM" || meta.Description != draft.Description || !meta.Active {
+	if meta.DisplayName != "개발 PM" || meta.Description != draft.Description || meta.ActivatedAt == "" {
 		t.Fatalf("staff meta = %+v", meta)
 	}
 
@@ -75,29 +82,29 @@ func TestStaffDraftCommitCreatesMetadataSoulAndAliases(t *testing.T) {
 		t.Fatalf("SOUL.md = %q, want draft soul", string(data))
 	}
 
-	resolved, ok, err := st.ResolveStaffID("개발PM")
+	resolved, ok, err := core.ResolveStaffReference(baseDir, "개발PM")
 	if err != nil || !ok || resolved != "dev-pm" {
-		t.Fatalf("ResolveStaffID(개발PM) = %q ok=%v err=%v, want dev-pm true nil", resolved, ok, err)
+		t.Fatalf("ResolveStaffReference(개발PM) = %q ok=%v err=%v, want dev-pm true nil", resolved, ok, err)
 	}
 }
 
 func TestStaffDraftCommitAliasCollisionDoesNotPartiallyCreate(t *testing.T) {
-	st := openTestStore(t)
 	baseDir := t.TempDir()
-	if err := st.UpsertStaffMetaWithDisplayName("finance", "재무", "재무", "[]", "test"); err != nil {
-		t.Fatalf("seed staff meta: %v", err)
+	if err := core.WriteStaffDraft(baseDir, core.StaffMetaFile{
+		ID:          "finance",
+		DisplayName: "재무",
+		Aliases:     []string{"개발PM"},
+		Description: "재무",
+	}, "finance soul"); err != nil {
+		t.Fatalf("seed staff draft: %v", err)
 	}
-	if err := st.ReplaceStaffAliases("finance", []string{"개발PM"}); err != nil {
-		t.Fatalf("seed alias: %v", err)
+	if err := core.ActivateStaffDraft(baseDir, "finance"); err != nil {
+		t.Fatalf("activate finance: %v", err)
 	}
 	draft := buildStaffDraft("개발PM", "test")
-
-	err := commitStaffDraft(baseDir, st, draft)
+	err := savePendingStaffDraft(baseDir, "conv-1", draft)
 	if err == nil {
-		t.Fatal("commitStaffDraft() error = nil, want alias collision")
-	}
-	if _, ok, getErr := st.GetStaffMeta("dev-pm"); getErr != nil || ok {
-		t.Fatalf("GetStaffMeta(dev-pm) after failed commit = ok %v err %v, want absent", ok, getErr)
+		t.Fatal("savePendingStaffDraft() error = nil, want alias collision")
 	}
 	if _, statErr := os.Stat(filepath.Join(baseDir, "staff", "dev-pm", "SOUL.md")); !os.IsNotExist(statErr) {
 		t.Fatalf("SOUL.md after failed commit stat err = %v, want not exist", statErr)

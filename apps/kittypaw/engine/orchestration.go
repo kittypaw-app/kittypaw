@@ -79,7 +79,11 @@ func OrchestrateRequest(
 		return "", false, nil
 	}
 
-	staff, err := st.ListActiveStaff()
+	base, err := core.ResolveBaseDir(baseDir)
+	if err != nil {
+		return "", false, nil
+	}
+	staff, err := core.ListStaffRecords(base)
 	if err != nil || len(staff) == 0 {
 		return "", false, nil
 	}
@@ -126,7 +130,7 @@ func OrchestrateRequest(
 func pmDecide(
 	ctx context.Context,
 	text string,
-	staff []store.StaffMeta,
+	staff []core.StaffRecord,
 	provider llm.Provider,
 ) (*PMDecision, error) {
 	var staffList strings.Builder
@@ -251,8 +255,13 @@ func executeDelegateTask(
 		return result
 	}
 
-	// Load staff.
-	meta, ok, err := st.GetStaffMeta(task.StaffID)
+	// Load staff from the file registry. SOUL.md is the existence signal.
+	base, err := core.ResolveBaseDir(baseDir)
+	if err != nil {
+		result.Result = fmt.Sprintf("staff base error: %s", err)
+		return result
+	}
+	canonicalID, ok, err := core.ResolveStaffReference(base, task.StaffID)
 	if err != nil {
 		result.Result = fmt.Sprintf("staff lookup error: %s", err)
 		return result
@@ -261,10 +270,12 @@ func executeDelegateTask(
 		result.Result = fmt.Sprintf("staff %q not found", task.StaffID)
 		return result
 	}
-	if !meta.Active {
-		result.Result = fmt.Sprintf("staff %q is inactive", task.StaffID)
+	meta, err := core.ReadStaffMetaFile(base, canonicalID)
+	if err != nil {
+		result.Result = fmt.Sprintf("staff metadata error: %s", err)
 		return result
 	}
+	task.StaffID = canonicalID
 
 	// Build system prompt: try SOUL.md, fallback to description.
 	systemPrompt := loadSOUL(baseDir, task.StaffID)

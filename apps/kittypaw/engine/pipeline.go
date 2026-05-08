@@ -82,7 +82,7 @@ func classifyIntent(text string, state *PipelineState, sess *Session) Intent {
 				Confidence: 1.0,
 			}
 		}
-		if _, ok, _ := loadPendingStaffDraft(sess.Store, convKey); ok {
+		if _, ok, _ := loadPendingStaffDraft(sess.BaseDir, convKey); ok {
 			if role, ok := staffCreateRoleFromText(t); ok {
 				return Intent{
 					Kind: IntentStaffCreateRequest,
@@ -783,7 +783,7 @@ func getBranch(kind IntentKind) Branch {
 type ChitchatBranch struct{}
 
 func (b *ChitchatBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
-	return "도움이 됐다니 좋아요! 또 필요하면 말씀해 주세요.", nil
+	return "알겠습니다.", nil
 }
 
 type StaffCreateRequestBranch struct{}
@@ -792,7 +792,7 @@ func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, e
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
-	if existing, ok, err := loadPendingStaffDraft(sess.Store, conversationKey(sess)); err != nil {
+	if existing, ok, err := loadPendingStaffDraft(sess.BaseDir, conversationKey(sess)); err != nil {
 		return "staff 초안을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	} else if ok {
 		return formatPendingStaffDraftNotice(existing), nil
@@ -823,13 +823,15 @@ func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, eve
 		}
 	}
 	draft := buildStaffDraft(role, "natural_language")
-	if _, ok, err := sess.Store.GetStaffMeta(draft.ID); err != nil {
+	base, err := core.ResolveBaseDir(sess.BaseDir)
+	if err != nil {
 		return "staff 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
-	} else if ok {
+	}
+	if core.StaffHasSoul(base, draft.ID) {
 		_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
 		return fmt.Sprintf("staff %q는 이미 존재합니다.", draft.ID), nil
 	}
-	if err := savePendingStaffDraft(sess.Store, conversationKey(sess), draft); err != nil {
+	if err := savePendingStaffDraft(sess.BaseDir, conversationKey(sess), draft); err != nil {
 		return "staff 초안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
 	_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
@@ -842,17 +844,17 @@ func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *Session, ev
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
-	draft, ok, err := loadPendingStaffDraft(sess.Store, conversationKey(sess))
+	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, conversationKey(sess))
 	if err != nil {
 		return "staff 초안을 읽지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
 	if !ok {
 		return "생성할 staff 초안이 없습니다.", nil
 	}
-	if err := commitStaffDraft(sess.BaseDir, sess.Store, draft); err != nil {
+	if err := commitStaffDraft(sess.BaseDir, draft); err != nil {
 		return fmt.Sprintf("staff 생성 실패: %s", err), nil
 	}
-	_ = clearPendingStaffDraft(sess.Store, conversationKey(sess))
+	_ = clearPendingStaffDraft(sess.BaseDir, conversationKey(sess))
 	if err := savePendingStaffSwitch(sess.Store, conversationKey(sess), draft.ID); err != nil {
 		return fmt.Sprintf("%s staff를 만들었어요.\n\n시스템 이름은 %s 입니다.", draft.DisplayName, draft.ID), nil
 	}
@@ -865,7 +867,7 @@ func (b *StaffDraftCancelBranch) Execute(ctx context.Context, sess *Session, eve
 	if sess == nil || sess.Store == nil {
 		return "staff 초안을 위한 저장소가 준비되지 않았어요.", nil
 	}
-	_ = clearPendingStaffDraft(sess.Store, conversationKey(sess))
+	_ = clearPendingStaffDraft(sess.BaseDir, conversationKey(sess))
 	_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
 	_ = clearPendingStaffSwitch(sess.Store, conversationKey(sess))
 	return "staff 초안을 취소했습니다.", nil
@@ -886,7 +888,7 @@ func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *Session
 	if !accept {
 		return "알겠습니다. 현재 staff를 유지합니다.", nil
 	}
-	if err := sess.Store.SetUserContext("active_staff:"+conversationKey(sess), staffID, "staff_draft"); err != nil {
+	if _, err := setConversationStaff(sess.BaseDir, sess.Store, staffID); err != nil {
 		return fmt.Sprintf("staff 전환 실패: %s", err), nil
 	}
 	return fmt.Sprintf("이 대화에서 %s staff를 사용합니다.", staffID), nil

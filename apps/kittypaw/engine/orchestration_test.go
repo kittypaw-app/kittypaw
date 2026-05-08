@@ -87,28 +87,29 @@ func TestDelegateTask_DepthZeroMaxZero(t *testing.T) {
 func TestDelegateTask_StaffNotFound(t *testing.T) {
 	st := newDelegateTestStore(t)
 	spec := PMTaskSpec{StaffID: "nonexistent", Task: "do something"}
-	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, "")
+	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, t.TempDir())
 	if result.Success {
 		t.Fatal("expected failure for missing staff")
 	}
 }
 
-func TestDelegateTask_InactiveStaffFails(t *testing.T) {
+func TestDelegateTask_MetaOnlyStaffFails(t *testing.T) {
 	st := newDelegateTestStore(t)
-	if err := st.UpsertStaffMeta("inactive", "Inactive staff", "", "system"); err != nil {
-		t.Fatalf("seed staff: %v", err)
-	}
-	if err := st.SetStaffActive("inactive", false); err != nil {
-		t.Fatalf("deactivate staff: %v", err)
+	baseDir := t.TempDir()
+	if err := core.WriteStaffMetaFile(baseDir, core.StaffMetaFile{
+		ID:          "inactive",
+		Description: "Inactive staff",
+	}); err != nil {
+		t.Fatalf("seed staff meta: %v", err)
 	}
 
 	spec := PMTaskSpec{StaffID: "inactive", Task: "do something"}
-	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, "")
+	result := executeDelegateTask(context.Background(), spec, nil, st, nil, 0, 3, baseDir)
 	if result.Success {
-		t.Fatal("expected failure for inactive staff")
+		t.Fatal("expected failure for staff without SOUL.md")
 	}
-	if result.Result != `staff "inactive" is inactive` {
-		t.Fatalf("result = %q, want inactive staff error", result.Result)
+	if result.Result != `staff "inactive" not found` {
+		t.Fatalf("result = %q, want missing staff error", result.Result)
 	}
 }
 
@@ -170,14 +171,14 @@ func TestDelegateTask_BudgetExhausted(t *testing.T) {
 	b.TrySpend(100)
 
 	st := newDelegateTestStore(t)
-	// Seed staff.
-	_ = st.UpsertStaffMeta("test-staff", "A test staff member", "", "system")
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "test-staff", "", "A test staff member")
 
 	spec := PMTaskSpec{StaffID: "test-staff", Task: "do something"}
 	// Since we can't call the real LLM, the test just verifies budget is checked.
 	// With a nil provider, it will fail at LLM call, but the budget would still
 	// be checked after. We verify the flow doesn't panic.
-	result := executeDelegateTask(context.Background(), spec, nil, st, b, 0, 3, "")
+	result := executeDelegateTask(context.Background(), spec, nil, st, b, 0, 3, baseDir)
 	// Should fail because provider is nil, not because of budget.
 	if result.Success {
 		t.Fatal("expected failure with nil provider")
@@ -186,14 +187,14 @@ func TestDelegateTask_BudgetExhausted(t *testing.T) {
 
 func TestExecuteRunnerDelegateUsesStaffIDFirst(t *testing.T) {
 	st := newDelegateTestStore(t)
-	if err := st.UpsertStaffMeta("coder", "Code staff", "", "system"); err != nil {
-		t.Fatalf("seed staff: %v", err)
-	}
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
 	cfg := core.DefaultConfig()
 	sess := &Session{
 		Config:   &cfg,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp("delegated ok")}},
 		Store:    st,
+		BaseDir:  baseDir,
 	}
 
 	out, err := executeRunner(context.Background(), core.SkillCall{

@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,25 +45,28 @@ func TestStaffAPICreatePersistsStaffMeta(t *testing.T) {
 		t.Fatalf("created staff response = %+v", created)
 	}
 
-	meta, ok, err := srv.store.GetStaffMeta("coder")
+	meta, err := core.ReadStaffMetaFile(srv.session.BaseDir, "coder")
 	if err != nil {
-		t.Fatalf("GetStaffMeta(coder): %v", err)
+		t.Fatalf("ReadStaffMetaFile(coder): %v", err)
 	}
-	if !ok {
-		t.Fatal("created staff metadata missing")
-	}
-	if meta.Description != "Writes code" || meta.CreatedBy != "api" || !meta.Active {
+	if meta.Description != "Writes code" {
 		t.Fatalf("staff metadata = %+v", meta)
+	}
+	if !core.StaffHasSoul(srv.session.BaseDir, "coder") {
+		t.Fatal("created staff SOUL.md missing")
 	}
 }
 
 func TestStaffAPIActivateExistingStaff(t *testing.T) {
 	srv := newStaffAPITestServer(t)
-	if err := srv.store.UpsertStaffMeta("coder", "Writes code", "[]", "test"); err != nil {
-		t.Fatalf("UpsertStaffMeta(coder): %v", err)
+	if err := core.WriteStaffMetaFile(srv.session.BaseDir, core.StaffMetaFile{
+		ID:          "coder",
+		Description: "Writes code",
+	}); err != nil {
+		t.Fatalf("WriteStaffMetaFile(coder): %v", err)
 	}
-	if err := srv.store.SetStaffActive("coder", false); err != nil {
-		t.Fatalf("SetStaffActive(coder, false): %v", err)
+	if err := os.WriteFile(filepath.Join(srv.session.BaseDir, "staff", "coder", "SOUL.md"), []byte("coder soul"), 0o644); err != nil {
+		t.Fatalf("write coder soul: %v", err)
 	}
 
 	var activated struct {
@@ -73,12 +78,8 @@ func TestStaffAPIActivateExistingStaff(t *testing.T) {
 		t.Fatalf("activated staff response = %+v", activated)
 	}
 
-	meta, ok, err := srv.store.GetStaffMeta("coder")
-	if err != nil {
-		t.Fatalf("GetStaffMeta(coder): %v", err)
-	}
-	if !ok || !meta.Active {
-		t.Fatalf("activated staff metadata = %+v ok=%v", meta, ok)
+	if !core.StaffHasSoul(srv.session.BaseDir, "coder") {
+		t.Fatal("activated staff SOUL.md missing")
 	}
 }
 

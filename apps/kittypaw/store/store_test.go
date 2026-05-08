@@ -30,8 +30,45 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 26 {
-		t.Fatalf("expected 26 migrations, got %d", count)
+	if count != 27 {
+		t.Fatalf("expected 27 migrations, got %d", count)
+	}
+}
+
+func TestConversationStaffState(t *testing.T) {
+	st := openTestStore(t)
+
+	if got, ok, err := st.ConversationStaff(); err != nil || ok || got != "" {
+		t.Fatalf("ConversationStaff initial = %q ok=%v err=%v, want empty false nil", got, ok, err)
+	}
+	if err := st.SetConversationStaff("dev-pm"); err != nil {
+		t.Fatalf("SetConversationStaff() error = %v", err)
+	}
+	got, ok, err := st.ConversationStaff()
+	if err != nil || !ok || got != "dev-pm" {
+		t.Fatalf("ConversationStaff after set = %q ok=%v err=%v, want dev-pm true nil", got, ok, err)
+	}
+
+	state, err := st.LoadConversationState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil || state.ConversationStaffID != "dev-pm" {
+		t.Fatalf("LoadConversationState() = %+v, want conversation staff dev-pm", state)
+	}
+
+	if err := st.SaveConversationState(&core.ConversationState{SystemPrompt: "updated"}); err != nil {
+		t.Fatalf("SaveConversationState() error = %v", err)
+	}
+	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "dev-pm" {
+		t.Fatalf("ConversationStaff after state save = %q ok=%v err=%v, want preserved dev-pm", got, ok, err)
+	}
+
+	if err := st.ClearConversationStaff(); err != nil {
+		t.Fatalf("ClearConversationStaff() error = %v", err)
+	}
+	if got, ok, err := st.ConversationStaff(); err != nil || ok || got != "" {
+		t.Fatalf("ConversationStaff after clear = %q ok=%v err=%v, want empty false nil", got, ok, err)
 	}
 }
 
@@ -733,6 +770,7 @@ func TestMemoryContextLines(t *testing.T) {
 		st.SetUserContext("pending_staff_draft:alice", `{"id":"dev-pm","soul":"secret"}`, "staff_draft")
 		st.SetUserContext("pending_staff_offer:alice", "개발PM", "staff_draft")
 		st.SetUserContext("pending_staff_switch:alice", "dev-pm", "staff_draft")
+		st.SetUserContext("active_staff:alice", "dev-pm", "staff_draft")
 		st.SetUserContext("fact.name", "Jinto", "user")
 
 		lines, err := st.MemoryContextLines()
@@ -740,7 +778,7 @@ func TestMemoryContextLines(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		joined := strings.Join(lines, "\n")
-		if strings.Contains(joined, "pending_staff") || strings.Contains(joined, "secret") {
+		if strings.Contains(joined, "pending_staff") || strings.Contains(joined, "active_staff") || strings.Contains(joined, "secret") {
 			t.Fatalf("memory context leaked staff control state: %s", joined)
 		}
 		if !strings.Contains(joined, "fact.name") {

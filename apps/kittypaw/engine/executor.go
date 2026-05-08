@@ -2132,7 +2132,11 @@ func unwrapHTTPBody(jsonStr string) string {
 func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	switch call.Method {
 	case "list":
-		staff, err := s.Store.ListActiveStaff()
+		base, err := core.ResolveBaseDir(s.BaseDir)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		staff, err := core.ListStaffRecords(base)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
@@ -2146,29 +2150,11 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if err := json.Unmarshal(call.Args[0], &id); err != nil {
 			return jsonResult(map[string]any{"error": "invalid staff id argument"})
 		}
-		if err := core.ValidateStaffID(id); err != nil {
-			return jsonResult(map[string]any{"error": err.Error()})
-		}
-		meta, ok, err := s.Store.GetStaffMeta(id)
+		canonicalID, err := setConversationStaff(s.BaseDir, s.Store, id)
 		if err != nil {
-			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
-		}
-		if !ok {
-			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q not found", id)})
-		}
-		if !meta.Active {
-			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q is inactive", id)})
-		}
-		// Store active_staff:{conversationID} so next message uses this staff member.
-		conversationID := ConversationIDFromContext(ctx)
-		if conversationID == "" {
-			conversationID = "default"
-		}
-		key := fmt.Sprintf("active_staff:%s", conversationID)
-		if err := s.Store.SetUserContext(key, id, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"success": true, "staff": id})
+		return jsonResult(map[string]any{"success": true, "staff": canonicalID})
 
 	case "create":
 		if len(call.Args) < 2 {
@@ -2184,9 +2170,11 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if err := core.ValidateStaffID(id); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		if _, ok, err := s.Store.GetStaffMeta(id); err != nil {
-			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
-		} else if ok {
+		base, err := core.ResolveBaseDir(s.BaseDir)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if core.StaffHasSoul(base, id) {
 			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q already exists", id)})
 		}
 		draft := buildStaffDraft(id, "runner")
@@ -2199,7 +2187,7 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if conversationID == "" {
 			conversationID = "default"
 		}
-		if err := savePendingStaffDraft(s.Store, conversationID, draft); err != nil {
+		if err := savePendingStaffDraft(s.BaseDir, conversationID, draft); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{
@@ -2220,19 +2208,26 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if err := json.Unmarshal(call.Args[1], &desc); err != nil {
 			return jsonResult(map[string]any{"error": "invalid description argument"})
 		}
-		if err := core.ValidateStaffID(id); err != nil {
+		base, err := core.ResolveBaseDir(s.BaseDir)
+		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		equippedSkills := "[]"
-		if meta, ok, err := s.Store.GetStaffMeta(id); err != nil {
+		canonicalID, ok, err := core.ResolveStaffReference(base, id)
+		if err != nil {
 			return jsonResult(map[string]any{"error": "staff lookup error: " + err.Error()})
-		} else if ok {
-			equippedSkills = meta.EquippedSkills
 		}
-		if err := s.Store.UpsertStaffMeta(id, desc, equippedSkills, "runner"); err != nil {
+		if !ok {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("staff %q not found", id)})
+		}
+		meta, err := core.ReadStaffMetaFile(base, canonicalID)
+		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"success": true})
+		meta.Description = strings.TrimSpace(desc)
+		if err := core.WriteStaffMetaFile(base, meta); err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"success": true, "staff": canonicalID})
 
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Staff method: %s", call.Method)})

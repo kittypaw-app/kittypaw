@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +45,7 @@ func (p *promptCaptureProvider) MaxTokens() int     { return 4096 }
 func TestResolveStaffName_MentionOverride(t *testing.T) {
 	cfg := core.DefaultConfig()
 	st := openTestStore(t)
-	got := ResolveStaffName(&cfg, "telegram", "user-1", "english-teacher", st)
+	got := ResolveStaffName(&cfg, "telegram", "user-1", "english-teacher", st, t.TempDir())
 	if got != "english-teacher" {
 		t.Errorf("got %q, want %q", got, "english-teacher")
 	}
@@ -55,11 +54,12 @@ func TestResolveStaffName_MentionOverride(t *testing.T) {
 func TestResolveStaffName_SessionOverride(t *testing.T) {
 	cfg := core.DefaultConfig()
 	st := openTestStore(t)
-	// Set active_staff for this runner.
-	if err := st.SetUserContext("active_staff:user-1", "custom-bot", "runner"); err != nil {
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "custom-bot", "", "custom staff")
+	if err := st.SetConversationStaff("custom-bot"); err != nil {
 		t.Fatal(err)
 	}
-	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st)
+	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st, baseDir)
 	if got != "custom-bot" {
 		t.Errorf("got %q, want %q", got, "custom-bot")
 	}
@@ -72,7 +72,9 @@ func TestResolveStaffName_ChannelBinding(t *testing.T) {
 		{ID: "slack-bot", Nick: "SL", Channels: []string{"slack"}},
 	}
 	st := openTestStore(t)
-	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "tg-bot", "", "telegram staff")
+	got := ResolveStaffName(&cfg, "telegram", "user-1", "", st, baseDir)
 	if got != "tg-bot" {
 		t.Errorf("got %q, want %q", got, "tg-bot")
 	}
@@ -82,7 +84,7 @@ func TestResolveStaffName_Default(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.DefaultStaff = "my-default"
 	st := openTestStore(t)
-	got := ResolveStaffName(&cfg, "web", "user-1", "", st)
+	got := ResolveStaffName(&cfg, "web", "user-1", "", st, t.TempDir())
 	if got != "my-default" {
 		t.Errorf("got %q, want %q", got, "my-default")
 	}
@@ -91,7 +93,7 @@ func TestResolveStaffName_Default(t *testing.T) {
 func TestResolveStaffName_NilStore(t *testing.T) {
 	cfg := core.DefaultConfig()
 	// nil store should not panic, just skip session override.
-	got := ResolveStaffName(&cfg, "web", "user-1", "", nil)
+	got := ResolveStaffName(&cfg, "web", "user-1", "", nil, t.TempDir())
 	if got != cfg.DefaultStaff {
 		t.Errorf("got %q, want %q", got, cfg.DefaultStaff)
 	}
@@ -102,27 +104,14 @@ func TestResolveStaffName_NilStore(t *testing.T) {
 func TestStaffSwitch_SetsContext(t *testing.T) {
 	st := openTestStore(t)
 
-	// Create a staff directory so LoadStaff succeeds.
 	base := t.TempDir()
-	staffDir := filepath.Join(base, "staff", "new-staff")
-	if err := os.MkdirAll(staffDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte("test soul"), 0o644); err != nil {
+	seedActiveStaffFile(t, base, "new-staff", "", "test staff")
+	if err := st.SetConversationStaff("new-staff"); err != nil {
 		t.Fatal(err)
 	}
 
-	// We can't easily call executeStaff directly without ConfigDir pointing to
-	// our temp dir, so test the store round-trip that Staff.switch performs.
-	agentID := "user-42"
-	key := fmt.Sprintf("active_staff:%s", agentID)
-	if err := st.SetUserContext(key, "new-staff", "runner"); err != nil {
-		t.Fatal(err)
-	}
-
-	// ResolveStaffName should pick up the session override.
 	cfg := core.DefaultConfig()
-	got := ResolveStaffName(&cfg, "web", agentID, "", st)
+	got := ResolveStaffName(&cfg, "web", "user-42", "", st, base)
 	if got != "new-staff" {
 		t.Errorf("got %q, want %q", got, "new-staff")
 	}
@@ -130,11 +119,10 @@ func TestStaffSwitch_SetsContext(t *testing.T) {
 
 func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
 	st := openTestStore(t)
-	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
-		t.Fatalf("seed staff meta: %v", err)
-	}
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "finance", "", "재무담당 스태프")
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &Session{Store: st, Config: &cfg, BaseDir: baseDir}
 	ctx := ContextWithConversationID(context.Background(), "conv-1")
 
 	out, err := executeStaff(ctx, core.SkillCall{
@@ -155,8 +143,8 @@ func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
 	if !result.Success || result.Staff != "finance" || result.Error != "" {
 		t.Fatalf("result = %+v, want successful finance switch", result)
 	}
-	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || !ok || got != "finance" {
-		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want finance", got, ok, err)
+	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "finance" {
+		t.Fatalf("conversation staff = %q ok=%v err=%v, want finance", got, ok, err)
 	}
 }
 
@@ -183,21 +171,20 @@ func TestStaffSwitch_MissingStaffDoesNotSetContext(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
-	if result.Error != `staff "missing-staff" not found` {
+	if result.Error != `staff "missing-staff"를 찾지 못했습니다` {
 		t.Fatalf("error = %q, want missing staff error", result.Error)
 	}
-	if got, ok, err := st.GetUserContext("active_staff:conv-1"); err != nil || ok {
-		t.Fatalf("active_staff:conv-1 = %q ok=%v err=%v, want unset", got, ok, err)
+	if got, ok, err := st.ConversationStaff(); err != nil || ok {
+		t.Fatalf("conversation staff = %q ok=%v err=%v, want unset", got, ok, err)
 	}
 }
 
 func TestStaffUpdateChangesDescription(t *testing.T) {
 	st := openTestStore(t)
-	if err := st.UpsertStaffMeta("finance", "old desc", `["budget"]`, "test"); err != nil {
-		t.Fatalf("seed staff meta: %v", err)
-	}
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "finance", "", "old desc", "budget")
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &Session{Store: st, Config: &cfg, BaseDir: baseDir}
 
 	out, err := executeStaff(context.Background(), core.SkillCall{
 		Method: "update",
@@ -219,15 +206,15 @@ func TestStaffUpdateChangesDescription(t *testing.T) {
 	if !result.Success || result.Error != "" {
 		t.Fatalf("result = %+v, want successful update", result)
 	}
-	meta, ok, err := st.GetStaffMeta("finance")
-	if err != nil || !ok {
-		t.Fatalf("staff meta missing after update: ok=%v err=%v", ok, err)
+	meta, err := core.ReadStaffMetaFile(baseDir, "finance")
+	if err != nil {
+		t.Fatalf("staff meta missing after update: %v", err)
 	}
 	if meta.Description != "new desc" {
 		t.Fatalf("description = %q, want new desc", meta.Description)
 	}
-	if meta.EquippedSkills != `["budget"]` {
-		t.Fatalf("equipped skills = %q, want preserved skills", meta.EquippedSkills)
+	if len(meta.Aliases) != 1 || meta.Aliases[0] != "budget" {
+		t.Fatalf("aliases = %v, want preserved budget alias", meta.Aliases)
 	}
 }
 
@@ -284,15 +271,15 @@ func TestResolveProvider_InvalidProviderFallsBack(t *testing.T) {
 
 func TestStaffSwitch_OverriddenByMention(t *testing.T) {
 	st := openTestStore(t)
-	agentID := "user-42"
-	key := fmt.Sprintf("active_staff:%s", agentID)
-	if err := st.SetUserContext(key, "session-staff", "runner"); err != nil {
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "session-staff", "", "session staff")
+	if err := st.SetConversationStaff("session-staff"); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := core.DefaultConfig()
 	// @mention should win over session override.
-	got := ResolveStaffName(&cfg, "web", agentID, "mention-staff", st)
+	got := ResolveStaffName(&cfg, "web", "user-42", "mention-staff", st, baseDir)
 	if got != "mention-staff" {
 		t.Errorf("got %q, want %q", got, "mention-staff")
 	}
@@ -311,9 +298,6 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	}
 
 	st := openTestStore(t)
-	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
-		t.Fatalf("seed staff meta: %v", err)
-	}
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `return "finance ok";`}
 	sess := &Session{
@@ -379,10 +363,10 @@ return created.output || created.error || "missing draft output";
 	if !strings.Contains(out, "초안") || !strings.Contains(out, "생성") {
 		t.Fatalf("out = %q, want draft approval response", out)
 	}
-	if _, ok, err := st.GetStaffMeta("finance"); err != nil || ok {
-		t.Fatalf("finance staff meta = ok %v err %v, want no durable staff", ok, err)
+	if base, err := core.ResolveBaseDir(sess.BaseDir); err != nil || core.StaffHasSoul(base, "finance") {
+		t.Fatalf("finance active staff = true, base err=%v, want false nil", err)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || !ok {
+	if _, ok, err := loadPendingStaffDraft(sess.BaseDir, "alice"); err != nil || !ok {
 		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}
 }
@@ -406,7 +390,7 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "Staff 기능") {
 		t.Fatalf("first response = %q, want Staff opt-in question", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, "alice"); err != nil || ok {
 		t.Fatalf("pending draft after opt-in question ok=%v err=%v, want none", ok, err)
 	}
 
@@ -417,11 +401,11 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "초안") || !strings.Contains(out, "dev-pm") {
 		t.Fatalf("opt-in response = %q, want dev-pm draft", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || !ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, "alice"); err != nil || !ok {
 		t.Fatalf("pending draft after opt-in ok=%v err=%v, want ok true nil", ok, err)
 	}
-	if _, ok, err := st.GetStaffMeta("dev-pm"); err != nil || ok {
-		t.Fatalf("staff meta after draft ok=%v err=%v, want no durable staff", ok, err)
+	if base, err := core.ResolveBaseDir(baseDir); err != nil || core.StaffHasSoul(base, "dev-pm") {
+		t.Fatalf("staff active after draft err=%v, want inactive", err)
 	}
 
 	out, err = sess.Run(context.Background(), webChatEvent("생성해"), nil)
@@ -431,14 +415,14 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "만들었어요") || !strings.Contains(out, "지금 이 대화") {
 		t.Fatalf("approval response = %q, want creation plus switch question", out)
 	}
-	meta, ok, err := st.GetStaffMeta("dev-pm")
-	if err != nil || !ok {
-		t.Fatalf("staff meta after approval ok=%v err=%v", ok, err)
+	meta, err := core.ReadStaffMetaFile(baseDir, "dev-pm")
+	if err != nil {
+		t.Fatalf("staff meta after approval: %v", err)
 	}
 	if meta.DisplayName != "개발 PM" {
 		t.Fatalf("DisplayName = %q, want 개발 PM", meta.DisplayName)
 	}
-	if _, ok, err := st.GetUserContext("active_staff:alice"); err != nil || ok {
+	if _, ok, err := st.ConversationStaff(); err != nil || ok {
 		t.Fatalf("active staff before switch ok=%v err=%v, want unset", ok, err)
 	}
 
@@ -449,8 +433,8 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "dev-pm") {
 		t.Fatalf("switch response = %q, want dev-pm", out)
 	}
-	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || !ok || got != "dev-pm" {
-		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want dev-pm", got, ok, err)
+	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "dev-pm" {
+		t.Fatalf("conversation staff = %q ok=%v err=%v, want dev-pm", got, ok, err)
 	}
 }
 
@@ -496,8 +480,8 @@ func TestStaffNaturalLanguageAcceptsCasualOptInAndSwitchConfirmation(t *testing.
 	if !strings.Contains(out, "dev-pm") {
 		t.Fatalf("switch response = %q, want dev-pm", out)
 	}
-	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || !ok || got != "dev-pm" {
-		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want dev-pm", got, ok, err)
+	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "dev-pm" {
+		t.Fatalf("conversation staff = %q ok=%v err=%v, want dev-pm", got, ok, err)
 	}
 }
 
@@ -511,7 +495,7 @@ func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
 		AccountID: "alice",
 		Pipeline:  NewPipelineState(),
 	}
-	if err := savePendingStaffDraft(st, "alice", buildStaffDraft("개발PM", "test")); err != nil {
+	if err := savePendingStaffDraft(sess.BaseDir, "alice", buildStaffDraft("개발PM", "test")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -522,7 +506,7 @@ func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
 	if !strings.Contains(out, "이미") || !strings.Contains(out, "dev-pm") {
 		t.Fatalf("response = %q, want existing draft notice", out)
 	}
-	draft, ok, err := loadPendingStaffDraft(st, "alice")
+	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, "alice")
 	if err != nil || !ok {
 		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}

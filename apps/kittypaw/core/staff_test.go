@@ -6,6 +6,102 @@ import (
 	"testing"
 )
 
+func TestStaffRegistryListsOnlySoulBackedStaff(t *testing.T) {
+	base := t.TempDir()
+	if err := WriteStaffMetaFile(base, StaffMetaFile{
+		ID:          "dev-pm",
+		DisplayName: "개발 PM",
+		Aliases:     []string{"개발PM", "PM"},
+		Description: "일정 관리",
+	}); err != nil {
+		t.Fatalf("WriteStaffMetaFile(dev-pm): %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "staff", "ghost"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "staff", "ghost", "meta.json"), []byte(`{"id":"ghost"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "staff", "dev-pm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "staff", "dev-pm", "SOUL.md"), []byte("dev pm soul"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := ListStaffRecords(base)
+	if err != nil {
+		t.Fatalf("ListStaffRecords() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %#v, want one SOUL-backed staff", records)
+	}
+	if records[0].ID != "dev-pm" || records[0].DisplayName != "개발 PM" || !records[0].HasSoul {
+		t.Fatalf("record = %+v, want active dev-pm with display name", records[0])
+	}
+}
+
+func TestStaffRegistryResolvesAliasOnlyForSoulBackedStaff(t *testing.T) {
+	base := t.TempDir()
+	if err := WriteStaffMetaFile(base, StaffMetaFile{
+		ID:          "dev-pm",
+		DisplayName: "개발 PM",
+		Aliases:     []string{"개발PM", "PM"},
+		Description: "일정 관리",
+	}); err != nil {
+		t.Fatalf("WriteStaffMetaFile(dev-pm): %v", err)
+	}
+	if id, ok, err := ResolveStaffReference(base, "개발PM"); err != nil || ok || id != "" {
+		t.Fatalf("ResolveStaffReference before SOUL = %q ok=%v err=%v, want none", id, ok, err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "staff", "dev-pm", "SOUL.md"), []byte("dev pm soul"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, ok, err := ResolveStaffReference(base, "개발PM")
+	if err != nil || !ok || id != "dev-pm" {
+		t.Fatalf("ResolveStaffReference(개발PM) = %q ok=%v err=%v, want dev-pm true nil", id, ok, err)
+	}
+}
+
+func TestStaffDraftFilesActivateByRenamingDraftSoul(t *testing.T) {
+	base := t.TempDir()
+	meta := StaffMetaFile{
+		ID:                      "dev-pm",
+		DisplayName:             "개발 PM",
+		Aliases:                 []string{"개발PM"},
+		Description:             "일정 관리",
+		CreatedFromConversation: "jinto",
+		CreatedAt:               "2026-05-08T00:00:00Z",
+	}
+	if err := WriteStaffDraft(base, meta, "draft soul"); err != nil {
+		t.Fatalf("WriteStaffDraft() error = %v", err)
+	}
+	if StaffHasSoul(base, "dev-pm") {
+		t.Fatal("StaffHasSoul(dev-pm) = true before activation, want false")
+	}
+
+	records, err := ListStaffRecords(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("active records before activation = %#v, want none", records)
+	}
+	if err := ActivateStaffDraft(base, "dev-pm"); err != nil {
+		t.Fatalf("ActivateStaffDraft() error = %v", err)
+	}
+	if !StaffHasSoul(base, "dev-pm") {
+		t.Fatal("StaffHasSoul(dev-pm) = false after activation, want true")
+	}
+	if _, err := os.Stat(filepath.Join(base, "staff", "dev-pm", "SOUL.draft.md")); !os.IsNotExist(err) {
+		t.Fatalf("SOUL.draft.md stat err = %v, want not exist", err)
+	}
+	data, err := os.ReadFile(filepath.Join(base, "staff", "dev-pm", "SOUL.md"))
+	if err != nil || string(data) != "draft soul" {
+		t.Fatalf("SOUL.md = %q err=%v, want draft soul", string(data), err)
+	}
+}
+
 func TestLoadStaff_MissingSoul(t *testing.T) {
 	base := t.TempDir()
 	// No SOUL.md exists — should fallback to default preset, no error.

@@ -667,11 +667,23 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	var mentionOverride string
 	eventText := rawEventText
 	if staffID, remaining, matched := ParseAtMention(rawEventText); matched {
-		meta, ok, _ := s.Store.GetStaffMeta(staffID)
-		if ok && meta.Active {
+		base, err := core.ResolveBaseDir(s.BaseDir)
+		if err != nil {
+			return "", fmt.Errorf("resolve staff base: %w", err)
+		}
+		if core.StaffHasSoul(base, staffID) {
 			slog.Info("@mention routing", "staff_id", staffID)
 			mentionOverride = staffID
 			eventText = remaining
+		} else {
+			response := fmt.Sprintf("staff %q를 찾지 못했습니다.", staffID)
+			if core.StaffHasDraft(base, staffID) {
+				response = fmt.Sprintf("staff %q는 아직 생성 중입니다. 먼저 생성 승인을 완료해 주세요.", staffID)
+			}
+			if err := s.recordPipelineTurn(event, rawEventText, response); err != nil {
+				slog.Warn("mention rejection turn record failed", "error", err)
+			}
+			return response, nil
 		}
 	}
 
@@ -768,7 +780,7 @@ observeLoop:
 			compaction := s.compactionForAttempt(attempt)
 
 			// Resolve and load staff.
-			staffID := ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store)
+			staffID := ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store, s.BaseDir)
 			staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
 
 			// Build prompt (observations are volatile — replaced each observe round)
@@ -917,6 +929,9 @@ observeLoop:
 
 			if execResult.Success {
 				output := execResult.Output
+				if override := staffToolOverrideOutput(s.BaseDir, convKey, execResult.SkillCalls); override != "" {
+					output = override
+				}
 				if output == "" {
 					output = "응답이 비어 있어요. 질문을 다시 한 번 말씀해 주시겠어요?"
 				}
@@ -1089,16 +1104,18 @@ func ResolveStaffName(
 	conversationID string,
 	mentionOverride string,
 	st *store.Store,
+	baseDir string,
 ) string {
 	// 1. @mention override (highest priority).
 	if mentionOverride != "" {
 		return mentionOverride
 	}
 
-	// 2. Session override from Staff.switch (stored in user_context).
+	base, _ := core.ResolveBaseDir(baseDir)
+
+	// 2. Conversation staff from Staff.switch or /staff use.
 	if st != nil {
-		key := fmt.Sprintf("active_staff:%s", conversationID)
-		if val, ok, err := st.GetUserContext(key); err == nil && ok && val != "" {
+		if val, ok, err := st.ConversationStaff(); err == nil && ok && val != "" && core.StaffHasSoul(base, val) {
 			return val
 		}
 	}
@@ -1106,7 +1123,7 @@ func ResolveStaffName(
 	// 3. Channel binding from config.
 	for _, sc := range config.Staff {
 		for _, ch := range sc.Channels {
-			if ch == channelType {
+			if ch == channelType && core.StaffHasSoul(base, sc.ID) {
 				return sc.ID
 			}
 		}

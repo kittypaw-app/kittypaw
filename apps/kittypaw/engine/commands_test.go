@@ -2,8 +2,6 @@ package engine
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,14 +11,14 @@ import (
 
 func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
 	st := openTestStore(t)
-	if err := st.UpsertStaffMeta("finance", "재무담당 스태프", "[]", "test"); err != nil {
-		t.Fatalf("seed staff meta: %v", err)
-	}
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "finance", "", "재무담당 스태프")
 	cfg := core.DefaultConfig()
 	sess := &Session{
 		Store:     st,
 		Config:    &cfg,
 		AccountID: "alice",
+		BaseDir:   baseDir,
 	}
 
 	out, handled := tryHandleCommand(context.Background(), "/staff finance", sess)
@@ -30,8 +28,8 @@ func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
 	if !strings.Contains(out, "finance") {
 		t.Fatalf("response should mention selected staff, got %q", out)
 	}
-	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || !ok || got != "finance" {
-		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want finance", got, ok, err)
+	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "finance" {
+		t.Fatalf("conversation staff = %q ok=%v err=%v, want finance", got, ok, err)
 	}
 }
 
@@ -52,27 +50,15 @@ func TestSlashStaffUseMissingDoesNotSwitchThroughFallbackSoul(t *testing.T) {
 	if !strings.Contains(out, "찾지 못했습니다") {
 		t.Fatalf("response = %q, want missing staff message", out)
 	}
-	if got, ok, err := st.GetUserContext("active_staff:alice"); err != nil || ok {
-		t.Fatalf("active_staff:alice = %q ok=%v err=%v, want unset", got, ok, err)
+	if got, ok, err := st.ConversationStaff(); err != nil || ok {
+		t.Fatalf("conversation staff = %q ok=%v err=%v, want unset", got, ok, err)
 	}
 }
 
 func TestSlashStaffCurrentListShowHireCancel(t *testing.T) {
 	st := openTestStore(t)
 	baseDir := t.TempDir()
-	staffDir := filepath.Join(baseDir, "staff", "finance")
-	if err := os.MkdirAll(staffDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(staffDir, "SOUL.md"), []byte("finance soul"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.UpsertStaffMetaWithDisplayName("finance", "재무", "재무 정리", "[]", "test"); err != nil {
-		t.Fatalf("seed staff meta: %v", err)
-	}
-	if err := st.ReplaceStaffAliases("finance", []string{"재무"}); err != nil {
-		t.Fatalf("seed alias: %v", err)
-	}
+	seedActiveStaffFile(t, baseDir, "finance", "재무", "재무 정리", "재무")
 	cfg := core.DefaultConfig()
 	sess := &Session{
 		Store:     st,
@@ -107,18 +93,18 @@ func TestSlashStaffCurrentListShowHireCancel(t *testing.T) {
 	if !strings.Contains(out, "초안") || !strings.Contains(out, "dev-pm") {
 		t.Fatalf("/staff hire = %q, want draft preview", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || !ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, "alice"); err != nil || !ok {
 		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}
-	if _, ok, err := st.GetStaffMeta("dev-pm"); err != nil || ok {
-		t.Fatalf("unexpected durable staff from draft: ok=%v err=%v", ok, err)
+	if base, err := core.ResolveBaseDir(baseDir); err != nil || core.StaffHasSoul(base, "dev-pm") {
+		t.Fatalf("unexpected active staff from draft: base err=%v", err)
 	}
 
 	out, _ = tryHandleCommand(context.Background(), "/staff cancel", sess)
 	if !strings.Contains(out, "취소") {
 		t.Fatalf("/staff cancel = %q, want cancel message", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, "alice"); err != nil || ok {
 		t.Fatalf("pending draft after cancel ok=%v err=%v, want ok false nil", ok, err)
 	}
 }
@@ -141,7 +127,7 @@ func TestSlashStaffHireDoesNotOverwritePendingDraft(t *testing.T) {
 	if !strings.Contains(out, "이미") || !strings.Contains(out, "dev-pm") {
 		t.Fatalf("second hire output = %q, want existing draft notice", out)
 	}
-	draft, ok, err := loadPendingStaffDraft(st, "alice")
+	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, "alice")
 	if err != nil || !ok {
 		t.Fatalf("load pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}
@@ -159,7 +145,7 @@ func TestSlashStaffCancelClearsAllPendingStaffState(t *testing.T) {
 		AccountID: "alice",
 		BaseDir:   t.TempDir(),
 	}
-	if err := savePendingStaffDraft(st, "alice", buildStaffDraft("개발PM", "test")); err != nil {
+	if err := savePendingStaffDraft(sess.BaseDir, "alice", buildStaffDraft("개발PM", "test")); err != nil {
 		t.Fatal(err)
 	}
 	if err := savePendingStaffOffer(st, "alice", "개발PM"); err != nil {
@@ -173,7 +159,7 @@ func TestSlashStaffCancelClearsAllPendingStaffState(t *testing.T) {
 	if !strings.Contains(out, "취소") {
 		t.Fatalf("/staff cancel output = %q, want cancel message", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(st, "alice"); err != nil || ok {
+	if _, ok, err := loadPendingStaffDraft(sess.BaseDir, "alice"); err != nil || ok {
 		t.Fatalf("draft after cancel ok=%v err=%v, want false nil", ok, err)
 	}
 	if _, ok, err := loadPendingStaffOffer(st, "alice"); err != nil || ok {

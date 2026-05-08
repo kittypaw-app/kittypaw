@@ -355,9 +355,9 @@ func (s *Store) SaveConversationState(state *core.ConversationState) error {
 		INSERT INTO conversation_state (id, system_prompt, state_json, updated_at)
 		VALUES (1, ?, ?, datetime('now'))
 		ON CONFLICT(id) DO UPDATE SET
-			system_prompt = excluded.system_prompt,
-			state_json    = excluded.state_json,
-			updated_at    = datetime('now')`,
+			system_prompt          = excluded.system_prompt,
+			state_json             = excluded.state_json,
+			updated_at             = datetime('now')`,
 		state.SystemPrompt, string(stateJSON))
 	if err != nil {
 		return err
@@ -380,11 +380,11 @@ func (s *Store) SaveConversationState(state *core.ConversationState) error {
 // LoadConversationState retrieves account metadata and the most recent
 // conversation turns.
 func (s *Store) LoadConversationState() (*core.ConversationState, error) {
-	var sysPrompt string
+	var sysPrompt, conversationStaffID string
 	stateExists := true
 	err := s.db.QueryRow(
-		"SELECT system_prompt FROM conversation_state WHERE id = 1",
-	).Scan(&sysPrompt)
+		"SELECT system_prompt, conversation_staff_id FROM conversation_state WHERE id = 1",
+	).Scan(&sysPrompt, &conversationStaffID)
 	if err == sql.ErrNoRows {
 		stateExists = false
 	} else if err != nil {
@@ -399,10 +399,46 @@ func (s *Store) LoadConversationState() (*core.ConversationState, error) {
 		return nil, nil
 	}
 	return &core.ConversationState{
-		ConversationID: "account",
-		SystemPrompt:   sysPrompt,
-		Turns:          turns,
+		ConversationID:      "account",
+		SystemPrompt:        sysPrompt,
+		ConversationStaffID: conversationStaffID,
+		Turns:               turns,
 	}, nil
+}
+
+// ConversationStaff returns the account conversation's sticky staff override.
+func (s *Store) ConversationStaff() (string, bool, error) {
+	var staffID string
+	err := s.db.QueryRow("SELECT conversation_staff_id FROM conversation_state WHERE id = 1").Scan(&staffID)
+	if err == sql.ErrNoRows || staffID == "" {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return staffID, true, nil
+}
+
+// SetConversationStaff stores the account conversation's sticky staff override.
+func (s *Store) SetConversationStaff(staffID string) error {
+	if staffID != "" {
+		if err := core.ValidateStaffID(staffID); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO conversation_state (id, conversation_staff_id, updated_at)
+		VALUES (1, ?, datetime('now'))
+		ON CONFLICT(id) DO UPDATE SET
+			conversation_staff_id = excluded.conversation_staff_id,
+			updated_at = datetime('now')`,
+		staffID)
+	return err
+}
+
+// ClearConversationStaff clears the account conversation's sticky staff override.
+func (s *Store) ClearConversationStaff() error {
+	return s.SetConversationStaff("")
 }
 
 // AddConversationTurn appends one turn to the account-wide conversation.
@@ -1091,6 +1127,7 @@ func (s *Store) MemoryContextLines() ([]string, error) {
 		WHERE key NOT LIKE 'pending_staff_draft:%'
 		  AND key NOT LIKE 'pending_staff_offer:%'
 		  AND key NOT LIKE 'pending_staff_switch:%'
+		  AND key NOT LIKE 'active_staff:%'
 		ORDER BY updated_at DESC
 		LIMIT 20`)
 	if err != nil {

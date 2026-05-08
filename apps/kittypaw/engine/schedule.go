@@ -145,10 +145,13 @@ func (s *Scheduler) runReflectionTick(ctx context.Context) {
 
 	// After reflection, check evolution trigger conditions.
 	if s.session.Config.Evolution.Enabled {
-		staffList, err := s.session.Store.ListActiveStaff()
+		base, err := core.ResolveBaseDir(s.session.BaseDir)
 		if err == nil {
-			for _, p := range staffList {
-				_ = TriggerEvolution(ctx, p.ID, s.session, &s.session.Config.Evolution)
+			staffList, err := core.ListStaffRecords(base)
+			if err == nil {
+				for _, p := range staffList {
+					_ = TriggerEvolution(ctx, p.ID, s.session, &s.session.Config.Evolution)
+				}
 			}
 		}
 	}
