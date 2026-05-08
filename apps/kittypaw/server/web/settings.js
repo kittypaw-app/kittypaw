@@ -310,9 +310,20 @@ const Settings = {
     const raw = String(path || '').trim();
     if (!raw) return [];
     const windowsDrive = /^[A-Za-z]:[\\/]/.test(raw);
-    const separator = raw.includes('\\') && !raw.includes('/') ? '\\' : '/';
+    const startsWithBackslashUNC = raw.startsWith('\\\\');
+    const separator = startsWithBackslashUNC || (raw.includes('\\') && !raw.includes('/')) ? '\\' : '/';
     const tokens = raw.split(/[\\/]+/).filter(Boolean);
     if (!tokens.length) return [{ label: separator, path: separator }];
+
+    if (/^[\\/]{2}/.test(raw) && tokens.length >= 2) {
+      let current = separator + separator + tokens[0] + separator + tokens[1];
+      const out = [{ label: current, path: current }];
+      tokens.slice(2).forEach(token => {
+        current += separator + token;
+        out.push({ label: token, path: current });
+      });
+      return out;
+    }
 
     if (windowsDrive) {
       let current = tokens[0] + separator;
