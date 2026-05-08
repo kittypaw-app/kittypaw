@@ -17,6 +17,19 @@
 - [x] Add `apps/kittypaw` release workflow plan for `kittypaw/v*` tags.
 - [ ] Add initial CI path-filter strategy.
 
+## Plan: Product-Wide I18n ← 현재
+
+> Spec: `docs/superpowers/specs/2026-05-08-product-i18n-design.md`
+> Plan: `docs/superpowers/plans/2026-05-08-product-i18n-foundation.md`
+> Branch: `feature/product-i18n`
+
+- [x] **P0**: Create isolated worktree and baseline server/UI tests.
+- [ ] **T1**: Central catalog, glossary, schema, generator, generated local web asset.
+- [ ] **T2**: Local account locale preference API.
+- [ ] **T3**: Local web i18n runtime and globe picker.
+- [ ] **T4**: Translate local `kittypaw` App/Chat/Settings/Skills/Kanban UI strings.
+- [ ] **T5**: Follow-up plans for Space, legacy Chat, Portal, API error codes, and CLI cleanup.
+
 ## Candidate: Runner Loop / Channel Safety Backlog
 
 > Input: Hermes / OpenClaw comparison thread. Treat as product-direction
