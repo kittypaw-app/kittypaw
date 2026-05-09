@@ -516,6 +516,50 @@ func TestPlanApproveCancelJobWithoutDriverExecution(t *testing.T) {
 	}
 }
 
+func TestListJobEventsKeepsInsertionOrderWhenTimestampsTie(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Tie events"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "codex",
+		Mode:          JobModeOneShot,
+		PromptSummary: "Tie events",
+		PromptText:    "Tie events",
+		CreatedBy:     "pm",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM job_events WHERE job_id = ?`, job.ID); err != nil {
+		t.Fatalf("delete job events: %v", err)
+	}
+	const tiedAt = "2026-05-09T00:00:00Z"
+	for _, id := range []string{"jev_z_inserted_first", "jev_a_inserted_second"} {
+		if _, err := st.db.Exec(`
+			INSERT INTO job_events (id, job_id, type, actor_id, message, metadata_json, created_at)
+			VALUES (?, ?, ?, ?, ?, '{}', ?)`,
+			id, job.ID, id, "test", id, tiedAt); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+
+	events, err := st.ListJobEvents(job.ID)
+	if err != nil {
+		t.Fatalf("ListJobEvents() error = %v", err)
+	}
+	if len(events) != 2 || events[0].ID != "jev_z_inserted_first" || events[1].ID != "jev_a_inserted_second" {
+		t.Fatalf("events = %+v, want insertion order for tied timestamps", events)
+	}
+}
+
 func TestJobPlanStoresResolvedDriverSnapshot(t *testing.T) {
 	st := openTestStore(t)
 	project := createProjectForProjectsTest(t, st, "kitty")
