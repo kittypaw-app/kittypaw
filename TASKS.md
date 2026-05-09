@@ -48,6 +48,7 @@
 - [x] **T1**: store lifecycle, git worktree runtime, API/tool wiring, web Job controls 구현 (`b68e06f`, `f0c89eb`, `c2cdb32`, `db5f0a5`).
 - [x] **T2a**: disposable repo live smoke regression 추가 및 통과 — 실제 `shell` process 가 approved script 를 per-job worktree 에서 실행함을 검증 (`1b38766`).
 - [x] **T2a-fix**: `job_events` 정렬을 삽입 순서로 고정해 RFC3339Nano 문자열 정렬 흔들림 제거 (`81ff925`).
+- [x] **T2a-fix2**: driver 출력이 커도 runtime error capture 가 bounded 되도록 보강 (`5742c2b`).
 - [ ] **T2b**: Review Project Job Runtime Phase 1.5 implementation.
 
 ## Follow-up: Product-Wide I18n
