@@ -47,7 +47,7 @@ function sameJSON(actual, expected) {
 
 function makeElement(tagName) {
   const classSet = new Set();
-  return {
+  const el = {
     tagName,
     className: '',
     dataset: {},
@@ -68,6 +68,37 @@ function makeElement(tagName) {
     replaceChildren(...children) { this.children = children; },
     addEventListener(type, listener) { this.listeners[type] = listener; },
   };
+  Object.defineProperty(el, 'innerHTML', {
+    get() { return this._innerHTML || ''; },
+    set(value) {
+      this._innerHTML = String(value);
+      if (!this._documentElements) return;
+      const idPattern = /id="([^"]+)"/g;
+      let match;
+      while ((match = idPattern.exec(this._innerHTML)) !== null) {
+        if (!this._documentElements[match[1]]) {
+          this._documentElements[match[1]] = makeElement('div');
+        }
+      }
+    },
+  });
+  return el;
+}
+
+function mountSettingsDocument() {
+  const elements = {};
+  sandbox.document = {
+    createElement: makeElement,
+    createDocumentFragment: () => makeElement('#fragment'),
+    getElementById: (id) => elements[id] || null,
+  };
+  const container = makeElement('div');
+  container._documentElements = elements;
+  return { container, elements };
+}
+
+function flushPromises() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function mountDirectoryPickerElements() {
@@ -167,5 +198,41 @@ const fragment = list.children[0];
 const item = fragment.children[0];
 assert.strictEqual(item.children[0].textContent, 'kitty<script>');
 assert.strictEqual(item.children[1].textContent, '/Users/jinto/projects/kittypaw/kitty<script>');
+`)
+}
+
+func TestWebSettingsWorkspaceSaveResolvesEditedPath(t *testing.T) {
+	runSettingsJSTest(t, `
+const { container, elements } = mountSettingsDocument();
+let savedBody = null;
+const calls = [];
+sandbox.apiRaw = async (url, options = {}) => {
+  calls.push(url);
+  if (url === '/api/settings/directories') {
+    return { path: '/Users/jinto/projects', parent: '/Users/jinto', entries: [] };
+  }
+  if (url === '/api/settings/directories?path=%2FUsers%2Fjinto%2Fprojects%2Fkittypaw') {
+    return { path: '/Users/jinto/projects/kittypaw', parent: '/Users/jinto/projects', entries: [] };
+  }
+  if (url === '/api/settings/workspaces' && options.method === 'POST') {
+    savedBody = JSON.parse(options.body);
+    return { success: true };
+  }
+  if (url === '/api/setup/status') return {};
+  if (url === '/api/settings/workspaces') return [];
+  throw new Error('unexpected api call: ' + url);
+};
+
+Settings._selectedWorkspacePath = '';
+Settings._directoryPickerRequestID = 0;
+Settings._workspaceAliasAuto = true;
+Settings._showWorkspaceForm(container);
+await flushPromises();
+
+elements['settings-workspace-path'].value = '/Users/jinto/projects/kittypaw';
+await elements['settings-workspace-save'].onclick();
+
+assert.strictEqual(savedBody.path, '/Users/jinto/projects/kittypaw');
+assert(calls.includes('/api/settings/directories?path=%2FUsers%2Fjinto%2Fprojects%2Fkittypaw'));
 `)
 }

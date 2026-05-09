@@ -186,13 +186,15 @@ const Settings = {
     document.getElementById('settings-workspace-save').onclick = async () => {
       const button = document.getElementById('settings-workspace-save');
       const error = document.getElementById('settings-form-error');
+      const pathInput = document.getElementById('settings-workspace-path');
       button.disabled = true;
       error.hidden = true;
       try {
-        if (!this._selectedWorkspacePath) throw new Error('Select a workspace path.');
+        const workspacePath = await this._resolveWorkspacePathForSave(pathInput);
+        if (!workspacePath) throw new Error('Select a workspace path.');
         await this._postJSON('/api/settings/workspaces', {
           alias: document.getElementById('settings-workspace-alias').value.trim(),
-          path: this._selectedWorkspacePath,
+          path: workspacePath,
         });
         await this._load(container);
       } catch (e) {
@@ -211,7 +213,7 @@ const Settings = {
     const parentButton = document.getElementById('settings-directory-parent');
     const breadcrumb = document.getElementById('settings-directory-breadcrumb');
     const error = document.getElementById('settings-form-error');
-    if (!list || !pathInput || !selected || !parentButton || !breadcrumb) return;
+    if (!list || !pathInput || !selected || !parentButton || !breadcrumb) return false;
 
     const requestID = ++this._directoryPickerRequestID;
     const previousPath = this._selectedWorkspacePath;
@@ -220,7 +222,7 @@ const Settings = {
     try {
       const suffix = path ? `?path=${encodeURIComponent(path)}` : '';
       const data = await apiRaw(`/api/settings/directories${suffix}`);
-      if (requestID !== this._directoryPickerRequestID) return;
+      if (requestID !== this._directoryPickerRequestID) return false;
       this._selectedWorkspacePath = data.path || '';
       pathInput.value = this._selectedWorkspacePath;
       selected.textContent = this._selectedWorkspacePath || 'No folder selected';
@@ -233,8 +235,9 @@ const Settings = {
       };
       const entries = Array.isArray(data.entries) ? data.entries : [];
       this._renderDirectoryEntries(list, entries);
+      return true;
     } catch (e) {
-      if (requestID !== this._directoryPickerRequestID) return;
+      if (requestID !== this._directoryPickerRequestID) return false;
       this._selectedWorkspacePath = previousPath;
       pathInput.value = previousPath;
       selected.textContent = previousPath || 'No folder selected';
@@ -243,11 +246,23 @@ const Settings = {
         error.textContent = String(e.message || e);
         error.hidden = false;
       }
+      return false;
     } finally {
       if (requestID === this._directoryPickerRequestID) {
         pathInput.classList.remove('is-loading');
       }
     }
+  },
+
+  async _resolveWorkspacePathForSave(pathInput) {
+    if (!pathInput) return this._selectedWorkspacePath;
+    const requestedPath = pathInput.value.trim();
+    if (!requestedPath) return '';
+    if (requestedPath !== this._selectedWorkspacePath) {
+      const resolved = await this._loadDirectoryPicker(requestedPath);
+      if (!resolved) return '';
+    }
+    return this._selectedWorkspacePath;
   },
 
   _renderDirectoryEntries(container, entries) {
