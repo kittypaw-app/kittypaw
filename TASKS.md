@@ -21,7 +21,7 @@
 
 > App: `apps/kittypaw`
 > Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-09-projects-board-design.md`
-> Plan: `apps/kittypaw/docs/superpowers/plans/2026-05-09-projects-board-implementation.md` (작성 예정)
+> Plan: `apps/kittypaw/docs/superpowers/plans/2026-05-09-projects-board-implementation.md`
 > Worktree: `main` worktree에서 진행 (사용자 요청)
 
 - [x] **D1**: Workspace/Kanban 대체 방향 설계 확정.
