@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -172,4 +173,396 @@ func TestSelectProjectPMUsesMetadataAliasThenDefault(t *testing.T) {
 	if pm != "lead" {
 		t.Fatalf("metadata PM = %q, want lead", pm)
 	}
+}
+
+func TestCreateTicketAllocatesProjectKeyAndConversationScope(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+
+	first, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "First", CreatedBy: "alice"})
+	if err != nil {
+		t.Fatalf("CreateTicket(first) error = %v", err)
+	}
+	second, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Second", Status: TicketStatusReady, CreatedBy: "alice"})
+	if err != nil {
+		t.Fatalf("CreateTicket(second) error = %v", err)
+	}
+	if first.Key != "KITTY-001" || second.Key != "KITTY-002" {
+		t.Fatalf("ticket keys = %q %q, want KITTY-001 KITTY-002", first.Key, second.Key)
+	}
+	if first.Status != TicketStatusBacklog || second.Status != TicketStatusReady {
+		t.Fatalf("statuses = %q %q, want backlog ready", first.Status, second.Status)
+	}
+	scope, ok, err := st.ConversationScope(first.TicketConversationID)
+	if err != nil || !ok {
+		t.Fatalf("ConversationScope(ticket) ok=%v err=%v", ok, err)
+	}
+	if scope.ScopeType != "ticket" || scope.ScopeID != first.ID {
+		t.Fatalf("ticket scope = %+v, want ticket %s", scope, first.ID)
+	}
+	actions, err := st.ListTicketActions(first.ID)
+	if err != nil {
+		t.Fatalf("ListTicketActions() error = %v", err)
+	}
+	if len(actions) != 1 || actions[0].ActionType != "created" || actions[0].ToStatus != TicketStatusBacklog {
+		t.Fatalf("created actions = %+v", actions)
+	}
+}
+
+func TestMoveTicketCreatesStatusAction(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Move me"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+
+	moved, err := st.MoveTicket(ticket.ID, MoveTicketRequest{
+		ActorID: "alice",
+		Status:  TicketStatusInProgress,
+		Message: "starting",
+	})
+	if err != nil {
+		t.Fatalf("MoveTicket() error = %v", err)
+	}
+	if moved.Status != TicketStatusInProgress {
+		t.Fatalf("moved status = %q, want %q", moved.Status, TicketStatusInProgress)
+	}
+	actions, err := st.ListTicketActions(ticket.ID)
+	if err != nil {
+		t.Fatalf("ListTicketActions() error = %v", err)
+	}
+	last := actions[len(actions)-1]
+	if last.ActionType != "status_changed" || last.FromStatus != TicketStatusBacklog || last.ToStatus != TicketStatusInProgress || last.Message != "starting" {
+		t.Fatalf("last action = %+v", last)
+	}
+}
+
+func TestBoardGroupsTicketsByStatus(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	if _, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Backlog"}); err != nil {
+		t.Fatalf("CreateTicket(backlog) error = %v", err)
+	}
+	if _, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Ready", Status: TicketStatusReady}); err != nil {
+		t.Fatalf("CreateTicket(ready) error = %v", err)
+	}
+	blocked, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Blocked"})
+	if err != nil {
+		t.Fatalf("CreateTicket(blocked) error = %v", err)
+	}
+	if _, err := st.MoveTicket(blocked.ID, MoveTicketRequest{Status: TicketStatusBlocked, Message: "waiting"}); err != nil {
+		t.Fatalf("MoveTicket(blocked) error = %v", err)
+	}
+
+	board, err := st.ProjectBoard(project.ID)
+	if err != nil {
+		t.Fatalf("ProjectBoard() error = %v", err)
+	}
+	if len(board.Columns[TicketStatusBacklog]) != 1 || len(board.Columns[TicketStatusReady]) != 1 || len(board.Columns[TicketStatusBlocked]) != 1 {
+		t.Fatalf("board columns = %+v", board.Columns)
+	}
+}
+
+func TestArchiveTicketUsesArchivedStatusAndTimestamp(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Archive me"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+
+	archived, err := st.ArchiveTicket(ticket.ID, "alice")
+	if err != nil {
+		t.Fatalf("ArchiveTicket() error = %v", err)
+	}
+	if archived.Status != TicketStatusArchived || archived.ArchivedAt == "" {
+		t.Fatalf("archived ticket = %+v", archived)
+	}
+	list, err := st.ListTickets(TicketListFilter{ProjectID: project.ID})
+	if err != nil {
+		t.Fatalf("ListTickets(default) error = %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("default list = %+v, want archived hidden", list)
+	}
+	list, err = st.ListTickets(TicketListFilter{ProjectID: project.ID, IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("ListTickets(include archived) error = %v", err)
+	}
+	if len(list) != 1 || list[0].Status != TicketStatusArchived {
+		t.Fatalf("include archived list = %+v", list)
+	}
+}
+
+func TestTicketDependenciesAreExplicitRecords(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	blocker, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Blocker"})
+	if err != nil {
+		t.Fatalf("CreateTicket(blocker) error = %v", err)
+	}
+	blocked, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Blocked"})
+	if err != nil {
+		t.Fatalf("CreateTicket(blocked) error = %v", err)
+	}
+
+	dep, err := st.CreateTicketDependency(CreateTicketDependencyRequest{
+		ProjectID:       project.ID,
+		BlockerTicketID: blocker.ID,
+		BlockedTicketID: blocked.ID,
+		Type:            "blocks",
+		CreatedBy:       "alice",
+	})
+	if err != nil {
+		t.Fatalf("CreateTicketDependency() error = %v", err)
+	}
+	if dep.ProjectID != project.ID || dep.BlockerTicketID != blocker.ID || dep.BlockedTicketID != blocked.ID || dep.Type != "blocks" {
+		t.Fatalf("dependency = %+v", dep)
+	}
+	deps, err := st.ListTicketDependencies(project.ID)
+	if err != nil {
+		t.Fatalf("ListTicketDependencies() error = %v", err)
+	}
+	if len(deps) != 1 || deps[0].ID != dep.ID {
+		t.Fatalf("dependencies = %+v, want %+v", deps, dep)
+	}
+}
+
+func TestCreateAndUpdateProjectBriefDraft(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+
+	draft, err := st.CreateProjectBriefDraft(CreateProjectBriefDraftRequest{
+		ProjectID:           project.ID,
+		Title:               "Initial brief",
+		BriefJSON:           `{"summary":"initial"}`,
+		ProposedTicketsJSON: `[]`,
+		CreatedBy:           "pm",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectBriefDraft() error = %v", err)
+	}
+	if draft.ID == "" || draft.Status != "draft" || draft.Title != "Initial brief" {
+		t.Fatalf("draft = %+v", draft)
+	}
+
+	updated, err := st.UpdateProjectBriefDraft(draft.ID, UpdateProjectBriefDraftRequest{
+		Title:               stringPtr("Updated brief"),
+		BriefJSON:           stringPtr(`{"summary":"updated"}`),
+		ProposedTicketsJSON: stringPtr(`[{"temp_id":"a","title":"A","priority":5}]`),
+	})
+	if err != nil {
+		t.Fatalf("UpdateProjectBriefDraft() error = %v", err)
+	}
+	if updated.Title != "Updated brief" || updated.BriefJSON != `{"summary":"updated"}` {
+		t.Fatalf("updated draft = %+v", updated)
+	}
+}
+
+func TestCommitProjectBriefDraftCreatesTicketsDependenciesAssignmentsAndMessages(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+
+	draft, err := st.CreateProjectBriefDraft(CreateProjectBriefDraftRequest{
+		ProjectID: project.ID,
+		Title:     "Repo brief",
+		BriefJSON: `{"summary":"repo scan"}`,
+		ProposedTicketsJSON: `[
+			{"temp_id":"scan","title":"Scan repo","body":"Summarize structure","priority":9,"staff_id":"dev-pm","staff_role":"developer"},
+			{"temp_id":"fix","title":"Fix bug","body":"Address bug","priority":3,"dependencies":[{"blocker_temp_id":"scan","type":"blocks"}]}
+		]`,
+		CreatedBy: "pm",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectBriefDraft() error = %v", err)
+	}
+
+	result, err := st.CommitProjectBriefDraft(draft.ID, "pm")
+	if err != nil {
+		t.Fatalf("CommitProjectBriefDraft() error = %v", err)
+	}
+	if len(result.Tickets) != 2 {
+		t.Fatalf("committed tickets = %+v, want 2", result.Tickets)
+	}
+	if result.Tickets[0].Status != TicketStatusReady || result.Tickets[1].Status != TicketStatusBacklog {
+		t.Fatalf("ticket statuses = %+v, want ready/backlog", result.Tickets)
+	}
+	deps, err := st.ListTicketDependencies(project.ID)
+	if err != nil {
+		t.Fatalf("ListTicketDependencies() error = %v", err)
+	}
+	if len(deps) != 1 || deps[0].BlockerTicketID != result.Tickets[0].ID || deps[0].BlockedTicketID != result.Tickets[1].ID {
+		t.Fatalf("dependencies = %+v, tickets = %+v", deps, result.Tickets)
+	}
+	var assignmentCount int
+	if err := st.db.QueryRow("SELECT COUNT(*) FROM ticket_staff_assignments WHERE ticket_id = ? AND staff_id = 'dev-pm' AND role = 'developer'", result.Tickets[0].ID).Scan(&assignmentCount); err != nil {
+		t.Fatalf("count staff assignments: %v", err)
+	}
+	if assignmentCount != 1 {
+		t.Fatalf("assignment count = %d, want 1", assignmentCount)
+	}
+	var messageCount int
+	if err := st.db.QueryRow("SELECT COUNT(*) FROM ticket_messages WHERE ticket_id IN (?, ?)", result.Tickets[0].ID, result.Tickets[1].ID).Scan(&messageCount); err != nil {
+		t.Fatalf("count ticket messages: %v", err)
+	}
+	if messageCount != 2 {
+		t.Fatalf("ticket message count = %d, want 2", messageCount)
+	}
+	committed, err := st.GetProjectBriefDraft(draft.ID)
+	if err != nil {
+		t.Fatalf("GetProjectBriefDraft() error = %v", err)
+	}
+	if committed.Status != "committed" || committed.CommittedAt == "" {
+		t.Fatalf("committed draft = %+v", committed)
+	}
+}
+
+func TestCommitProjectBriefDraftIsIdempotentlyRejectedAfterCommit(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	draft, err := st.CreateProjectBriefDraft(CreateProjectBriefDraftRequest{
+		ProjectID:           project.ID,
+		Title:               "One",
+		BriefJSON:           `{}`,
+		ProposedTicketsJSON: `[{"temp_id":"a","title":"A"}]`,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectBriefDraft() error = %v", err)
+	}
+	if _, err := st.CommitProjectBriefDraft(draft.ID, "pm"); err != nil {
+		t.Fatalf("CommitProjectBriefDraft(first) error = %v", err)
+	}
+	if _, err := st.CommitProjectBriefDraft(draft.ID, "pm"); err == nil {
+		t.Fatal("CommitProjectBriefDraft(second) succeeded, want error")
+	}
+}
+
+func TestEnsureDefaultDriversAndListDrivers(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	drivers, err := st.ListDrivers()
+	if err != nil {
+		t.Fatalf("ListDrivers() error = %v", err)
+	}
+	if len(drivers) != 3 {
+		t.Fatalf("drivers = %+v, want 3 defaults", drivers)
+	}
+	byID := map[string]DriverDefinition{}
+	for _, driver := range drivers {
+		byID[driver.ID] = driver
+	}
+	for _, id := range []string{"codex", "claude", "shell"} {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("driver %s missing from %+v", id, drivers)
+		}
+	}
+	if byID["codex"].DisplayName != "Codex" || byID["codex"].Command != "codex" || !byID["codex"].Enabled {
+		t.Fatalf("codex driver = %+v", byID["codex"])
+	}
+	if byID["codex"].SupportedModesJSON != `["one_shot"]` {
+		t.Fatalf("codex modes = %s", byID["codex"].SupportedModesJSON)
+	}
+}
+
+func TestPlanApproveCancelJobWithoutDriverExecution(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Implement feature"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+
+	job, err := st.PlanJob(PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "codex",
+		Mode:          JobModeOneShot,
+		PromptSummary: "Implement feature",
+		PromptText:    "Please implement the feature.",
+		CreatedBy:     "pm",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if job.Status != JobStatusPlanned || job.DriverID != "codex" || job.Mode != JobModeOneShot {
+		t.Fatalf("planned job = %+v", job)
+	}
+	approved, err := st.ApproveJob(job.ID, "alice")
+	if err != nil {
+		t.Fatalf("ApproveJob() error = %v", err)
+	}
+	if approved.Status != JobStatusApproved || approved.ApprovedBy != "alice" {
+		t.Fatalf("approved job = %+v", approved)
+	}
+	canceled, err := st.CancelJob(job.ID, "alice", "not now")
+	if err != nil {
+		t.Fatalf("CancelJob() error = %v", err)
+	}
+	if canceled.Status != JobStatusCanceled || canceled.FinishedAt == "" {
+		t.Fatalf("canceled job = %+v", canceled)
+	}
+	events, err := st.ListJobEvents(job.ID)
+	if err != nil {
+		t.Fatalf("ListJobEvents() error = %v", err)
+	}
+	if len(events) != 3 || events[0].Type != "planned" || events[1].Type != "approved" || events[2].Type != "canceled" {
+		t.Fatalf("job events = %+v", events)
+	}
+}
+
+func TestJobPlanStoresResolvedDriverSnapshot(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Use custom driver"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if _, err := st.UpsertDriver(UpsertDriverRequest{
+		ID:                 "custom",
+		DisplayName:        "Custom Driver",
+		Command:            "custom-driver",
+		SupportedModesJSON: `["one_shot","tmux"]`,
+		DefaultArgsJSON:    `["--quiet"]`,
+		Enabled:            true,
+	}); err != nil {
+		t.Fatalf("UpsertDriver() error = %v", err)
+	}
+
+	job, err := st.PlanJob(PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "custom",
+		Mode:          JobModeTmux,
+		PromptSummary: "Custom plan",
+		PromptText:    "Run custom driver.",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if !strings.Contains(job.DriverSnapshotJSON, `"display_name":"Custom Driver"`) || !strings.Contains(job.DriverSnapshotJSON, `"command":"custom-driver"`) {
+		t.Fatalf("driver snapshot = %s", job.DriverSnapshotJSON)
+	}
+}
+
+func createProjectForProjectsTest(t *testing.T, st *Store, key string) *Project {
+	t.Helper()
+	project, err := st.CreateProject(CreateProjectRequest{
+		Key:      key,
+		Name:     key,
+		RootPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateProject(%s) error = %v", key, err)
+	}
+	return project
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
