@@ -25,6 +25,54 @@ func openTestStore(t *testing.T) *store.Store {
 	return st
 }
 
+func TestRefreshAllowedPathsUsesProjectRoots(t *testing.T) {
+	st := openTestStore(t)
+	root := t.TempDir()
+	if _, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: root}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	sess := &Session{Store: st}
+
+	if err := sess.RefreshAllowedPaths(); err != nil {
+		t.Fatalf("RefreshAllowedPaths: %v", err)
+	}
+
+	allowed := sess.AllowedPaths()
+	if len(allowed) != 1 {
+		t.Fatalf("AllowedPaths = %#v, want one project root", allowed)
+	}
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	if allowed[0] != want {
+		t.Fatalf("AllowedPaths[0] = %q, want %q", allowed[0], want)
+	}
+}
+
+func TestResolveWorkspaceIDFindsProjectRoot(t *testing.T) {
+	st := openTestStore(t)
+	root := t.TempDir()
+	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: root})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	sess := &Session{Store: st}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	resolvedPath := filepath.Join(resolvedRoot, "README.md")
+
+	got, err := resolveWorkspaceID(sess, resolvedPath)
+	if err != nil {
+		t.Fatalf("resolveWorkspaceID: %v", err)
+	}
+	if got != project.ID {
+		t.Fatalf("resolveWorkspaceID = %q, want project id %q", got, project.ID)
+	}
+}
+
 type promptCaptureProvider struct {
 	response string
 	messages []core.LlmMessage

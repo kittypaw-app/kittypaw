@@ -239,6 +239,7 @@ func TestOldKanbanRoutesAreRemoved(t *testing.T) {
 	srv := newProjectsAPITestServer(t)
 	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/kanban/tasks", nil, http.StatusNotFound, nil)
 	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/projects/KITTY/milestones", nil, http.StatusNotFound, nil)
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/workspaces", nil, http.StatusNotFound, nil)
 }
 
 func newProjectsAPITestServer(t *testing.T) *Server {

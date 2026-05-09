@@ -212,7 +212,7 @@ func connectProviderLabel(provider string) string {
 //   - Seeds workspace_files from config.Sandbox.AllowedPaths.
 //   - Populates Session.AllowedPaths via RefreshAllowedPaths.
 //   - Spawns a background goroutine that runs the FTS5 indexer over every
-//     registered workspace for this account.
+//     registered file root for this account.
 //
 // Team-space accounts receive a ChannelFanout wired to the shared eventCh;
 // personal accounts leave sess.Fanout == nil so the sandbox hides the
@@ -270,9 +270,9 @@ func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventC
 	}
 
 	go func(accountID string, st *store.Store, idx engine.Indexer, live *engine.LiveIndexer) {
-		wss, err := st.ListWorkspaces()
+		roots, err := st.ListFileIndexRoots()
 		if err != nil {
-			slog.Warn("startup: failed to list workspaces for indexing",
+			slog.Warn("startup: failed to list file roots for indexing",
 				"account", accountID, "error", err)
 			return
 		}
@@ -282,18 +282,18 @@ func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventC
 		// IndexFile is idempotent, so overlap is safe.
 		if live != nil {
 			live.Start()
-			for _, ws := range wss {
-				if err := live.AddWorkspace(ws.ID, ws.RootPath); err != nil {
+			for _, root := range roots {
+				if err := live.AddWorkspace(root.ID, root.RootPath); err != nil {
 					slog.Warn("workspace entering lazy index mode",
-						"account", accountID, "workspace_id", ws.ID, "error", err)
+						"account", accountID, "root_id", root.ID, "error", err)
 				}
 			}
 		}
-		for _, ws := range wss {
-			if _, err := idx.Index(context.Background(), ws.ID, ws.RootPath); err != nil {
-				slog.Warn("startup: workspace indexing failed",
-					"account", accountID, "workspace_id", ws.ID,
-					"root_path", ws.RootPath, "error", err)
+		for _, root := range roots {
+			if _, err := idx.Index(context.Background(), root.ID, root.RootPath); err != nil {
+				slog.Warn("startup: file root indexing failed",
+					"account", accountID, "root_id", root.ID,
+					"root_path", root.RootPath, "error", err)
 			}
 		}
 	}(td.Account.ID, td.Store, indexer, liveIdx)

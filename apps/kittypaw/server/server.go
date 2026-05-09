@@ -484,10 +484,6 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Post("/staff", s.handleStaffCreate)
 				r.Post("/staff/{id}/activate", s.handleStaffActivate)
 
-				// Workspaces
-				r.Get("/workspaces", s.handleWorkspacesList)
-				r.Post("/workspaces", s.handleWorkspacesCreate)
-				r.Delete("/workspaces/{id}", s.handleWorkspacesDelete)
 			})
 
 			r.Group(func(r chi.Router) {

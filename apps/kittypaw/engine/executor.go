@@ -677,23 +677,23 @@ func executeFileReindex(ctx context.Context, call core.SkillCall, s *Session) (s
 		_ = json.Unmarshal(call.Args[0], &targetPath)
 	}
 
-	wss, err := s.Store.ListWorkspaces()
+	roots, err := s.Store.ListFileIndexRoots()
 	if err != nil {
-		return "", fmt.Errorf("list workspaces: %w", err)
+		return "", fmt.Errorf("list file index roots: %w", err)
 	}
 
 	var totalResult IndexResult
-	for _, ws := range wss {
-		// If a path is given, only reindex matching workspace.
+	for _, root := range roots {
+		// If a path is given, only reindex matching root.
 		if targetPath != "" {
 			absTarget, _ := filepath.Abs(targetPath)
-			if !strings.HasPrefix(absTarget, ws.RootPath) {
+			if !strings.HasPrefix(absTarget, root.RootPath) {
 				continue
 			}
 		}
-		result, reErr := s.Indexer.Reindex(ctx, ws.ID, ws.RootPath)
+		result, reErr := s.Indexer.Reindex(ctx, root.ID, root.RootPath)
 		if reErr != nil {
-			slog.Warn("reindex failed", "workspace", ws.ID, "error", reErr)
+			slog.Warn("reindex failed", "root", root.ID, "error", reErr)
 			totalResult.Errors++
 			continue
 		}
@@ -791,21 +791,21 @@ func executeFileSummary(ctx context.Context, call core.SkillCall, s *Session) (s
 	return jsonResult(res)
 }
 
-// resolveWorkspaceID finds the workspace whose root contains resolvedPath.
-// Workspace roots are stored symlink-resolved (see SeedWorkspacesFromConfig),
-// so a simple prefix match against the already-resolved input is sufficient.
+// resolveWorkspaceID finds the file index root whose root contains resolvedPath.
+// Roots are stored symlink-resolved where possible, so a simple prefix match
+// against the already-resolved input is sufficient.
 func resolveWorkspaceID(s *Session, resolvedPath string) (string, error) {
-	wss, err := s.Store.ListWorkspaces()
+	roots, err := s.Store.ListFileIndexRoots()
 	if err != nil {
-		return "", fmt.Errorf("list workspaces: %w", err)
+		return "", fmt.Errorf("list file index roots: %w", err)
 	}
 	sep := string(filepath.Separator)
-	for _, ws := range wss {
-		if resolvedPath == ws.RootPath || strings.HasPrefix(resolvedPath, ws.RootPath+sep) {
-			return ws.ID, nil
+	for _, root := range roots {
+		if resolvedPath == root.RootPath || strings.HasPrefix(resolvedPath, root.RootPath+sep) {
+			return root.ID, nil
 		}
 	}
-	return "", fmt.Errorf("workspace not found for path")
+	return "", fmt.Errorf("file index root not found for path")
 }
 
 func resolveFileToolPath(rawPath string, allowedPaths []string) (string, error) {

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -79,6 +80,7 @@ func (s *Server) handleProjectsCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.refreshProjectFileRoot(r, project)
 	class, _ := store.ClassifyProjectFolder(project.RootPath)
 	writeJSON(w, http.StatusCreated, map[string]any{"project": project, "folder_class": class})
 }
@@ -482,4 +484,39 @@ func projectsWriteStoreError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, err.Error())
+}
+
+func (s *Server) refreshProjectFileRoot(r *http.Request, project *store.Project) {
+	if project == nil {
+		return
+	}
+	sess := s.session
+	live := s.liveIndexer
+	if required, err := s.apiAuthRequired(); err == nil && required {
+		if acct, acctErr := s.requestAccount(r); acctErr == nil {
+			sess = acct.Session
+			if acct.Deps != nil {
+				live = acct.Deps.LiveIndexer
+			}
+		}
+	}
+	if sess == nil {
+		return
+	}
+	if err := sess.RefreshAllowedPaths(); err != nil {
+		slog.Error("project create: allowed path refresh failed", "project_id", project.ID, "error", err)
+	}
+	if sess.Indexer == nil {
+		return
+	}
+	go func(projectID, rootPath string) {
+		if _, err := sess.Indexer.Index(context.Background(), projectID, rootPath); err != nil {
+			slog.Warn("project create: indexing failed", "project_id", projectID, "error", err)
+		}
+		if live != nil {
+			if err := live.AddWorkspace(projectID, rootPath); err != nil {
+				slog.Warn("project create: live indexer add failed", "project_id", projectID, "error", err)
+			}
+		}
+	}(project.ID, project.RootPath)
 }

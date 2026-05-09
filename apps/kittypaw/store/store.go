@@ -1407,6 +1407,55 @@ func (s *Store) ListWorkspaceRootPaths() ([]string, error) {
 	return out, rows.Err()
 }
 
+type FileIndexRoot struct {
+	ID       string
+	RootPath string
+}
+
+// ListFileIndexRoots returns every directory root that should be visible to
+// file tools and FTS indexing. The workspace_files table remains the storage
+// backend name, but Projects are now first-class roots too.
+func (s *Store) ListFileIndexRoots() ([]FileIndexRoot, error) {
+	var out []FileIndexRoot
+	wss, err := s.ListWorkspaces()
+	if err != nil {
+		return nil, err
+	}
+	for _, ws := range wss {
+		out = append(out, FileIndexRoot{ID: ws.ID, RootPath: ws.RootPath})
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, root_path
+		FROM projects
+		WHERE state != ?
+		ORDER BY created_at`, ProjectStateArchived)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var root FileIndexRoot
+		if err := rows.Scan(&root.ID, &root.RootPath); err != nil {
+			return nil, err
+		}
+		out = append(out, root)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListFileIndexRootPaths() ([]string, error) {
+	roots, err := s.ListFileIndexRoots()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(roots))
+	for _, root := range roots {
+		out = append(out, root.RootPath)
+	}
+	return out, nil
+}
+
 // SeedWorkspacesFromConfig inserts TOML-configured paths into the workspaces
 // table if they don't already exist. Paths are canonicalised (Clean +
 // EvalSymlinks when the target exists) before insertion so the live-indexer

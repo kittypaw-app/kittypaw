@@ -178,8 +178,8 @@ func (s *Session) sandboxOptions() sandbox.Options {
 	}
 }
 
-// AllowedPaths returns the cached list of workspace root paths.
-// Returns nil when no workspaces are registered (deny-all by default).
+// AllowedPaths returns the cached list of file-visible project/folder roots.
+// Returns nil when no roots are registered (deny-all by default).
 func (s *Session) AllowedPaths() []string {
 	if p := s.allowedPaths.Load(); p != nil {
 		return *p
@@ -194,12 +194,12 @@ func (s *Session) ClearAllowedPaths() {
 	s.allowedPaths.Store(&empty)
 }
 
-// RefreshAllowedPaths reloads workspace root paths from the database into the
+// RefreshAllowedPaths reloads file-visible roots from the database into the
 // atomic cache. Paths are pre-resolved (Abs + EvalSymlinks) so isPathAllowedResolved
-// can do a fast prefix match without syscalls. Call after any workspace CRUD.
+// can do a fast prefix match without syscalls. Call after any project/folder CRUD.
 // Returns an error so callers (e.g., delete handler) can fail-closed.
 func (s *Session) RefreshAllowedPaths() error {
-	raw, err := s.Store.ListWorkspaceRootPaths()
+	raw, err := s.Store.ListFileIndexRootPaths()
 	if err != nil {
 		slog.Error("failed to refresh allowed paths", "error", err)
 		return err
