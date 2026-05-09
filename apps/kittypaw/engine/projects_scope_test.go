@@ -118,6 +118,59 @@ func TestGeneralChatRequiresProjectChoiceForProjectFileSearch(t *testing.T) {
 	}
 }
 
+func TestFileSearchUsesEventConversationScopeBeforeAgentLoop(t *testing.T) {
+	st := openTestStore(t)
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootA, "a.txt"), []byte("prelooptoken project-a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootB, "b.txt"), []byte("prelooptoken project-b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projectA, err := st.CreateProject(store.CreateProjectRequest{Key: "a", Name: "A", RootPath: rootA})
+	if err != nil {
+		t.Fatalf("CreateProject A: %v", err)
+	}
+	projectB, err := st.CreateProject(store.CreateProjectRequest{Key: "b", Name: "B", RootPath: rootB})
+	if err != nil {
+		t.Fatalf("CreateProject B: %v", err)
+	}
+	indexer := NewFTS5Indexer(st)
+	if _, err := indexer.Index(context.Background(), projectA.ID, projectA.RootPath); err != nil {
+		t.Fatalf("index A: %v", err)
+	}
+	if _, err := indexer.Index(context.Background(), projectB.ID, projectB.RootPath); err != nil {
+		t.Fatalf("index B: %v", err)
+	}
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:         projectA.ProjectConversationID,
+		SessionID:      "browser-session",
+		ConversationID: projectA.ProjectConversationID,
+		Text:           "search before loop",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := core.Event{Type: core.EventWebChat, Payload: payload}
+	sess := &Session{Store: st, Config: fullAccessConfig(), Indexer: indexer}
+	result, err := resolveSkillCall(
+		ContextWithEvent(context.Background(), &event),
+		core.SkillCall{SkillName: "File", Method: "search", Args: []json.RawMessage{json.RawMessage(`"prelooptoken"`)}},
+		sess,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("File.search with event scope: %v", err)
+	}
+	if !strings.Contains(result, "a.txt") {
+		t.Fatalf("event-scoped search missing project A hit: %s", result)
+	}
+	if strings.Contains(result, "b.txt") {
+		t.Fatalf("event-scoped search leaked project B hit: %s", result)
+	}
+}
+
 func TestConversationKeyForEventUsesScopedConversationID(t *testing.T) {
 	st := openTestStore(t)
 	project, err := st.CreateProject(store.CreateProjectRequest{Key: "scope", Name: "Scope", RootPath: t.TempDir()})
@@ -138,6 +191,49 @@ func TestConversationKeyForEventUsesScopedConversationID(t *testing.T) {
 
 	if got := conversationKeyForEvent(sess, &event); got != project.ProjectConversationID {
 		t.Fatalf("conversationKeyForEvent = %q, want project conversation %q", got, project.ProjectConversationID)
+	}
+}
+
+func TestProjectChatPromptHistoryIsScoped(t *testing.T) {
+	sess := newTestSession(t)
+	provider := &promptCaptureProvider{response: `return "ok";`}
+	sess.Provider = provider
+	projectA, err := sess.Store.CreateProject(store.CreateProjectRequest{Key: "a", Name: "A", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateProject A: %v", err)
+	}
+	projectB, err := sess.Store.CreateProject(store.CreateProjectRequest{Key: "b", Name: "B", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateProject B: %v", err)
+	}
+	if err := sess.Store.AddConversationTurn(&core.ConversationTurn{
+		Role:      core.RoleUser,
+		Content:   "PROJECT_A_SECRET_HISTORY",
+		Channel:   "project",
+		ChatID:    projectA.ProjectConversationID,
+		Timestamp: core.NowTimestamp(),
+	}); err != nil {
+		t.Fatalf("AddConversationTurn A: %v", err)
+	}
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:         projectB.ProjectConversationID,
+		SessionID:      "browser-session",
+		ConversationID: projectB.ProjectConversationID,
+		Text:           "프로젝트 B만 보고 답해줘",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sess.Run(context.Background(), core.Event{Type: core.EventWebChat, Payload: payload}, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	prompt := llmMessagesText(provider.messages)
+	if strings.Contains(prompt, "PROJECT_A_SECRET_HISTORY") {
+		t.Fatalf("project B prompt leaked project A history:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "프로젝트 B만 보고 답해줘") {
+		t.Fatalf("project B prompt missing current turn:\n%s", prompt)
 	}
 }
 
@@ -296,6 +392,22 @@ func TestProjectKickoffScanIncludesGitSignals(t *testing.T) {
 	}
 }
 
+func TestProjectKickoffTodoScanSkipsSymlinkTargets(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("TODO: outside project should not be read\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked-outside.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	todos := scanProjectTodos(root)
+	if len(todos) != 0 {
+		t.Fatalf("scanProjectTodos followed symlink outside project: %+v", todos)
+	}
+}
+
 func resolveFileSearchForTest(t *testing.T, sess *Session, conversationID, query string) string {
 	t.Helper()
 	rawQuery, err := json.Marshal(query)
@@ -312,6 +424,21 @@ func resolveFileSearchForTest(t *testing.T, sess *Session, conversationID, query
 		t.Fatalf("File.search: %v", err)
 	}
 	return result
+}
+
+func llmMessagesText(messages []core.LlmMessage) string {
+	var b strings.Builder
+	for _, msg := range messages {
+		b.WriteString(string(msg.Role))
+		b.WriteString(": ")
+		b.WriteString(msg.Content)
+		b.WriteByte('\n')
+		for _, block := range msg.ContentBlocks {
+			b.WriteString(block.Content)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 func fullAccessConfig() *core.Config {

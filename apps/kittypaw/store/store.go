@@ -406,6 +406,40 @@ func (s *Store) LoadConversationState() (*core.ConversationState, error) {
 	}, nil
 }
 
+// LoadConversationStateForChat retrieves account metadata with recent turns
+// filtered to one chat_id. Project and ticket conversations use this to avoid
+// leaking unrelated account-wide history into scoped prompts.
+func (s *Store) LoadConversationStateForChat(chatID string) (*core.ConversationState, error) {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return s.LoadConversationState()
+	}
+	var sysPrompt, conversationStaffID string
+	stateExists := true
+	err := s.db.QueryRow(
+		"SELECT system_prompt, conversation_staff_id FROM conversation_state WHERE id = 1",
+	).Scan(&sysPrompt, &conversationStaffID)
+	if err == sql.ErrNoRows {
+		stateExists = false
+	} else if err != nil {
+		return nil, err
+	}
+
+	records, err := s.ListConversationTurnsForChat(chatID, core.MaxHistoryTurns)
+	if err != nil {
+		return nil, err
+	}
+	if !stateExists && len(records) == 0 {
+		return nil, nil
+	}
+	return &core.ConversationState{
+		ConversationID:      chatID,
+		SystemPrompt:        sysPrompt,
+		ConversationStaffID: conversationStaffID,
+		Turns:               conversationRecordsToTurns(records),
+	}, nil
+}
+
 // ConversationStaff returns the account conversation's sticky staff override.
 func (s *Store) ConversationStaff() (string, bool, error) {
 	var staffID string

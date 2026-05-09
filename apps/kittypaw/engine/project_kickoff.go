@@ -336,6 +336,9 @@ func scanProjectTodos(root string) []string {
 			}
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		info, statErr := d.Info()
 		if statErr != nil || info.Size() > maxFileSize {
 			return nil

@@ -297,6 +297,7 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 	// Fast path: slash commands
 	eventText := FormatEvent(&event)
 	ctx = ContextWithEvent(ctx, &event)
+	ctx = ContextWithConversationID(ctx, conversationKeyForEvent(s, &event))
 	if response, handled := tryHandleCommand(ctx, eventText, s); handled {
 		return response, nil
 	}
@@ -658,8 +659,9 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	ctx = ContextWithConversationID(ctx, convKey)
 	ctx = ContextWithEvent(ctx, &event)
 
-	// Load or create account conversation state.
-	state, err := s.Store.LoadConversationState()
+	// Load or create conversation state. Scoped project/ticket chats use only
+	// their own turns so unrelated account history does not enter the prompt.
+	state, err := s.loadConversationStateForRun(convKey)
 	if err != nil {
 		return "", fmt.Errorf("load state: %w", err)
 	}
@@ -1183,6 +1185,18 @@ func conversationKey(s *Session) string {
 		return s.AccountID
 	}
 	return "account"
+}
+
+func (s *Session) loadConversationStateForRun(convKey string) (*core.ConversationState, error) {
+	if s == nil || s.Store == nil {
+		return nil, nil
+	}
+	if scope, ok, err := s.Store.ConversationScope(convKey); err != nil {
+		return nil, err
+	} else if ok && (scope.ScopeType == "project" || scope.ScopeType == "ticket") {
+		return s.Store.LoadConversationStateForChat(convKey)
+	}
+	return s.Store.LoadConversationState()
 }
 
 func conversationKeyForEvent(s *Session, event *core.Event) string {

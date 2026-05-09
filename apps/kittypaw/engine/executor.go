@@ -516,6 +516,9 @@ func currentFileToolScope(ctx context.Context, s *Session) (fileToolScope, error
 
 	conversationID := strings.TrimSpace(ConversationIDFromContext(ctx))
 	if conversationID == "" {
+		conversationID = conversationKeyForEvent(s, EventFromContext(ctx))
+	}
+	if conversationID == "" {
 		conversationID = conversationKey(s)
 	}
 	project, ok, err := projectForConversationScope(s.Store, conversationID)
