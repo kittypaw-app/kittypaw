@@ -107,6 +107,141 @@ func TestSettingsTelegramUpdatesCompletedAccountConfig(t *testing.T) {
 	}
 }
 
+func TestSettingsLocalePostThenGetRoundTrip(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "configured"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+	cookie := loginSessionCookie(t, srv, "alice", "pw")
+
+	body, err := json.Marshal(map[string]string{"locale": " KO "})
+	if err != nil {
+		t.Fatalf("marshal locale body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/locale", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings locale post code = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var saved struct {
+		Saved  bool   `json:"saved"`
+		Locale string `json:"locale"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&saved); err != nil {
+		t.Fatalf("decode locale save: %v", err)
+	}
+	if !saved.Saved || saved.Locale != "ko" {
+		t.Fatalf("locale save = %#v, want saved ko", saved)
+	}
+	if got, ok, err := srv.accountDepsForID("alice").Store.GetUserContext("pref.lang"); err != nil || !ok || got != "ko" {
+		t.Fatalf("stored locale = %q ok=%v err=%v, want ko", got, ok, err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/settings/locale", nil)
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings locale get code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var loaded struct {
+		Locale string `json:"locale"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&loaded); err != nil {
+		t.Fatalf("decode locale get: %v", err)
+	}
+	if loaded.Locale != "ko" {
+		t.Fatalf("locale get = %q, want ko", loaded.Locale)
+	}
+}
+
+func TestSettingsLocaleGetDefaultsToEnglish(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "configured"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+	cookie := loginSessionCookie(t, srv, "alice", "pw")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/locale", nil)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings locale get code = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		Locale string `json:"locale"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode locale get: %v", err)
+	}
+	if body.Locale != "en" {
+		t.Fatalf("locale get = %q, want en", body.Locale)
+	}
+}
+
+func TestSettingsLocaleGetInvalidStoredPreferenceFallsBackToEnglish(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "configured"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+	cookie := loginSessionCookie(t, srv, "alice", "pw")
+	if err := srv.accountDepsForID("alice").Store.SetUserContext("pref.lang", "fr", "user"); err != nil {
+		t.Fatalf("seed invalid locale preference: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/locale", nil)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings locale get code = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		Locale string `json:"locale"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode locale get: %v", err)
+	}
+	if body.Locale != "en" {
+		t.Fatalf("locale get = %q, want en", body.Locale)
+	}
+}
+
+func TestSettingsLocaleInvalidPostDoesNotOverwriteExistingPreference(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "configured"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+	cookie := loginSessionCookie(t, srv, "alice", "pw")
+	if err := srv.accountDepsForID("alice").Store.SetUserContext("pref.lang", "ja", "user"); err != nil {
+		t.Fatalf("seed locale preference: %v", err)
+	}
+
+	body, err := json.Marshal(map[string]string{"locale": "fr"})
+	if err != nil {
+		t.Fatalf("marshal locale body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/locale", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("settings locale invalid post code = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+
+	if got, ok, err := srv.accountDepsForID("alice").Store.GetUserContext("pref.lang"); err != nil || !ok || got != "ja" {
+		t.Fatalf("stored locale after invalid post = %q ok=%v err=%v, want ja", got, ok, err)
+	}
+}
+
 func TestTelegramPairingChatIDUsesActiveChannelLastChatID(t *testing.T) {
 	token := "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd"
 	cfg := core.DefaultConfig()
