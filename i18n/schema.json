@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kittypaw.local/i18n/catalog.schema.json",
+  "title": "KittyPaw i18n Catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["locales", "default_locale", "messages"],
+  "properties": {
+    "locales": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "ko" },
+        { "const": "ja" },
+        { "const": "en" }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "default_locale": {
+      "const": "en"
+    },
+    "messages": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ko", "ja", "en"],
+        "properties": {
+          "ko": { "type": "string" },
+          "ja": { "type": "string" },
+          "en": { "type": "string" }
+        }
+      }
+    }
+  }
+}
