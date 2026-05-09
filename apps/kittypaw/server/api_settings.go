@@ -142,15 +142,18 @@ func (s *Server) handleSettingsLocaleGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	locale := defaultUILocale
+	saved := false
 	value, ok, err := acct.Session.Store.GetUserContext(userLocalePreferenceKey)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if ok {
-		locale, _ = normalizeUILocale(value)
+		normalized, valid := normalizeUILocale(value)
+		locale = normalized
+		saved = valid && strings.TrimSpace(value) != ""
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"locale": locale})
+	writeJSON(w, http.StatusOK, map[string]any{"locale": locale, "saved": saved})
 }
 
 func (s *Server) handleSettingsLocalePost(w http.ResponseWriter, r *http.Request) {

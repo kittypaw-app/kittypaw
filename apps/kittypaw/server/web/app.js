@@ -30,6 +30,7 @@ const App = {
       this.showLogin();
       return;
     }
+    await this.loadAccountLocalePreference();
     if (!this.chatOnly && !this.kanbanOnly && !this.settingsSurface) {
       this.redirectToSettingsSurface();
       return;
@@ -132,6 +133,20 @@ const App = {
     } catch (e) {
       console.error('Auth check failed:', e);
       return { auth_required: true, authenticated: false };
+    }
+  },
+
+  async loadAccountLocalePreference() {
+    if (!I18n || typeof I18n.setLocale !== 'function') return;
+    try {
+      const res = await fetch('/api/settings/locale', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const locale = await res.json();
+      if (locale && locale.saved === true && locale.locale) {
+        I18n.setLocale(locale.locale);
+      }
+    } catch (e) {
+      console.warn('Locale preference load failed:', e);
     }
   },
 

@@ -149,13 +149,14 @@ func TestSettingsLocalePostThenGetRoundTrip(t *testing.T) {
 		t.Fatalf("settings locale get code = %d body=%s", rr.Code, rr.Body.String())
 	}
 	var loaded struct {
+		Saved  bool   `json:"saved"`
 		Locale string `json:"locale"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&loaded); err != nil {
 		t.Fatalf("decode locale get: %v", err)
 	}
-	if loaded.Locale != "ko" {
-		t.Fatalf("locale get = %q, want ko", loaded.Locale)
+	if !loaded.Saved || loaded.Locale != "ko" {
+		t.Fatalf("locale get = %#v, want saved ko", loaded)
 	}
 }
 
@@ -175,13 +176,14 @@ func TestSettingsLocaleGetDefaultsToEnglish(t *testing.T) {
 	}
 
 	var body struct {
+		Saved  bool   `json:"saved"`
 		Locale string `json:"locale"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
 		t.Fatalf("decode locale get: %v", err)
 	}
-	if body.Locale != "en" {
-		t.Fatalf("locale get = %q, want en", body.Locale)
+	if body.Saved || body.Locale != "en" {
+		t.Fatalf("locale get = %#v, want unsaved en", body)
 	}
 }
 
@@ -204,13 +206,14 @@ func TestSettingsLocaleGetInvalidStoredPreferenceFallsBackToEnglish(t *testing.T
 	}
 
 	var body struct {
+		Saved  bool   `json:"saved"`
 		Locale string `json:"locale"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
 		t.Fatalf("decode locale get: %v", err)
 	}
-	if body.Locale != "en" {
-		t.Fatalf("locale get = %q, want en", body.Locale)
+	if body.Saved || body.Locale != "en" {
+		t.Fatalf("locale get = %#v, want unsaved fallback en", body)
 	}
 }
 

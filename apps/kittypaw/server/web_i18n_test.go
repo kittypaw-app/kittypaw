@@ -71,6 +71,41 @@ func TestWebAppUsesI18nPicker(t *testing.T) {
 	}
 }
 
+func TestWebAppLoadsSavedAccountLocaleBeforeRendering(t *testing.T) {
+	src := readWebAssetForI18nTest(t, "web/app.js")
+	initStart := strings.Index(src, "async init()")
+	if initStart < 0 {
+		t.Fatal("web app missing init method")
+	}
+	initEnd := strings.Index(src[initStart:], "\n  isChatSurface()")
+	if initEnd < 0 {
+		t.Fatal("web app init method end not found")
+	}
+	init := src[initStart : initStart+initEnd]
+	loadCall := strings.Index(init, "await this.loadAccountLocalePreference()")
+	if loadCall < 0 {
+		t.Fatalf("web app init must load saved account locale before rendering, got:\n%s", init)
+	}
+	renderCall := strings.Index(init, "await this.startCurrentSurface()")
+	if renderCall < 0 {
+		t.Fatalf("web app init missing surface render call, got:\n%s", init)
+	}
+	if loadCall > renderCall {
+		t.Fatalf("web app must load saved account locale before rendering, got:\n%s", init)
+	}
+
+	for _, token := range []string{
+		"async loadAccountLocalePreference()",
+		"'/api/settings/locale'",
+		"locale.saved === true",
+		"I18n.setLocale(locale.locale)",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("web app missing saved locale token %s", token)
+		}
+	}
+}
+
 func TestWebI18nAttributeInterpolationsUseAttributeEscaper(t *testing.T) {
 	app := readWebAssetForI18nTest(t, "web/app.js")
 	if !strings.Contains(app, "function escHTMLAttr(") {
