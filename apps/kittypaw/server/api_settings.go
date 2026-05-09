@@ -18,6 +18,24 @@ import (
 	"github.com/jinto/kittypaw/store"
 )
 
+const (
+	userLocalePreferenceKey = "pref.lang"
+	defaultUILocale         = "en"
+)
+
+func normalizeUILocale(value string) (string, bool) {
+	locale := strings.ToLower(strings.TrimSpace(value))
+	if locale == "" {
+		return defaultUILocale, true
+	}
+	switch locale {
+	case "ko", "ja", "en":
+		return locale, true
+	default:
+		return defaultUILocale, false
+	}
+}
+
 func (s *Server) handleSettingsLLM(w http.ResponseWriter, r *http.Request) {
 	acct, status, err := s.settingsAccount(r)
 	if err != nil {
@@ -110,6 +128,61 @@ func (s *Server) handleSettingsTelegram(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"saved": true})
+}
+
+func (s *Server) handleSettingsLocaleGet(w http.ResponseWriter, r *http.Request) {
+	acct, status, err := s.settingsAccount(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if acct.Session == nil || acct.Session.Store == nil {
+		writeError(w, http.StatusInternalServerError, "account store unavailable")
+		return
+	}
+
+	locale := defaultUILocale
+	saved := false
+	value, ok, err := acct.Session.Store.GetUserContext(userLocalePreferenceKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ok {
+		normalized, valid := normalizeUILocale(value)
+		locale = normalized
+		saved = valid && strings.TrimSpace(value) != ""
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"locale": locale, "saved": saved})
+}
+
+func (s *Server) handleSettingsLocalePost(w http.ResponseWriter, r *http.Request) {
+	acct, status, err := s.settingsAccount(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+
+	var body struct {
+		Locale string `json:"locale"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	locale, valid := normalizeUILocale(body.Locale)
+	if !valid {
+		writeError(w, http.StatusBadRequest, "invalid locale")
+		return
+	}
+	if acct.Session == nil || acct.Session.Store == nil {
+		writeError(w, http.StatusInternalServerError, "account store unavailable")
+		return
+	}
+	if err := acct.Session.Store.SetUserContext(userLocalePreferenceKey, locale, "user"); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"saved": true, "locale": locale})
 }
 
 func (s *Server) handleSettingsTelegramChatID(w http.ResponseWriter, r *http.Request) {

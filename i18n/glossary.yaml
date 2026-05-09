@@ -1,0 +1,61 @@
+terms:
+  daemon:
+    ko:
+      term: "데몬"
+      guidance: "백그라운드에서 실행되는 KittyPaw 프로세스를 가리킬 때 사용합니다. 사용자에게 명령을 안내할 때는 daemon 대신 실제 CLI 명령을 함께 보여줍니다."
+    ja:
+      term: "デーモン"
+      guidance: "バックグラウンドで実行される KittyPaw プロセスを指すときに使います。ユーザー向けの案内では、daemon だけでなく実際の CLI コマンドも示します。"
+    en:
+      term: "daemon"
+      guidance: "Use for the KittyPaw background process. In user-facing instructions, pair the term with the exact CLI command when action is needed."
+  workspace:
+    ko:
+      term: "작업공간"
+      guidance: "KittyPaw가 연결해 작업하는 로컬 프로젝트나 저장소 범위를 가리킵니다. UI에서는 공백 없이 작업공간으로 씁니다."
+    ja:
+      term: "ワークスペース"
+      guidance: "KittyPaw が接続して作業するローカルプロジェクトやリポジトリの範囲を指します。UI ではワークスペースで統一します。"
+    en:
+      term: "workspace"
+      guidance: "Use for a local project or repository scope connected to KittyPaw."
+  route:
+    ko:
+      term: "경로"
+      guidance: "네트워크 라우팅이나 기능 연결 경로를 설명할 때 사용합니다. URL 자체를 뜻할 때는 URL을 씁니다."
+    ja:
+      term: "ルート"
+      guidance: "ネットワークのルーティングや機能の接続先を説明するときに使います。URL そのものを指す場合は URL と表記します。"
+    en:
+      term: "route"
+      guidance: "Use for a routing path or capability connection path. Use URL when referring to a literal URL."
+  kanban:
+    ko:
+      term: "칸반"
+      guidance: "작업 보드를 가리킬 때 사용합니다. 메뉴와 제목에서는 짧게 칸반으로 씁니다."
+    ja:
+      term: "カンバン"
+      guidance: "タスクボードを指すときに使います。メニューやタイトルでは短くカンバンと表記します。"
+    en:
+      term: "Kanban"
+      guidance: "Use for the task board feature. Capitalize in titles and navigation."
+  milestone:
+    ko:
+      term: "마일스톤"
+      guidance: "작업을 묶는 목표나 릴리스 단위를 가리킬 때 사용합니다."
+    ja:
+      term: "マイルストーン"
+      guidance: "タスクをまとめる目標やリリース単位を指すときに使います。"
+    en:
+      term: "milestone"
+      guidance: "Use for a goal or release grouping for tasks."
+  hostedChat:
+    ko:
+      term: "호스팅 채팅"
+      guidance: "KittyPaw가 호스팅 환경에서 제공하는 원격 채팅 표면을 가리킵니다. 로컬 채팅과 구분해야 할 때 사용합니다."
+    ja:
+      term: "ホスト型チャット"
+      guidance: "KittyPaw がホスト環境で提供するリモートチャット画面を指します。ローカルチャットと区別するときに使います。"
+    en:
+      term: "hosted chat"
+      guidance: "Use for KittyPaw chat surfaces provided by hosted services, especially when distinguishing them from local chat."

@@ -64,7 +64,7 @@ func TestWebSettingsManagesAccountWorkspaces(t *testing.T) {
 		"_workspaceBreadcrumbs",
 		"_suggestWorkspaceAlias",
 		"pathInput.value = previousPath;",
-		"selected.textContent = previousPath || 'No folder selected';",
+		"selected.textContent = previousPath || settingsT('settings.noFolderSelected');",
 		"_directoryPickerRequestID",
 		"const requestID = ++this._directoryPickerRequestID;",
 		"if (requestID !== this._directoryPickerRequestID) return false;",

@@ -1,5 +1,11 @@
 // KittyPaw Skills Gallery
 
+function skillsT(key, params, fallback) {
+  const runtime = window.KittyPawI18n;
+  const value = runtime && typeof runtime.t === 'function' ? runtime.t(key, params) : key;
+  return value === key && fallback ? fallback : value;
+}
+
 const Skills = {
   _container: null,
   _installed: [],   // packages from /api/v1/packages
@@ -20,12 +26,12 @@ const Skills = {
   // Render the stable outer shell (search bar stays, results area is dynamic).
   _renderShell() {
     let html = '<div class="gallery-view">';
-    html += '<h1>Skill Gallery</h1>';
-    html += '<p class="sub">Browse, install, and configure automation skills.</p>';
+    html += '<h1>' + esc(skillsT('skills.title', null, 'Skill Gallery')) + '</h1>';
+    html += '<p class="sub">' + esc(skillsT('skills.subtitle', null, 'Browse, install, and configure automation skills.')) + '</p>';
     html += '<div class="gallery-search">';
-    html += '<input type="text" id="gallery-q" placeholder="Search skills..." value="">';
+    html += '<input type="text" id="gallery-q" placeholder="' + escHTMLAttr(skillsT('skills.search', null, 'Search skills...')) + '" value="">';
     html += '</div>';
-    html += '<div id="gallery-results"><div class="gallery-loading">Loading skills...</div></div>';
+    html += '<div id="gallery-results"><div class="gallery-loading">' + esc(skillsT('skills.loading', null, 'Loading skills...')) + '</div></div>';
     html += '</div>';
     this._container.innerHTML = html;
 
@@ -50,7 +56,7 @@ const Skills = {
       this._renderResults(query);
     } catch (e) {
       const el = document.getElementById('gallery-results');
-      if (el) el.innerHTML = '<div class="gallery-error">Failed to load gallery: ' + esc(e.message) + '</div>';
+      if (el) el.innerHTML = '<div class="gallery-error">' + esc(skillsT('skills.failedToLoadGallery', { error: e.message }, 'Failed to load gallery: ' + e.message)) + '</div>';
     }
   },
 
@@ -85,7 +91,7 @@ const Skills = {
     if (hasInstalled) {
       const total = filteredSkills.length + filteredPkgs.length;
       html += '<div class="gallery-section">';
-      html += '<div class="gallery-section-title">Installed (' + total + ')</div>';
+      html += '<div class="gallery-section-title">' + esc(skillsT('skills.installedCount', { count: total }, 'Installed (' + total + ')')) + '</div>';
       html += '<div class="gallery-grid">';
       for (const s of filteredSkills) {
         html += this._skillCardHTML(s);
@@ -99,9 +105,9 @@ const Skills = {
     // Available section (exclude already installed)
     const avail = this._available.filter(e => !installedIDs.has(e.id));
     html += '<div class="gallery-section">';
-    html += '<div class="gallery-section-title">Available' + (avail.length ? ' (' + avail.length + ')' : '') + '</div>';
+    html += '<div class="gallery-section-title">' + esc(avail.length ? skillsT('skills.availableCount', { count: avail.length }, 'Available (' + avail.length + ')') : skillsT('skills.available', null, 'Available')) + '</div>';
     if (avail.length === 0) {
-      html += '<div class="gallery-empty">No additional packages found.</div>';
+      html += '<div class="gallery-empty">' + esc(skillsT('skills.noAdditionalPackages', null, 'No additional packages found.')) + '</div>';
     } else {
       html += '<div class="gallery-grid">';
       for (const entry of avail) {
@@ -132,15 +138,15 @@ const Skills = {
     const enabled = skill.enabled;
     const trigger = skill.trigger || '';
 
-    let html = '<div class="gallery-card" data-skill-name="' + esc(name) + '">';
+    let html = '<div class="gallery-card" data-skill-name="' + escHTMLAttr(name) + '">';
     html += '<div class="gallery-card-header">';
     html += '<div class="gallery-card-title">' + esc(name) + '</div>';
     html += '<span class="gallery-card-badge' + (enabled ? '' : ' badge-disabled') + '">' +
-            (enabled ? 'Enabled' : 'Disabled') + '</span>';
+            esc(enabled ? skillsT('skills.enabled', null, 'Enabled') : skillsT('skills.disabled', null, 'Disabled')) + '</span>';
     html += '</div>';
     html += '<div class="gallery-card-desc">' + esc(desc) + '</div>';
     html += '<div class="gallery-card-meta">';
-    html += '<span>skill</span>';
+    html += '<span>' + esc(skillsT('skills.skillType', null, 'skill')) + '</span>';
     if (trigger) html += '<span>' + esc(trigger) + '</span>';
     html += '</div></div>';
     return html;
@@ -153,14 +159,14 @@ const Skills = {
     const version = entry.version || '';
     const author = entry.author || '';
 
-    let html = '<div class="gallery-card" data-pkg-id="' + esc(id) + '" data-installed="' + installed + '">';
+    let html = '<div class="gallery-card" data-pkg-id="' + escHTMLAttr(id) + '" data-installed="' + escHTMLAttr(installed) + '">';
     html += '<div class="gallery-card-header">';
     html += '<div class="gallery-card-title">' + esc(name) + '</div>';
-    if (installed) html += '<span class="gallery-card-badge">Installed</span>';
+    if (installed) html += '<span class="gallery-card-badge">' + esc(skillsT('skills.installed', null, 'Installed')) + '</span>';
     html += '</div>';
     html += '<div class="gallery-card-desc">' + esc(desc) + '</div>';
     html += '<div class="gallery-card-meta">';
-    if (installed) html += '<span>package</span>';
+    if (installed) html += '<span>' + esc(skillsT('skills.packageType', null, 'package')) + '</span>';
     if (version) html += '<span>v' + esc(version) + '</span>';
     if (author) html += '<span>' + esc(author) + '</span>';
     html += '</div></div>';
@@ -175,14 +181,14 @@ const Skills = {
     if (!skill) return;
 
     let html = '<div class="gallery-detail">';
-    html += '<button class="gallery-back" id="gallery-back-btn">&larr; Back to gallery</button>';
+    html += '<button class="gallery-back" id="gallery-back-btn">&larr; ' + esc(skillsT('skills.backToGallery', null, 'Back to gallery')) + '</button>';
 
     html += '<div class="gallery-detail-header">';
     html += '<div class="gallery-detail-title">' + esc(skill.name) + '</div>';
     html += '<div class="gallery-detail-meta">';
-    html += '<span class="gallery-type-badge">skill</span>';
-    if (skill.trigger) html += '<span>Trigger: ' + esc(skill.trigger) + '</span>';
-    html += '<span>v' + (skill.version || 1) + '</span>';
+    html += '<span class="gallery-type-badge">' + esc(skillsT('skills.skillType', null, 'skill')) + '</span>';
+    if (skill.trigger) html += '<span>' + esc(skillsT('skills.trigger', null, 'Trigger')) + ': ' + esc(skill.trigger) + '</span>';
+    html += '<span>v' + esc(String(skill.version || 1)) + '</span>';
     html += '</div>';
     if (skill.description) {
       html += '<div class="gallery-detail-desc">' + esc(skill.description) + '</div>';
@@ -192,11 +198,11 @@ const Skills = {
     // Actions
     html += '<div class="gallery-actions">';
     if (skill.enabled) {
-      html += '<button class="gallery-btn gallery-btn-secondary" id="gallery-toggle-btn">Disable</button>';
+      html += '<button class="gallery-btn gallery-btn-secondary" id="gallery-toggle-btn">' + esc(skillsT('skills.disable', null, 'Disable')) + '</button>';
     } else {
-      html += '<button class="gallery-btn gallery-btn-primary" id="gallery-toggle-btn">Enable</button>';
+      html += '<button class="gallery-btn gallery-btn-primary" id="gallery-toggle-btn">' + esc(skillsT('skills.enable', null, 'Enable')) + '</button>';
     }
-    html += '<button class="gallery-btn gallery-btn-danger" id="gallery-delete-btn">Delete</button>';
+    html += '<button class="gallery-btn gallery-btn-danger" id="gallery-delete-btn">' + esc(skillsT('common.delete', null, 'Delete')) + '</button>';
     html += '</div>';
     html += '<div id="gallery-msg"></div>';
     html += '</div>';
@@ -221,7 +227,7 @@ const Skills = {
 
     const deleteBtn = document.getElementById('gallery-delete-btn');
     deleteBtn.addEventListener('click', async () => {
-      if (!confirm('Delete skill "' + name + '"?')) return;
+      if (!confirm(skillsT('skills.deleteSkillConfirm', { name }, 'Delete skill "' + name + '"?'))) return;
       deleteBtn.disabled = true;
       try {
         await api('/api/v1/skills/' + encodeURIComponent(name), { method: 'DELETE' });
@@ -238,7 +244,7 @@ const Skills = {
 
   async _showDetail(id, installed) {
     this._view = 'detail';
-    this._container.innerHTML = '<div class="gallery-view"><div class="gallery-loading">Loading...</div></div>';
+    this._container.innerHTML = '<div class="gallery-view"><div class="gallery-loading">' + esc(skillsT('common.loading', null, 'Loading...')) + '</div></div>';
 
     try {
       if (installed) {
@@ -250,7 +256,7 @@ const Skills = {
         this._renderRegistryDetail(entry);
       }
     } catch (e) {
-      this._container.innerHTML = '<div class="gallery-error">Failed to load: ' + esc(e.message) + '</div>';
+      this._container.innerHTML = '<div class="gallery-error">' + esc(skillsT('skills.failedToLoad', { error: e.message }, 'Failed to load: ' + e.message)) + '</div>';
     }
   },
 
@@ -261,36 +267,36 @@ const Skills = {
     const readme = data.readme || '';
 
     let html = '<div class="gallery-detail">';
-    html += '<button class="gallery-back" id="gallery-back-btn">&larr; Back to gallery</button>';
+    html += '<button class="gallery-back" id="gallery-back-btn">&larr; ' + esc(skillsT('skills.backToGallery', null, 'Back to gallery')) + '</button>';
 
     // Header
     html += '<div class="gallery-detail-header">';
     html += '<div class="gallery-detail-title">' + esc(meta.name || meta.id) + '</div>';
     html += '<div class="gallery-detail-meta">';
-    html += '<span class="gallery-type-badge">package</span>';
+    html += '<span class="gallery-type-badge">' + esc(skillsT('skills.packageType', null, 'package')) + '</span>';
     html += '<span>v' + esc(meta.version || '') + '</span>';
     if (meta.author) html += '<span>' + esc(meta.author) + '</span>';
-    if (meta.cron) html += '<span>Cron: ' + esc(meta.cron) + '</span>';
+    if (meta.cron) html += '<span>' + esc(skillsT('skills.cron', null, 'Cron')) + ': ' + esc(meta.cron) + '</span>';
     html += '</div>';
     html += '<div class="gallery-detail-desc">' + esc(meta.description || '') + '</div>';
     html += '</div>';
 
     // README
     if (readme) {
-      html += '<div class="gallery-readme">' + renderMarkdown(readme) + '</div>';
+      html += '<div class="gallery-readme">' + renderSkillsMarkdown(readme) + '</div>';
     }
 
     // Config form
     if (schema.length > 0) {
       html += '<div class="gallery-config">';
-      html += '<div class="gallery-config-title">Configuration</div>';
+      html += '<div class="gallery-config-title">' + esc(skillsT('skills.configuration', null, 'Configuration')) + '</div>';
       html += '<form id="gallery-config-form">';
       for (const f of schema) {
         html += this._fieldHTML(f, values[f.key] || '');
       }
       html += '</form>';
       html += '<div class="gallery-actions">';
-      html += '<button class="gallery-btn gallery-btn-primary" id="gallery-save-btn">Save Configuration</button>';
+      html += '<button class="gallery-btn gallery-btn-primary" id="gallery-save-btn">' + esc(skillsT('skills.saveConfiguration', null, 'Save Configuration')) + '</button>';
       html += '</div>';
       html += '<div id="gallery-msg"></div>';
       html += '</div>';
@@ -299,7 +305,7 @@ const Skills = {
     // Uninstall action
     if (installed) {
       html += '<div class="gallery-actions gallery-actions-danger">';
-      html += '<button class="gallery-btn gallery-btn-danger" id="gallery-uninstall-btn">Uninstall</button>';
+      html += '<button class="gallery-btn gallery-btn-danger" id="gallery-uninstall-btn">' + esc(skillsT('skills.uninstall', null, 'Uninstall')) + '</button>';
       html += '</div>';
     }
 
@@ -310,7 +316,7 @@ const Skills = {
 
   _renderRegistryDetail(entry) {
     let html = '<div class="gallery-detail">';
-    html += '<button class="gallery-back" id="gallery-back-btn">&larr; Back to gallery</button>';
+    html += '<button class="gallery-back" id="gallery-back-btn">&larr; ' + esc(skillsT('skills.backToGallery', null, 'Back to gallery')) + '</button>';
 
     html += '<div class="gallery-detail-header">';
     html += '<div class="gallery-detail-title">' + esc(entry.name || entry.id) + '</div>';
@@ -322,7 +328,7 @@ const Skills = {
     html += '</div>';
 
     html += '<div class="gallery-actions">';
-    html += '<button class="gallery-btn gallery-btn-primary" id="gallery-install-btn" data-id="' + esc(entry.id) + '">Install</button>';
+    html += '<button class="gallery-btn gallery-btn-primary" id="gallery-install-btn" data-id="' + escHTMLAttr(entry.id) + '">' + esc(skillsT('skills.install', null, 'Install')) + '</button>';
     html += '</div>';
     html += '<div id="gallery-msg"></div>';
     html += '</div>';
@@ -334,7 +340,7 @@ const Skills = {
     const installBtn = document.getElementById('gallery-install-btn');
     installBtn.addEventListener('click', async () => {
       installBtn.disabled = true;
-      installBtn.textContent = 'Installing...';
+      installBtn.textContent = skillsT('skills.installing', null, 'Installing...');
       try {
         await api('/api/v1/packages/install-from-registry', {
           method: 'POST',
@@ -345,9 +351,9 @@ const Skills = {
         this._renderDetail(data, true);
       } catch (e) {
         document.getElementById('gallery-msg').innerHTML =
-          '<div class="gallery-error">Install failed: ' + esc(e.message) + '</div>';
+          '<div class="gallery-error">' + esc(skillsT('skills.installFailed', { error: e.message }, 'Install failed: ' + e.message)) + '</div>';
         installBtn.disabled = false;
-        installBtn.textContent = 'Install';
+        installBtn.textContent = skillsT('skills.install', null, 'Install');
       }
     });
   },
@@ -361,37 +367,37 @@ const Skills = {
       case 'boolean': {
         const checked = value === 'true' || (!value && field.default === 'true');
         html += '<div class="gallery-config-check">';
-        html += '<input type="checkbox" id="cfg-' + esc(field.key) + '" data-key="' + esc(field.key) + '"' + (checked ? ' checked' : '') + '>';
-        html += '<label for="cfg-' + esc(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
+        html += '<input type="checkbox" id="cfg-' + escHTMLAttr(field.key) + '" data-key="' + escHTMLAttr(field.key) + '"' + (checked ? ' checked' : '') + '>';
+        html += '<label for="cfg-' + escHTMLAttr(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
         html += '</div>';
         break;
       }
       case 'select': {
-        html += '<label for="cfg-' + esc(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
-        html += '<select id="cfg-' + esc(field.key) + '" data-key="' + esc(field.key) + '">';
+        html += '<label for="cfg-' + escHTMLAttr(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
+        html += '<select id="cfg-' + escHTMLAttr(field.key) + '" data-key="' + escHTMLAttr(field.key) + '">';
         for (const opt of (field.options || [])) {
           const sel = (value || field.default) === opt ? ' selected' : '';
-          html += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+          html += '<option value="' + escHTMLAttr(opt) + '"' + sel + '>' + esc(opt) + '</option>';
         }
         html += '</select>';
         break;
       }
       case 'secret': {
-        html += '<label for="cfg-' + esc(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
-        html += '<input type="password" id="cfg-' + esc(field.key) + '" data-key="' + esc(field.key) + '"';
-        html += ' placeholder="' + (masked ? 'Set (hidden)' : (field.default || '')) + '">';
+        html += '<label for="cfg-' + escHTMLAttr(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
+        html += '<input type="password" id="cfg-' + escHTMLAttr(field.key) + '" data-key="' + escHTMLAttr(field.key) + '"';
+        html += ' placeholder="' + escHTMLAttr(masked ? skillsT('skills.setHidden', null, 'Set (hidden)') : (field.default || '')) + '">';
         break;
       }
       case 'number': {
-        html += '<label for="cfg-' + esc(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
-        html += '<input type="number" id="cfg-' + esc(field.key) + '" data-key="' + esc(field.key) + '"';
-        html += ' value="' + esc(value || field.default || '') + '">';
+        html += '<label for="cfg-' + escHTMLAttr(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
+        html += '<input type="number" id="cfg-' + escHTMLAttr(field.key) + '" data-key="' + escHTMLAttr(field.key) + '"';
+        html += ' value="' + escHTMLAttr(value || field.default || '') + '">';
         break;
       }
       default: { // string
-        html += '<label for="cfg-' + esc(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
-        html += '<input type="text" id="cfg-' + esc(field.key) + '" data-key="' + esc(field.key) + '"';
-        html += ' value="' + esc(value || field.default || '') + '">';
+        html += '<label for="cfg-' + escHTMLAttr(field.key) + '">' + esc(field.label || field.key) + req + '</label>';
+        html += '<input type="text" id="cfg-' + escHTMLAttr(field.key) + '" data-key="' + escHTMLAttr(field.key) + '"';
+        html += ' value="' + escHTMLAttr(value || field.default || '') + '">';
       }
     }
     html += '</div>';
@@ -405,7 +411,7 @@ const Skills = {
     if (saveBtn) {
       saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
-        saveBtn.textContent = 'Saving...';
+        saveBtn.textContent = skillsT('skills.saving', null, 'Saving...');
         const values = {};
         this._container.querySelectorAll('[data-key]').forEach(el => {
           const key = el.dataset.key;
@@ -425,13 +431,13 @@ const Skills = {
             body: JSON.stringify({ values }),
           });
           document.getElementById('gallery-msg').innerHTML =
-            '<div class="gallery-success"><p>Configuration saved.</p></div>';
-          saveBtn.textContent = 'Save Configuration';
+            '<div class="gallery-success"><p>' + esc(skillsT('skills.configurationSaved', null, 'Configuration saved.')) + '</p></div>';
+          saveBtn.textContent = skillsT('skills.saveConfiguration', null, 'Save Configuration');
           saveBtn.disabled = false;
         } catch (e) {
           document.getElementById('gallery-msg').innerHTML =
-            '<div class="gallery-error">Save failed: ' + esc(e.message) + '</div>';
-          saveBtn.textContent = 'Save Configuration';
+            '<div class="gallery-error">' + esc(skillsT('skills.saveFailed', { error: e.message }, 'Save failed: ' + e.message)) + '</div>';
+          saveBtn.textContent = skillsT('skills.saveConfiguration', null, 'Save Configuration');
           saveBtn.disabled = false;
         }
       });
@@ -440,14 +446,14 @@ const Skills = {
     const uninstallBtn = document.getElementById('gallery-uninstall-btn');
     if (uninstallBtn) {
       uninstallBtn.addEventListener('click', async () => {
-        if (!confirm('Uninstall package "' + pkgId + '"?')) return;
+        if (!confirm(skillsT('skills.uninstallPackageConfirm', { id: pkgId }, 'Uninstall package "' + pkgId + '"?'))) return;
         uninstallBtn.disabled = true;
         try {
           await api('/api/v1/packages/' + encodeURIComponent(pkgId), { method: 'DELETE' });
           this.mount(this._container);
         } catch (e) {
           document.getElementById('gallery-msg').innerHTML =
-            '<div class="gallery-error">Uninstall failed: ' + esc(e.message) + '</div>';
+            '<div class="gallery-error">' + esc(skillsT('skills.uninstallFailed', { error: e.message }, 'Uninstall failed: ' + e.message)) + '</div>';
           uninstallBtn.disabled = false;
         }
       });
@@ -457,7 +463,7 @@ const Skills = {
 
 // ── Minimal Markdown Renderer ──────────────────────────────
 
-function renderMarkdown(text) {
+function renderSkillsMarkdown(text) {
   if (!text) return '';
   // Escape HTML first
   let html = text

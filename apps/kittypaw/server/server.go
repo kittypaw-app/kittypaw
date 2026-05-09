@@ -376,6 +376,8 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 		// Authenticated post-setup settings. First-run setup stays in the CLI;
 		// these endpoints only mutate already configured accounts.
 		r.Route("/api/settings", func(r chi.Router) {
+			r.Get("/locale", s.handleSettingsLocaleGet)
+			r.Post("/locale", s.handleSettingsLocalePost)
 			r.Post("/llm", s.handleSettingsLLM)
 			r.Post("/telegram", s.handleSettingsTelegram)
 			r.Post("/telegram/chat-id", s.handleSettingsTelegramChatID)

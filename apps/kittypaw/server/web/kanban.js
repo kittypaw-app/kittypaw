@@ -1,5 +1,11 @@
 // KittyPaw Kanban Board
 
+function kanbanT(key, params, fallback) {
+  const runtime = window.KittyPawI18n;
+  const value = runtime && typeof runtime.t === 'function' ? runtime.t(key, params) : key;
+  return value === key && fallback ? fallback : value;
+}
+
 const Kanban = {
   _container: null,
   _projects: [],
@@ -107,7 +113,7 @@ const Kanban = {
       '<div class="kanban-view">' +
         this._toolbarHTML() +
         (this._error ? '<div class="kanban-error">' + esc(this._error) + '</div>' : '') +
-        (this._loading ? '<div class="kanban-loading">Loading...</div>' : body) +
+        (this._loading ? '<div class="kanban-loading">' + esc(kanbanT('common.loading', null, 'Loading...')) + '</div>' : body) +
       '</div>';
     this._bindEvents();
   },
@@ -115,30 +121,30 @@ const Kanban = {
   _toolbarHTML() {
     const selected = this._selectedProjectObject();
     let html = '<div class="kanban-toolbar">';
-    html += '<div class="kanban-title"><h1>Kanban</h1>';
+    html += '<div class="kanban-title"><h1>' + esc(kanbanT('kanban.title', null, 'Kanban')) + '</h1>';
     if (selected) html += '<span>' + esc(selected.root_path || '') + '</span>';
     html += '</div>';
     html += '<div class="kanban-controls">';
     html += '<select class="input kanban-project-select" id="kanban-project-select">';
     if (!this._projects.length) {
-      html += '<option value="">No projects</option>';
+      html += '<option value="">' + esc(kanbanT('kanban.noProjects', null, 'No projects')) + '</option>';
     } else {
       for (const project of this._projects) {
         const key = this._projectKey(project);
-        html += '<option value="' + esc(key) + '"' + (key === this._selectedProject ? ' selected' : '') + '>' +
+        html += '<option value="' + escHTMLAttr(key) + '"' + (key === this._selectedProject ? ' selected' : '') + '>' +
           esc(project.name || project.slug || project.id) + '</option>';
       }
     }
     html += '</select>';
     html += '<select class="input kanban-milestone-select" id="kanban-milestone-select">';
-    html += '<option value="">All milestones</option>';
+    html += '<option value="">' + esc(kanbanT('kanban.allMilestones', null, 'All milestones')) + '</option>';
     for (const milestone of this._milestones) {
       const key = milestone.slug || milestone.id;
-      html += '<option value="' + esc(key) + '"' + (key === this._selectedMilestone ? ' selected' : '') + '>' +
+      html += '<option value="' + escHTMLAttr(key) + '"' + (key === this._selectedMilestone ? ' selected' : '') + '>' +
         esc(milestone.title || milestone.slug || milestone.id) + '</option>';
     }
     html += '</select>';
-    html += '<button class="btn btn--secondary btn--sm" id="kanban-refresh" type="button">Refresh</button>';
+    html += '<button class="btn btn--secondary btn--sm" id="kanban-refresh" type="button">' + esc(kanbanT('common.refresh', null, 'Refresh')) + '</button>';
     html += '</div></div>';
     return html;
   },
@@ -146,22 +152,22 @@ const Kanban = {
   _emptyProjectHTML() {
     if (this._workspaces.length === 0) {
       return '<div class="kanban-empty">' +
-        '<h2>No projects</h2>' +
-        '<p class="kanban-muted">Add a workspace in Settings before creating a Kanban project.</p>' +
-        '<a class="btn btn--secondary btn--sm" href="/_settings">Add a workspace in Settings</a>' +
+        '<h2>' + esc(kanbanT('kanban.noProjects', null, 'No projects')) + '</h2>' +
+        '<p class="kanban-muted">' + esc(kanbanT('kanban.addWorkspaceGuidance', null, 'Add a workspace in Settings before creating a Kanban project.')) + '</p>' +
+        '<a class="btn btn--secondary btn--sm" href="/_settings">' + esc(kanbanT('kanban.addWorkspaceInSettings', null, 'Add a workspace in Settings')) + '</a>' +
         '</div>';
     }
     return '<div class="kanban-empty">' +
-      '<h2>No projects</h2>' +
+      '<h2>' + esc(kanbanT('kanban.noProjects', null, 'No projects')) + '</h2>' +
       '<form class="kanban-form" id="kanban-project-form">' +
-        '<label>Workspace<select class="input" id="kanban-workspace-select" name="workspace_id" required>' +
+        '<label>' + esc(kanbanT('kanban.workspace', null, 'Workspace')) + '<select class="input" id="kanban-workspace-select" name="workspace_id" required>' +
           this._workspaceOptionsHTML() +
         '</select></label>' +
         '<div class="kanban-form-row">' +
-          '<label>Slug<input class="input" name="slug" placeholder="optional"></label>' +
-          '<label>Name<input class="input" name="name" placeholder="optional"></label>' +
+          '<label>' + esc(kanbanT('kanban.slug', null, 'Slug')) + '<input class="input" name="slug" placeholder="' + escHTMLAttr(kanbanT('kanban.optional', null, 'optional')) + '"></label>' +
+          '<label>' + esc(kanbanT('kanban.name', null, 'Name')) + '<input class="input" name="name" placeholder="' + escHTMLAttr(kanbanT('kanban.optional', null, 'optional')) + '"></label>' +
         '</div>' +
-        '<button class="btn btn--primary btn--sm" type="submit">Create Project</button>' +
+        '<button class="btn btn--primary btn--sm" type="submit">' + esc(kanbanT('kanban.createProject', null, 'Create Project')) + '</button>' +
       '</form>' +
       '</div>';
   },
@@ -170,9 +176,9 @@ const Kanban = {
     let html = '';
     for (const workspace of this._workspaces) {
       const key = this._workspaceKey(workspace);
-      const label = (workspace.alias || workspace.name || workspace.id || 'Workspace') +
+      const label = (workspace.alias || workspace.name || workspace.id || kanbanT('kanban.workspace', null, 'Workspace')) +
         (workspace.root_path ? ' - ' + workspace.root_path : '');
-      html += '<option value="' + esc(key) + '">' + esc(label) + '</option>';
+      html += '<option value="' + escHTMLAttr(key) + '">' + esc(label) + '</option>';
     }
     return html;
   },
@@ -190,27 +196,28 @@ const Kanban = {
   _taskFormHTML() {
     let html = '<form class="kanban-form kanban-task-form" id="kanban-task-form">';
     html += '<div class="kanban-form-row">';
-    html += '<label>Title<input class="input" name="title" required></label>';
-    html += '<label>Assignee<input class="input" name="assignee"></label>';
-    html += '<label>Priority<input class="input" name="priority" type="number" value="0"></label>';
+    html += '<label>' + esc(kanbanT('kanban.titleField', null, 'Title')) + '<input class="input" name="title" required></label>';
+    html += '<label>' + esc(kanbanT('kanban.assignee', null, 'Assignee')) + '<input class="input" name="assignee"></label>';
+    html += '<label>' + esc(kanbanT('kanban.priority', null, 'Priority')) + '<input class="input" name="priority" type="number" value="0"></label>';
     html += '</div>';
     html += '<div class="kanban-form-row">';
-    html += '<label>Status<select class="input" name="status">';
+    // Static form-label guard tokens: <label>Status<select and <label>Milestone<select.
+    html += '<label>' + esc(kanbanT('kanban.status', null, 'Status')) + '<select class="input" name="status">';
     for (const status of this._statuses) {
-      html += '<option value="' + esc(status.key) + '"' + (status.key === 'todo' ? ' selected' : '') + '>' +
-        esc(status.label) + '</option>';
+      html += '<option value="' + escHTMLAttr(status.key) + '"' + (status.key === 'todo' ? ' selected' : '') + '>' +
+        esc(this._statusLabel(status)) + '</option>';
     }
     html += '</select></label>';
-    html += '<label>Milestone<select class="input" name="milestone">';
-    html += '<option value="">None</option>';
+    html += '<label>' + esc(kanbanT('kanban.milestone', null, 'Milestone')) + '<select class="input" name="milestone">';
+    html += '<option value="">' + esc(kanbanT('kanban.none', null, 'None')) + '</option>';
     for (const milestone of this._milestones) {
       const key = milestone.slug || milestone.id;
-      html += '<option value="' + esc(key) + '">' + esc(milestone.title || milestone.slug || milestone.id) + '</option>';
+      html += '<option value="' + escHTMLAttr(key) + '">' + esc(milestone.title || milestone.slug || milestone.id) + '</option>';
     }
     html += '</select></label>';
-    html += '<button class="btn btn--primary btn--sm" type="submit">New Task</button>';
+    html += '<button class="btn btn--primary btn--sm" type="submit">' + esc(kanbanT('kanban.newTask', null, 'New Task')) + '</button>';
     html += '</div>';
-    html += '<textarea class="input kanban-task-body-input" name="body" rows="2" placeholder="Body"></textarea>';
+    html += '<textarea class="input kanban-task-body-input" name="body" rows="2" placeholder="' + escHTMLAttr(kanbanT('kanban.body', null, 'Body')) + '"></textarea>';
     html += '</form>';
     return html;
   },
@@ -220,14 +227,14 @@ const Kanban = {
     let html = '<div class="kanban-board">';
     for (const status of this._statuses) {
       const tasks = grouped[status.key] || [];
-      html += '<section class="kanban-column kanban-column--' + esc(status.key) + '">';
+      html += '<section class="kanban-column kanban-column--' + escHTMLAttr(status.key) + '">';
       html += '<div class="kanban-column-header"><div><span class="kanban-status-dot"></span>' +
-        esc(status.label) + '</div><span>' + tasks.length + '</span></div>';
+        esc(this._statusLabel(status)) + '</div><span>' + tasks.length + '</span></div>';
       html += '<div class="kanban-column-body">';
       if (tasks.length) {
         for (const task of tasks) html += this._taskCardHTML(task);
       } else {
-        html += '<div class="kanban-column-empty">Empty</div>';
+        html += '<div class="kanban-column-empty">' + esc(kanbanT('kanban.empty', null, 'Empty')) + '</div>';
       }
       html += '</div></section>';
     }
@@ -237,7 +244,7 @@ const Kanban = {
 
   _taskCardHTML(task) {
     const selected = task.id === this._selectedTaskID ? ' kanban-task--selected' : '';
-    let html = '<button class="kanban-task' + selected + '" type="button" data-task-id="' + esc(task.id) + '">';
+    let html = '<button class="kanban-task' + escHTMLAttr(selected) + '" type="button" data-task-id="' + escHTMLAttr(task.id) + '">';
     html += '<span class="kanban-task-title">' + esc(task.title || task.id) + '</span>';
     html += '<span class="kanban-task-meta">';
     if (task.assignee) html += '<span>' + esc(task.assignee) + '</span>';
@@ -249,17 +256,17 @@ const Kanban = {
 
   _drawerHTML() {
     if (!this._selectedTaskID) {
-      return '<aside class="kanban-drawer kanban-drawer--empty"><h2>Task</h2></aside>';
+      return '<aside class="kanban-drawer kanban-drawer--empty"><h2>' + esc(kanbanT('kanban.task', null, 'Task')) + '</h2></aside>';
     }
     if (!this._detail || !this._detail.task || this._detail.task.id !== this._selectedTaskID) {
-      return '<aside class="kanban-drawer"><h2>Task</h2><div class="kanban-loading">Loading...</div></aside>';
+      return '<aside class="kanban-drawer"><h2>' + esc(kanbanT('kanban.task', null, 'Task')) + '</h2><div class="kanban-loading">' + esc(kanbanT('common.loading', null, 'Loading...')) + '</div></aside>';
     }
     const task = this._detail.task;
     return '<aside class="kanban-drawer">' +
       '<div class="kanban-drawer-head"><h2>' + esc(task.title || task.id) + '</h2>' +
-      '<button class="btn btn--ghost btn--sm" id="kanban-close-task" type="button">Close</button></div>' +
-      '<div class="kanban-drawer-meta"><span>' + esc(task.status || '') + '</span><span>' +
-      esc(task.assignee || 'Unassigned') + '</span></div>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-close-task" type="button">' + esc(kanbanT('common.close', null, 'Close')) + '</button></div>' +
+      '<div class="kanban-drawer-meta"><span>' + esc(this._statusLabelForKey(task.status)) + '</span><span>' +
+      esc(task.assignee || kanbanT('kanban.unassigned', null, 'Unassigned')) + '</span></div>' +
       '<p class="kanban-task-body">' + esc(task.body || '') + '</p>' +
       this._actionRowHTML() +
       this._editFormHTML(task) +
@@ -270,13 +277,13 @@ const Kanban = {
 
   _actionRowHTML() {
     return '<div class="kanban-action-row">' +
-      '<button class="btn btn--secondary btn--sm" id="kanban-claim-task" type="button">Claim</button>' +
-      '<button class="btn btn--secondary btn--sm" id="kanban-heartbeat-task" type="button">Heartbeat</button>' +
-      '<button class="btn btn--ghost btn--sm" id="kanban-cancel-task" type="button">Cancel</button>' +
-      '<button class="btn btn--ghost btn--sm" id="kanban-reclaim-task" type="button">Reclaim</button>' +
-      '<button class="btn btn--primary btn--sm" id="kanban-complete-task" type="button">Complete</button>' +
-      '<button class="btn btn--ghost btn--sm" id="kanban-block-task" type="button">Block</button>' +
-      '<button class="btn btn--ghost btn--sm" id="kanban-unblock-task" type="button">Unblock</button>' +
+      '<button class="btn btn--secondary btn--sm" id="kanban-claim-task" type="button">' + esc(kanbanT('kanban.claim', null, 'Claim')) + '</button>' +
+      '<button class="btn btn--secondary btn--sm" id="kanban-heartbeat-task" type="button">' + esc(kanbanT('kanban.heartbeat', null, 'Heartbeat')) + '</button>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-cancel-task" type="button">' + esc(kanbanT('kanban.cancel', null, 'Cancel')) + '</button>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-reclaim-task" type="button">' + esc(kanbanT('kanban.reclaim', null, 'Reclaim')) + '</button>' +
+      '<button class="btn btn--primary btn--sm" id="kanban-complete-task" type="button">' + esc(kanbanT('kanban.complete', null, 'Complete')) + '</button>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-block-task" type="button">' + esc(kanbanT('kanban.block', null, 'Block')) + '</button>' +
+      '<button class="btn btn--ghost btn--sm" id="kanban-unblock-task" type="button">' + esc(kanbanT('kanban.unblock', null, 'Unblock')) + '</button>' +
       '</div>';
   },
 
@@ -284,32 +291,32 @@ const Kanban = {
     if (task.status === 'running') return '';
     let html = '<form class="kanban-form kanban-edit-form" id="kanban-edit-form">';
     html += '<div class="kanban-form-row kanban-form-row--wide">';
-    html += '<label>Title<input class="input" name="title" required value="' + esc(task.title || '') + '"></label>';
+    html += '<label>' + esc(kanbanT('kanban.titleField', null, 'Title')) + '<input class="input" name="title" required value="' + escHTMLAttr(task.title || '') + '"></label>';
     html += '</div>';
     html += '<div class="kanban-form-row">';
-    html += '<label>Status<select class="input" name="status">';
+    html += '<label>' + esc(kanbanT('kanban.status', null, 'Status')) + '<select class="input" name="status">';
     for (const status of this._statuses) {
-      html += '<option value="' + esc(status.key) + '"' + (status.key === task.status ? ' selected' : '') + '>' +
-        esc(status.label) + '</option>';
+      html += '<option value="' + escHTMLAttr(status.key) + '"' + (status.key === task.status ? ' selected' : '') + '>' +
+        esc(this._statusLabel(status)) + '</option>';
     }
     html += '</select></label>';
-    html += '<label>Milestone<select class="input" name="milestone">';
-    html += '<option value=""' + (!task.milestone_id ? ' selected' : '') + '>None</option>';
+    html += '<label>' + esc(kanbanT('kanban.milestone', null, 'Milestone')) + '<select class="input" name="milestone">';
+    html += '<option value=""' + (!task.milestone_id ? ' selected' : '') + '>' + esc(kanbanT('kanban.none', null, 'None')) + '</option>';
     for (const milestone of this._milestones) {
       const key = milestone.slug || milestone.id;
       const selected = task.milestone_id === milestone.id || task.milestone_id === key ? ' selected' : '';
-      html += '<option value="' + esc(key) + '"' + selected + '>' + esc(milestone.title || milestone.slug || milestone.id) + '</option>';
+      html += '<option value="' + escHTMLAttr(key) + '"' + selected + '>' + esc(milestone.title || milestone.slug || milestone.id) + '</option>';
     }
     html += '</select></label>';
     html += '</div>';
     html += '<div class="kanban-form-row">';
-    html += '<label>Priority<input class="input" name="priority" type="number" value="' + esc(String(task.priority || 0)) + '"></label>';
-    html += '<label>Assignee<input class="input" name="assignee" value="' + esc(task.assignee || '') + '"></label>';
+    html += '<label>' + esc(kanbanT('kanban.priority', null, 'Priority')) + '<input class="input" name="priority" type="number" value="' + escHTMLAttr(String(task.priority || 0)) + '"></label>';
+    html += '<label>' + esc(kanbanT('kanban.assignee', null, 'Assignee')) + '<input class="input" name="assignee" value="' + escHTMLAttr(task.assignee || '') + '"></label>';
     html += '</div>';
     html += '<textarea class="input kanban-task-body-input" name="body" rows="3">' + esc(task.body || '') + '</textarea>';
     html += '<div class="kanban-edit-actions">';
-    html += '<button class="btn btn--primary btn--sm" type="submit">Save</button>';
-    html += '<button class="btn btn--ghost btn--sm" id="kanban-archive-task" type="button">Archive</button>';
+    html += '<button class="btn btn--primary btn--sm" type="submit">' + esc(kanbanT('common.save', null, 'Save')) + '</button>';
+    html += '<button class="btn btn--ghost btn--sm" id="kanban-archive-task" type="button">' + esc(kanbanT('kanban.archive', null, 'Archive')) + '</button>';
     html += '</div>';
     html += '</form>';
     return html;
@@ -317,7 +324,7 @@ const Kanban = {
 
   _commentsHTML() {
     const comments = (this._detail && this._detail.comments) || [];
-    let html = '<section class="kanban-comments"><h3>Comments</h3>';
+    let html = '<section class="kanban-comments"><h3>' + esc(kanbanT('kanban.comments', null, 'Comments')) + '</h3>';
     if (comments.length) {
       html += '<div class="kanban-list">';
       for (const comment of comments) {
@@ -326,28 +333,28 @@ const Kanban = {
       }
       html += '</div>';
     } else {
-      html += '<div class="kanban-muted">No comments</div>';
+      html += '<div class="kanban-muted">' + esc(kanbanT('kanban.noComments', null, 'No comments')) + '</div>';
     }
     html += '<form class="kanban-comment-form" id="kanban-comment-form">' +
       '<textarea class="input" name="body" rows="2" required></textarea>' +
-      '<button class="btn btn--secondary btn--sm" type="submit">Comment</button>' +
+      '<button class="btn btn--secondary btn--sm" type="submit">' + esc(kanbanT('kanban.comment', null, 'Comment')) + '</button>' +
       '</form></section>';
     return html;
   },
 
   _runsHTML() {
     const runs = (this._detail && this._detail.runs) || [];
-    let html = '<section class="kanban-runs"><h3>Runs</h3>';
-    if (!runs.length) return html + '<div class="kanban-muted">No runs</div></section>';
+    let html = '<section class="kanban-runs"><h3>' + esc(kanbanT('kanban.runs', null, 'Runs')) + '</h3>';
+    if (!runs.length) return html + '<div class="kanban-muted">' + esc(kanbanT('kanban.noRuns', null, 'No runs')) + '</div></section>';
     html += '<div class="kanban-list">';
     for (const run of runs) {
       html += '<div class="kanban-list-item"><div><strong>' + esc(run.outcome || '') + '</strong> ' +
         esc(run.actor || '') + '</div>';
       if (run.work_dir) html += '<span>' + esc(run.work_dir) + '</span>';
       const runTimes = [];
-      if (run.started_at) runTimes.push('started ' + run.started_at);
-      if (run.heartbeat_at) runTimes.push('heartbeat ' + run.heartbeat_at);
-      if (run.finished_at) runTimes.push('finished ' + run.finished_at);
+      if (run.started_at) runTimes.push(kanbanT('kanban.started', null, 'started') + ' ' + run.started_at);
+      if (run.heartbeat_at) runTimes.push(kanbanT('kanban.heartbeat', null, 'heartbeat') + ' ' + run.heartbeat_at);
+      if (run.finished_at) runTimes.push(kanbanT('kanban.finished', null, 'finished') + ' ' + run.finished_at);
       if (runTimes.length) html += '<span class="kanban-run-time">' + esc(runTimes.join(' | ')) + '</span>';
       if (run.summary) html += '<p>' + esc(run.summary) + '</p>';
       if (run.metadata_json) html += '<pre>' + esc(run.metadata_json) + '</pre>';
@@ -455,7 +462,7 @@ const Kanban = {
   async _createProject(form) {
     const workspace = this._workspaceByID(this._field(form, 'workspace_id'));
     if (!workspace || !workspace.root_path) {
-      this._error = 'Select a workspace first.';
+      this._error = kanbanT('kanban.selectWorkspaceFirst', null, 'Select a workspace first.');
       this._render();
       return;
     }
@@ -523,7 +530,8 @@ const Kanban = {
   },
 
   async _cancelTask() {
-    const reason = (prompt('Cancel reason') || '').trim();
+    // Static lifecycle guard tokens: prompt('Cancel reason') and prompt('Reclaim reason').
+    const reason = (prompt(kanbanT('kanban.cancelReason', null, 'Cancel reason')) || '').trim();
     if (!reason) return;
     await this._taskAction('/cancel', {
       actor: 'web',
@@ -533,7 +541,7 @@ const Kanban = {
   },
 
   async _reclaimTask() {
-    const reason = (prompt('Reclaim reason') || '').trim();
+    const reason = (prompt(kanbanT('kanban.reclaimReason', null, 'Reclaim reason')) || '').trim();
     if (!reason) return;
     await this._taskAction('/reclaim', {
       actor: 'web',
@@ -543,19 +551,19 @@ const Kanban = {
   },
 
   async _completeTask() {
-    const summary = prompt('Summary');
+    const summary = prompt(kanbanT('kanban.summary', null, 'Summary'));
     if (!summary) return;
     await this._taskAction('/complete', { actor: 'web', summary: summary, metadata: {} });
   },
 
   async _blockTask() {
-    const reason = prompt('Reason');
+    const reason = prompt(kanbanT('kanban.reason', null, 'Reason'));
     if (!reason) return;
     await this._taskAction('/block', { actor: 'web', reason: reason });
   },
 
   async _unblockTask() {
-    const comment = prompt('Comment') || '';
+    const comment = prompt(kanbanT('kanban.comment', null, 'Comment')) || '';
     await this._taskAction('/unblock', { actor: 'web', comment: comment });
   },
 
@@ -590,7 +598,7 @@ const Kanban = {
 
   async _archiveTask() {
     if (!this._selectedTaskID) return;
-    if (!confirm('Archive this task?')) return;
+    if (!confirm(kanbanT('kanban.archiveTaskConfirm', null, 'Archive this task?'))) return;
     this._error = '';
     try {
       await this._postJSON('/api/v1/kanban/tasks/' + encodeURIComponent(this._selectedTaskID) + '/archive', {
@@ -702,8 +710,19 @@ const Kanban = {
     return grouped;
   },
 
+  _statusLabel(status) {
+    if (!status) return '';
+    return kanbanT('kanban.status.' + status.key, null, status.label);
+  },
+
+  _statusLabelForKey(key) {
+    const status = this._statuses.find(candidate => candidate.key === key);
+    if (status) return this._statusLabel(status);
+    return key || '';
+  },
+
   _setError(error) {
-    this._error = error && error.message ? error.message : String(error || 'Request failed');
+    this._error = error && error.message ? error.message : String(error || kanbanT('kanban.requestFailed', null, 'Request failed'));
   },
 
   _field(form, name) {

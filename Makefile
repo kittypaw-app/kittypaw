@@ -1,9 +1,10 @@
-.PHONY: help list contracts-check smoke-local e2e-local full-local-live
+.PHONY: help list contracts-check i18n-check smoke-local e2e-local full-local-live
 
 help:
 	@echo "Targets:"
 	@echo "  list             List skeleton files"
 	@echo "  contracts-check  Validate JSON contract files with jq"
+	@echo "  i18n-check       Verify generated i18n assets are up to date"
 	@echo "  smoke-local      Run repeatable local cross-service smoke"
 	@echo "  e2e-local        Run Docker-backed local auth/space E2E"
 	@echo "  full-local-live  Run smoke, Docker E2E, live public-data integrations, and live Kittypaw LLM E2E"
@@ -13,6 +14,9 @@ list:
 
 contracts-check:
 	@find contracts -name '*.json' -print0 | xargs -0 -n1 jq empty
+
+i18n-check:
+	@go run scripts/generate_i18n.go --check
 
 smoke-local:
 	@scripts/smoke-local.sh
