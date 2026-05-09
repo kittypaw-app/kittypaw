@@ -17,7 +17,23 @@
 - [x] Add `apps/kittypaw` release workflow plan for `kittypaw/v*` tags.
 - [ ] Add initial CI path-filter strategy.
 
-## Plan: Product-Wide I18n ← 현재
+## Plan: Projects Board Replacement ← 현재
+
+> App: `apps/kittypaw`
+> Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-09-projects-board-design.md`
+> Plan: `apps/kittypaw/docs/superpowers/plans/2026-05-09-projects-board-implementation.md` (작성 예정)
+> Worktree: `main` worktree에서 진행 (사용자 요청)
+
+- [x] **D1**: Workspace/Kanban 대체 방향 설계 확정.
+- [x] **D2**: Project, Ticket, Board, Conversation, Job, Driver, Staff Assignment 개념 정리.
+- [ ] **T0**: 구현 계획 작성 및 DB/API/UI 영향 범위 점검.
+- [ ] **T1**: Project/Ticket/Job/Driver/Conversation scope 저장소 기반 구현.
+- [ ] **T2**: `/api/v1/projects`, `/api/v1/tickets`, `/api/v1/jobs`, `/api/v1/drivers` API 구현.
+- [ ] **T3**: Projects/Board 중심 웹 UI로 Workspace/Kanban 사용자 표면 대체.
+- [ ] **T4**: 채팅/엔진 Projects tool과 Project Kickoff/Brief Draft 흐름 구현.
+- [ ] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리.
+
+## Follow-up: Product-Wide I18n
 
 > Spec: `docs/superpowers/specs/2026-05-08-product-i18n-design.md`
 > Plan: `docs/superpowers/plans/2026-05-08-product-i18n-foundation.md`
@@ -86,7 +102,7 @@
 - AC #1/#5: `make eval-models` 1회 실행 → `apps/kittypaw/docs/models.md` 자동 생성
 - AC #9b: `make smoke` 사용자 환경 1회
 
-## Plan B: Eval Framework — Iteration 2 ← 현재
+## Plan B: Eval Framework — Iteration 2 ✅
 
 > Spec: `.ina/specs/20260506-1630-think-kp-eval-iter2.md` (v2, 3 scope)
 > Plan: `.claude/plans/kp-eval-iter2.md`
