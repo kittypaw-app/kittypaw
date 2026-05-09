@@ -17,12 +17,12 @@
 - [x] Add `apps/kittypaw` release workflow plan for `kittypaw/v*` tags.
 - [ ] Add initial CI path-filter strategy.
 
-## Plan: Projects Board Replacement ← 현재
+## Plan: Projects Board Replacement ✅
 
 > App: `apps/kittypaw`
 > Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-09-projects-board-design.md`
 > Plan: `apps/kittypaw/docs/superpowers/plans/2026-05-09-projects-board-implementation.md`
-> Worktree: `main` worktree에서 진행 (사용자 요청)
+> Released: `kittypaw/v0.5.20`
 
 - [x] **D1**: Workspace/Kanban 대체 방향 설계 확정.
 - [x] **D2**: Project, Ticket, Board, Conversation, Job, Driver, Staff Assignment 개념 정리.
@@ -35,7 +35,7 @@
 - [x] **T4b-2**: project/ticket conversation scope 기반 File 도구 범위 제한.
 - [x] **T4b-3**: project/ticket chat UI와 API/WS conversation id 전달 경로 연결.
 - [x] **T4b-4**: 비어있지 않은 Project Folder 구조 스캔 후 티켓 초안 제안 흐름 연결.
-- [x] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`).
+- [x] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`, `e885523`, `b6ed65a`).
 
 ## Follow-up: Product-Wide I18n
 

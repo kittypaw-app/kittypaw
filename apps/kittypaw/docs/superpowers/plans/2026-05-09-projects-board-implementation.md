@@ -1,5 +1,8 @@
 # Projects Board Replacement Implementation Plan
 
+> Status: Completed and released as `kittypaw/v0.5.20`.
+> Main implementation: `e885523`; review fix: `b6ed65a`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the user-facing Workspace/Kanban product surface with Projects, Board, Tickets, Jobs, Drivers, project/ticket chats, and Project Brief Drafts for MVP 1.
@@ -871,7 +874,7 @@ git commit -m "test(projects): cover chat led staff and project regressions"
 **Files:**
 - Review findings may touch the Projects files from Tasks 1-7. Before editing, run `git status --short` and ignore unrelated user changes.
 
-- [ ] **Step 1: Run full local verification**
+- [x] **Step 1: Run full local verification**
 
 Run:
 
@@ -884,7 +887,7 @@ make build
 
 Expected: PASS.
 
-- [ ] **Step 2: Run live LLM e2e when credentials are available**
+- [x] **Step 2: Run live LLM e2e when credentials are available**
 
 Run:
 
@@ -894,11 +897,11 @@ KITTYPAW_E2E_LIVE=1 KITTYPAW_E2E_ACCOUNT=jinto go test -tags e2e ./engine -run '
 
 Expected: PASS or SKIP with a clear missing-credentials reason.
 
-- [ ] **Step 3: Request review**
+- [x] **Step 3: Request review**
 
 Run the repository review flow the user requested. If `/review` returns findings, fix them using TDD where applicable, then rerun affected tests.
 
-- [ ] **Step 4: Final commit if review produced fixes**
+- [x] **Step 4: Final commit if review produced fixes**
 
 Run:
 
@@ -910,16 +913,16 @@ git commit -m "fix(projects): address review findings"
 
 Expected: clean worktree.
 
-- [ ] **Step 5: Tag and deploy**
+- [x] **Step 5: Tag and deploy**
 
 After verification and review fixes:
 
 ```bash
-git tag kittypaw/v0.5.16
-git push origin main kittypaw/v0.5.16
+git tag kittypaw/v0.5.20
+git push origin main kittypaw/v0.5.20
 ```
 
-Use the existing release/deploy workflow for namespaced `kittypaw/v*` tags. Do not create plain `v0.5.16`.
+Use the existing release/deploy workflow for namespaced `kittypaw/v*` tags. Do not create plain `v0.5.20`.
 
 ## Self-Review
 
