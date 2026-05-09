@@ -516,6 +516,162 @@ func TestPlanApproveCancelJobWithoutDriverExecution(t *testing.T) {
 	}
 }
 
+func TestProjectJobRuntimeSchemaAddsExitCodeAndRunningGuard(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Run me"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	first := planApprovedJobForProjectsTest(t, st, project.ID, ticket.ID, "First")
+	second := planApprovedJobForProjectsTest(t, st, project.ID, ticket.ID, "Second")
+
+	started, err := st.StartJob(first.ID, StartJobRequest{
+		ActorID:      "pm",
+		WorktreePath: "/tmp/kittypaw/job-1",
+		BranchName:   "kittypaw/KITTY-001/job-1",
+	})
+	if err != nil {
+		t.Fatalf("StartJob(first) error = %v", err)
+	}
+	if started.Status != JobStatusRunning || started.ExitCode != 0 {
+		t.Fatalf("started first = %+v, want running exit_code 0", started)
+	}
+	if _, err := st.StartJob(second.ID, StartJobRequest{
+		ActorID:      "pm",
+		WorktreePath: "/tmp/kittypaw/job-2",
+		BranchName:   "kittypaw/KITTY-001/job-2",
+	}); !IsProjectJobError(err, ProjectJobErrTicketHasRunningJob) {
+		t.Fatalf("StartJob(second) error = %v, want %s", err, ProjectJobErrTicketHasRunningJob)
+	}
+}
+
+func TestProjectJobLifecycleMovesTicketByOutcome(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Lifecycle"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+
+	success := planApprovedJobForProjectsTest(t, st, project.ID, ticket.ID, "Success")
+	if _, err := st.StartJob(success.ID, StartJobRequest{ActorID: "pm", WorktreePath: "/tmp/success", BranchName: "kittypaw/KITTY-001/success"}); err != nil {
+		t.Fatalf("StartJob(success) error = %v", err)
+	}
+	done, err := st.SucceedJob(success.ID, FinishJobRequest{
+		ActorID:       "runtime",
+		ResultSummary: "implemented",
+		LogTail:       "ok",
+		ExitCode:      0,
+		MetadataJSON:  `{"exit_code":0}`,
+	})
+	if err != nil {
+		t.Fatalf("SucceedJob() error = %v", err)
+	}
+	if done.Status != JobStatusSucceeded || done.ExitCode != 0 {
+		t.Fatalf("succeeded job = %+v", done)
+	}
+	ticket, err = st.GetTicket(ticket.ID)
+	if err != nil {
+		t.Fatalf("GetTicket(after success) error = %v", err)
+	}
+	if ticket.Status != TicketStatusReview {
+		t.Fatalf("ticket status after success = %q, want review", ticket.Status)
+	}
+
+	failure := planApprovedJobForProjectsTest(t, st, project.ID, ticket.ID, "Failure")
+	if _, err := st.StartJob(failure.ID, StartJobRequest{ActorID: "pm", WorktreePath: "/tmp/failure", BranchName: "kittypaw/KITTY-001/failure"}); err != nil {
+		t.Fatalf("StartJob(failure) error = %v", err)
+	}
+	failed, err := st.FailJob(failure.ID, FinishJobRequest{
+		ActorID:       "runtime",
+		ResultSummary: "failed",
+		LogTail:       "bad",
+		ErrorExcerpt:  "exit status 2",
+		ExitCode:      2,
+		MetadataJSON:  `{"exit_code":2}`,
+	})
+	if err != nil {
+		t.Fatalf("FailJob() error = %v", err)
+	}
+	if failed.Status != JobStatusFailed || failed.ExitCode != 2 {
+		t.Fatalf("failed job = %+v", failed)
+	}
+	ticket, err = st.GetTicket(ticket.ID)
+	if err != nil {
+		t.Fatalf("GetTicket(after failure) error = %v", err)
+	}
+	if ticket.Status != TicketStatusBlocked {
+		t.Fatalf("ticket status after failure = %q, want blocked", ticket.Status)
+	}
+}
+
+func TestCancelRunningProjectJobMovesTicketBacklog(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Cancel"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job := planApprovedJobForProjectsTest(t, st, project.ID, ticket.ID, "Cancel")
+	if _, err := st.StartJob(job.ID, StartJobRequest{ActorID: "pm", WorktreePath: "/tmp/cancel", BranchName: "kittypaw/KITTY-001/cancel"}); err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	canceled, err := st.CancelJob(job.ID, "alice", "stop requested")
+	if err != nil {
+		t.Fatalf("CancelJob() error = %v", err)
+	}
+	if canceled.Status != JobStatusCanceled || canceled.FinishedAt == "" {
+		t.Fatalf("canceled = %+v", canceled)
+	}
+	ticket, err = st.GetTicket(ticket.ID)
+	if err != nil {
+		t.Fatalf("GetTicket() error = %v", err)
+	}
+	if ticket.Status != TicketStatusBacklog {
+		t.Fatalf("ticket status = %q, want backlog", ticket.Status)
+	}
+}
+
+func TestMarkRunningProjectJobsFailedOnStartup(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Interrupted"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job := planApprovedJobForProjectsTest(t, st, project.ID, ticket.ID, "Interrupted")
+	if _, err := st.StartJob(job.ID, StartJobRequest{ActorID: "pm", WorktreePath: "/tmp/interrupted", BranchName: "kittypaw/KITTY-001/interrupted"}); err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	count, err := st.MarkRunningJobsFailedOnStartup("daemon stopped while the job was running")
+	if err != nil {
+		t.Fatalf("MarkRunningJobsFailedOnStartup() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	got, err := st.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if got.Status != JobStatusFailed || !strings.Contains(got.ErrorExcerpt, "daemon stopped") {
+		t.Fatalf("job after startup recovery = %+v", got)
+	}
+}
+
 func TestListJobEventsKeepsInsertionOrderWhenTimestampsTie(t *testing.T) {
 	st := openTestStore(t)
 	project := createProjectForProjectsTest(t, st, "kitty")
@@ -605,6 +761,27 @@ func createProjectForProjectsTest(t *testing.T, st *Store, key string) *Project 
 		t.Fatalf("CreateProject(%s) error = %v", key, err)
 	}
 	return project
+}
+
+func planApprovedJobForProjectsTest(t *testing.T, st *Store, projectID, ticketID, summary string) *Job {
+	t.Helper()
+	job, err := st.PlanJob(PlanJobRequest{
+		ProjectID:     projectID,
+		TicketID:      ticketID,
+		DriverID:      "codex",
+		Mode:          JobModeOneShot,
+		PromptSummary: summary,
+		PromptText:    "Run " + summary,
+		CreatedBy:     "pm",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob(%s) error = %v", summary, err)
+	}
+	approved, err := st.ApproveJob(job.ID, "pm")
+	if err != nil {
+		t.Fatalf("ApproveJob(%s) error = %v", summary, err)
+	}
+	return approved
 }
 
 func stringPtr(s string) *string {

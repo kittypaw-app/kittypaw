@@ -40,9 +40,44 @@ const (
 	JobModeOneShot = "one_shot"
 	JobModePTY     = "pty"
 	JobModeTmux    = "tmux"
+
+	ProjectJobErrJobNotApproved          = "job_not_approved"
+	ProjectJobErrJobAlreadyStarted       = "job_already_started"
+	ProjectJobErrTicketHasRunningJob     = "ticket_has_running_job"
+	ProjectJobErrProjectNotGitRepository = "project_not_git_repository"
+	ProjectJobErrProjectGitHeadMissing   = "project_git_head_missing"
+	ProjectJobErrProjectGitDirty         = "project_git_dirty"
+	ProjectJobErrWorktreeCreateFailed    = "worktree_create_failed"
+	ProjectJobErrDriverNotFound          = "driver_not_found"
+	ProjectJobErrDriverModeUnsupported   = "driver_mode_unsupported"
+	ProjectJobErrDriverProcessFailed     = "driver_process_failed"
 )
 
 type ProjectFolderClass string
+
+type ProjectJobError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *ProjectJobError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	return e.Code
+}
+
+func projectJobError(code, message string) error {
+	return &ProjectJobError{Code: code, Message: message}
+}
+
+func IsProjectJobError(err error, code string) bool {
+	var jobErr *ProjectJobError
+	return errors.As(err, &jobErr) && jobErr.Code == code
+}
 
 type Project struct {
 	ID                    string `json:"id"`
@@ -231,6 +266,7 @@ type Job struct {
 	LogTail            string `json:"log_tail"`
 	ErrorExcerpt       string `json:"error_excerpt"`
 	LogTruncated       bool   `json:"log_truncated"`
+	ExitCode           int    `json:"exit_code"`
 	DriverSnapshotJSON string `json:"driver_snapshot_json"`
 	CreatedBy          string `json:"created_by"`
 	ApprovedBy         string `json:"approved_by"`
@@ -250,6 +286,34 @@ type PlanJobRequest struct {
 	PromptSummary string
 	PromptText    string
 	CreatedBy     string
+}
+
+type JobListFilter struct {
+	ProjectID string
+	TicketID  string
+	Status    string
+}
+
+type StartJobRequest struct {
+	ActorID      string
+	WorktreePath string
+	BranchName   string
+	MetadataJSON string
+}
+
+type FinishJobRequest struct {
+	ActorID       string
+	ResultSummary string
+	LogTail       string
+	ErrorExcerpt  string
+	LogTruncated  bool
+	ExitCode      int
+	MetadataJSON  string
+}
+
+type UpdateJobLogRequest struct {
+	LogTail      string
+	LogTruncated bool
 }
 
 type JobEvent struct {
@@ -565,36 +629,14 @@ func (s *Store) ListTickets(filter TicketListFilter) ([]Ticket, error) {
 }
 
 func (s *Store) MoveTicket(ticketID string, req MoveTicketRequest) (*Ticket, error) {
-	status := strings.TrimSpace(req.Status)
-	if !validTicketStatus(status) {
-		return nil, fmt.Errorf("invalid ticket status: %s", status)
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	ticket, err := scanTicket(tx.QueryRow(`
-		SELECT id, project_id, key, title, body, status, priority, labels_json,
-		       ticket_conversation_id, created_by, archived_at, created_at, updated_at
-		FROM tickets
-		WHERE id = ? OR key = ?`, strings.TrimSpace(ticketID), strings.ToUpper(strings.TrimSpace(ticketID))))
+	ticket, err := moveTicketStatusTx(tx, ticketID, strings.TrimSpace(req.ActorID), strings.TrimSpace(req.Status), strings.TrimSpace(req.Message), projectNow())
 	if err != nil {
-		return nil, err
-	}
-	now := projectNow()
-	archivedAt := ticket.ArchivedAt
-	if status == TicketStatusArchived && archivedAt == "" {
-		archivedAt = now
-	}
-	if _, err := tx.Exec(`
-		UPDATE tickets
-		SET status = ?, archived_at = ?, updated_at = ?
-		WHERE id = ?`, status, archivedAt, now, ticket.ID); err != nil {
-		return nil, err
-	}
-	if err := insertTicketActionTx(tx, ticket.ID, strings.TrimSpace(req.ActorID), "status_changed", ticket.Status, status, strings.TrimSpace(req.Message), "{}", now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -768,6 +810,41 @@ func insertTicketActionTx(exec interface {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		newProjectStoreID("act_"), ticketID, actorID, actionType, fromStatus, toStatus, message, metadataJSON, now)
 	return err
+}
+
+func moveTicketStatusTx(tx *sql.Tx, ticketID, actorID, status, message, now string) (*Ticket, error) {
+	status = strings.TrimSpace(status)
+	if !validTicketStatus(status) {
+		return nil, fmt.Errorf("invalid ticket status: %s", status)
+	}
+	ticket, err := scanTicket(tx.QueryRow(`
+		SELECT id, project_id, key, title, body, status, priority, labels_json,
+		       ticket_conversation_id, created_by, archived_at, created_at, updated_at
+		FROM tickets
+		WHERE id = ? OR key = ?`, strings.TrimSpace(ticketID), strings.ToUpper(strings.TrimSpace(ticketID))))
+	if err != nil {
+		return nil, err
+	}
+	archivedAt := ticket.ArchivedAt
+	if status == TicketStatusArchived && archivedAt == "" {
+		archivedAt = now
+	}
+	if status != TicketStatusArchived {
+		archivedAt = ""
+	}
+	if _, err := tx.Exec(`
+		UPDATE tickets
+		SET status = ?, archived_at = ?, updated_at = ?
+		WHERE id = ?`, status, archivedAt, now, ticket.ID); err != nil {
+		return nil, err
+	}
+	if err := insertTicketActionTx(tx, ticket.ID, strings.TrimSpace(actorID), "status_changed", ticket.Status, status, strings.TrimSpace(message), "{}", now); err != nil {
+		return nil, err
+	}
+	ticket.Status = status
+	ticket.ArchivedAt = archivedAt
+	ticket.UpdatedAt = now
+	return ticket, nil
 }
 
 func scanTicket(row interface {
@@ -1206,11 +1283,51 @@ func (s *Store) GetJob(jobID string) (*Job, error) {
 	return scanJob(s.db.QueryRow(`
 		SELECT id, project_id, ticket_id, driver_id, mode, status,
 		       worktree_path, branch_name, prompt_summary, prompt_text,
-		       result_summary, log_tail, error_excerpt, log_truncated,
+		       result_summary, log_tail, error_excerpt, log_truncated, exit_code,
 		       driver_snapshot_json, created_by, approved_by, started_at,
 		       finished_at, created_at, updated_at
 		FROM jobs
 		WHERE id = ?`, strings.TrimSpace(jobID)))
+}
+
+func (s *Store) ListJobs(filter JobListFilter) ([]Job, error) {
+	query := `
+		SELECT id, project_id, ticket_id, driver_id, mode, status,
+		       worktree_path, branch_name, prompt_summary, prompt_text,
+		       result_summary, log_tail, error_excerpt, log_truncated, exit_code,
+		       driver_snapshot_json, created_by, approved_by, started_at,
+		       finished_at, created_at, updated_at
+		FROM jobs
+		WHERE 1=1`
+	var args []any
+	if strings.TrimSpace(filter.ProjectID) != "" {
+		query += " AND project_id = ?"
+		args = append(args, strings.TrimSpace(filter.ProjectID))
+	}
+	if strings.TrimSpace(filter.TicketID) != "" {
+		query += " AND ticket_id = ?"
+		args = append(args, strings.TrimSpace(filter.TicketID))
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		query += " AND status = ?"
+		args = append(args, strings.TrimSpace(filter.Status))
+	}
+	query += " ORDER BY created_at DESC, rowid DESC"
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *job)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ApproveJob(jobID, actorID string) (*Job, error) {
@@ -1233,21 +1350,203 @@ func (s *Store) ApproveJob(jobID, actorID string) (*Job, error) {
 	return s.GetJob(job.ID)
 }
 
-func (s *Store) CancelJob(jobID, actorID, reason string) (*Job, error) {
-	job, err := s.GetJob(jobID)
+func (s *Store) StartJob(jobID string, req StartJobRequest) (*Job, error) {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
-	now := projectNow()
-	if _, err := s.db.Exec(`
-		UPDATE jobs SET status = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
-		JobStatusCanceled, now, now, job.ID); err != nil {
+	defer tx.Rollback() //nolint:errcheck
+
+	job, err := scanJob(tx.QueryRow(`
+		SELECT id, project_id, ticket_id, driver_id, mode, status,
+		       worktree_path, branch_name, prompt_summary, prompt_text,
+		       result_summary, log_tail, error_excerpt, log_truncated, exit_code,
+		       driver_snapshot_json, created_by, approved_by, started_at,
+		       finished_at, created_at, updated_at
+		FROM jobs
+		WHERE id = ?`, strings.TrimSpace(jobID)))
+	if err != nil {
 		return nil, err
 	}
-	if _, err := s.AddJobEvent(AddJobEventRequest{JobID: job.ID, Type: "canceled", ActorID: actorID, Message: reason}); err != nil {
+	switch job.Status {
+	case JobStatusApproved:
+	case JobStatusPlanned:
+		return nil, projectJobError(ProjectJobErrJobNotApproved, fmt.Sprintf("job %q is not approved", job.ID))
+	default:
+		return nil, projectJobError(ProjectJobErrJobAlreadyStarted, fmt.Sprintf("job %q cannot start from status %q", job.ID, job.Status))
+	}
+	var runningCount int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*) FROM jobs
+		WHERE ticket_id = ? AND status = ? AND id != ?`,
+		job.TicketID, JobStatusRunning, job.ID).Scan(&runningCount); err != nil {
+		return nil, err
+	}
+	if runningCount > 0 {
+		return nil, projectJobError(ProjectJobErrTicketHasRunningJob, fmt.Sprintf("ticket %q already has a running job", job.TicketID))
+	}
+	now := projectNow()
+	if _, err := tx.Exec(`
+		UPDATE jobs
+		SET status = ?, worktree_path = ?, branch_name = ?, started_at = ?, updated_at = ?
+		WHERE id = ?`,
+		JobStatusRunning, strings.TrimSpace(req.WorktreePath), strings.TrimSpace(req.BranchName), now, now, job.ID); err != nil {
+		return nil, err
+	}
+	if _, err := moveTicketStatusTx(tx, job.TicketID, strings.TrimSpace(req.ActorID), TicketStatusInProgress, "job started", now); err != nil {
+		return nil, err
+	}
+	if err := insertJobEventTx(tx, AddJobEventRequest{
+		JobID:        job.ID,
+		Type:         "started",
+		ActorID:      req.ActorID,
+		Message:      "started",
+		MetadataJSON: req.MetadataJSON,
+	}, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return s.GetJob(job.ID)
+}
+
+func (s *Store) UpdateJobLog(jobID string, req UpdateJobLogRequest) (*Job, error) {
+	truncated := 0
+	if req.LogTruncated {
+		truncated = 1
+	}
+	if _, err := s.db.Exec(`
+		UPDATE jobs
+		SET log_tail = ?, log_truncated = ?, updated_at = ?
+		WHERE id = ?`,
+		req.LogTail, truncated, projectNow(), strings.TrimSpace(jobID)); err != nil {
+		return nil, err
+	}
+	return s.GetJob(jobID)
+}
+
+func (s *Store) SucceedJob(jobID string, req FinishJobRequest) (*Job, error) {
+	return s.finishJob(jobID, req, JobStatusSucceeded, TicketStatusReview, "succeeded")
+}
+
+func (s *Store) FailJob(jobID string, req FinishJobRequest) (*Job, error) {
+	return s.finishJob(jobID, req, JobStatusFailed, TicketStatusBlocked, "failed")
+}
+
+func (s *Store) finishJob(jobID string, req FinishJobRequest, jobStatus, ticketStatus, eventType string) (*Job, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	job, err := scanJob(tx.QueryRow(`
+		SELECT id, project_id, ticket_id, driver_id, mode, status,
+		       worktree_path, branch_name, prompt_summary, prompt_text,
+		       result_summary, log_tail, error_excerpt, log_truncated, exit_code,
+		       driver_snapshot_json, created_by, approved_by, started_at,
+		       finished_at, created_at, updated_at
+		FROM jobs
+		WHERE id = ?`, strings.TrimSpace(jobID)))
+	if err != nil {
+		return nil, err
+	}
+	if job.Status != JobStatusRunning {
+		return nil, projectJobError(ProjectJobErrJobAlreadyStarted, fmt.Sprintf("job %q cannot finish from status %q", job.ID, job.Status))
+	}
+	now := projectNow()
+	truncated := 0
+	if req.LogTruncated {
+		truncated = 1
+	}
+	if _, err := tx.Exec(`
+		UPDATE jobs
+		SET status = ?, result_summary = ?, log_tail = ?, error_excerpt = ?,
+		    log_truncated = ?, exit_code = ?, finished_at = ?, updated_at = ?
+		WHERE id = ?`,
+		jobStatus, strings.TrimSpace(req.ResultSummary), req.LogTail, strings.TrimSpace(req.ErrorExcerpt),
+		truncated, req.ExitCode, now, now, job.ID); err != nil {
+		return nil, err
+	}
+	if _, err := moveTicketStatusTx(tx, job.TicketID, strings.TrimSpace(req.ActorID), ticketStatus, eventType, now); err != nil {
+		return nil, err
+	}
+	if err := insertJobEventTx(tx, AddJobEventRequest{
+		JobID:        job.ID,
+		Type:         eventType,
+		ActorID:      req.ActorID,
+		Message:      strings.TrimSpace(req.ResultSummary),
+		MetadataJSON: req.MetadataJSON,
+	}, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetJob(job.ID)
+}
+
+func (s *Store) CancelJob(jobID, actorID, reason string) (*Job, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	job, err := scanJob(tx.QueryRow(`
+		SELECT id, project_id, ticket_id, driver_id, mode, status,
+		       worktree_path, branch_name, prompt_summary, prompt_text,
+		       result_summary, log_tail, error_excerpt, log_truncated, exit_code,
+		       driver_snapshot_json, created_by, approved_by, started_at,
+		       finished_at, created_at, updated_at
+		FROM jobs
+		WHERE id = ?`, strings.TrimSpace(jobID)))
+	if err != nil {
+		return nil, err
+	}
+	if job.Status == JobStatusSucceeded || job.Status == JobStatusFailed || job.Status == JobStatusCanceled {
+		return nil, projectJobError(ProjectJobErrJobAlreadyStarted, fmt.Sprintf("job %q cannot cancel from status %q", job.ID, job.Status))
+	}
+	now := projectNow()
+	exitCode := job.ExitCode
+	if job.Status == JobStatusRunning {
+		exitCode = -1
+	}
+	if _, err := tx.Exec(`
+		UPDATE jobs SET status = ?, exit_code = ?, finished_at = ?, updated_at = ? WHERE id = ?`,
+		JobStatusCanceled, exitCode, now, now, job.ID); err != nil {
+		return nil, err
+	}
+	if _, err := moveTicketStatusTx(tx, job.TicketID, strings.TrimSpace(actorID), TicketStatusBacklog, "job canceled", now); err != nil {
+		return nil, err
+	}
+	if err := insertJobEventTx(tx, AddJobEventRequest{JobID: job.ID, Type: "canceled", ActorID: actorID, Message: reason}, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetJob(job.ID)
+}
+
+func (s *Store) MarkRunningJobsFailedOnStartup(message string) (int, error) {
+	jobs, err := s.ListJobs(JobListFilter{Status: JobStatusRunning})
+	if err != nil {
+		return 0, err
+	}
+	for _, job := range jobs {
+		if _, err := s.FailJob(job.ID, FinishJobRequest{
+			ActorID:       "runtime",
+			ResultSummary: "interrupted",
+			ErrorExcerpt:  strings.TrimSpace(message),
+			ExitCode:      -1,
+			MetadataJSON:  `{"reason":"daemon_stopped"}`,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return len(jobs), nil
 }
 
 type AddJobEventRequest struct {
@@ -1256,6 +1555,18 @@ type AddJobEventRequest struct {
 	ActorID      string
 	Message      string
 	MetadataJSON string
+}
+
+func insertJobEventTx(exec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}, req AddJobEventRequest, now string) error {
+	metadataJSON := normalizeJSONDocument(req.MetadataJSON, "{}")
+	_, err := exec.Exec(`
+		INSERT INTO job_events (id, job_id, type, actor_id, message, metadata_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		newProjectStoreID("jev_"), strings.TrimSpace(req.JobID), strings.TrimSpace(req.Type), strings.TrimSpace(req.ActorID),
+		strings.TrimSpace(req.Message), metadataJSON, now)
+	return err
 }
 
 func (s *Store) AddJobEvent(req AddJobEventRequest) (*JobEvent, error) {
@@ -1309,7 +1620,7 @@ func scanJob(row interface {
 	if err := row.Scan(
 		&job.ID, &job.ProjectID, &job.TicketID, &job.DriverID, &job.Mode, &job.Status,
 		&job.WorktreePath, &job.BranchName, &job.PromptSummary, &job.PromptText,
-		&job.ResultSummary, &job.LogTail, &job.ErrorExcerpt, &logTruncated,
+		&job.ResultSummary, &job.LogTail, &job.ErrorExcerpt, &logTruncated, &job.ExitCode,
 		&job.DriverSnapshotJSON, &job.CreatedBy, &job.ApprovedBy, &job.StartedAt,
 		&job.FinishedAt, &job.CreatedAt, &job.UpdatedAt,
 	); err != nil {
