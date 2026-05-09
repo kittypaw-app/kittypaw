@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/store"
@@ -485,6 +486,58 @@ func TestProjectsToolStartJobCallsRuntime(t *testing.T) {
 	}
 	if !strings.Contains(result, `"status":"running"`) {
 		t.Fatalf("result = %s, want running job", result)
+	}
+}
+
+func TestProjectsToolCancelJobStopsRuntimeJob(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectsScopeRuntimeProject(t, st, "kitty")
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "Cancel"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(store.PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "shell",
+		Mode:          store.JobModeOneShot,
+		PromptSummary: "Cancel",
+		PromptText:    "sleep",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if _, err := st.ApproveJob(job.ID, "pm"); err != nil {
+		t.Fatalf("ApproveJob() error = %v", err)
+	}
+	block := make(chan struct{})
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{
+		Store:     st,
+		AccountID: "alice",
+		BaseDir:   t.TempDir(),
+		Runner:    fakeBlockingJobCommandRunner{Block: block},
+	})
+	defer func() {
+		close(block)
+		_ = rt.WaitForJob(job.ID, 2*time.Second)
+	}()
+	sess := &Session{Store: st, ProjectJobRuntime: rt}
+
+	if _, err := executeProjects(context.Background(), skillCallForProjectsTest("startJob", job.ID, map[string]any{"actor_id": "pm"}), sess); err != nil {
+		t.Fatalf("executeProjects(startJob) error = %v", err)
+	}
+	result, err := executeProjects(context.Background(), skillCallForProjectsTest("cancelJob", job.ID, map[string]any{"actor_id": "pm", "reason": "not now"}), sess)
+	if err != nil {
+		t.Fatalf("executeProjects(cancelJob) error = %v", err)
+	}
+	if !strings.Contains(result, `"status":"canceled"`) {
+		t.Fatalf("result = %s, want canceled job", result)
+	}
+	if !rt.WaitForJob(job.ID, 500*time.Millisecond) {
+		t.Fatal("cancelJob did not stop the runtime job")
 	}
 }
 

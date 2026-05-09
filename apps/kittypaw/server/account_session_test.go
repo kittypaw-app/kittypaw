@@ -100,6 +100,54 @@ func TestServer_New_LegacySingleAccount_NoFanout(t *testing.T) {
 	}
 }
 
+func TestApplyAccountConfigForDefaultRefreshesSessionRuntimeDeps(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	deps := buildAccountDeps(t, root, "alice", &cfg)
+	deps.ServiceTokenMgr = core.NewServiceTokenManager(deps.Secrets)
+	srv := New([]*AccountDeps{deps}, "test", "alice")
+	oldSession := srv.session
+	if oldSession == nil {
+		t.Fatal("default session is nil")
+	}
+	if oldSession.BrowserController == nil {
+		t.Fatal("initial BrowserController is nil")
+	}
+	if oldSession.ProjectJobRuntime == nil {
+		t.Fatal("initial ProjectJobRuntime is nil")
+	}
+
+	oldSession.BrowserController = nil
+	oldSession.ServiceTokenMgr = nil
+	oldSession.ProjectJobRuntime = nil
+	deps.JobRuntime = nil
+
+	reloadCfg := core.DefaultConfig()
+	reloadCfg.LLM.APIKey = "reload-key"
+	srv.accountMu.Lock()
+	_, err := srv.applyAccountConfigLocked("alice", &reloadCfg)
+	srv.accountMu.Unlock()
+	if err != nil {
+		t.Fatalf("applyAccountConfigLocked() error = %v", err)
+	}
+
+	if srv.session != oldSession {
+		t.Fatal("default account reload should preserve the existing session pointer")
+	}
+	if srv.session.BrowserController == nil {
+		t.Fatal("default session BrowserController was not refreshed")
+	}
+	if srv.session.ServiceTokenMgr == nil {
+		t.Fatal("default session ServiceTokenMgr was not refreshed")
+	}
+	if srv.session.ProjectJobRuntime == nil {
+		t.Fatal("default session ProjectJobRuntime was not refreshed")
+	}
+	if srv.session.ProjectJobRuntime != deps.JobRuntime {
+		t.Fatal("default session ProjectJobRuntime does not match account deps runtime")
+	}
+}
+
 func TestServerNewConfiguredDefaultAccount(t *testing.T) {
 	root := t.TempDir()
 	aliceDeps := buildAccountDeps(t, root, "alice", &core.Config{})

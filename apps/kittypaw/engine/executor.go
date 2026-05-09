@@ -1504,7 +1504,12 @@ func executeProjects(ctx context.Context, call core.SkillCall, s *Session) (stri
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		opts := projectsJobOptionsArg(call, 1)
-		job, err := s.Store.CancelJob(jobID, strings.TrimSpace(opts.ActorID), strings.TrimSpace(opts.Reason))
+		var job *store.Job
+		if s.ProjectJobRuntime != nil {
+			job, err = s.ProjectJobRuntime.CancelJob(ctx, jobID, strings.TrimSpace(opts.ActorID), strings.TrimSpace(opts.Reason))
+		} else {
+			job, err = s.Store.CancelJob(jobID, strings.TrimSpace(opts.ActorID), strings.TrimSpace(opts.Reason))
+		}
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}

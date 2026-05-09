@@ -136,9 +136,12 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 		oldSession.Store = newSession.Store
 		oldSession.Config = newSession.Config
 		oldSession.McpRegistry = newSession.McpRegistry
+		oldSession.BrowserController = newSession.BrowserController
 		oldSession.BaseDir = newSession.BaseDir
 		oldSession.PackageManager = newSession.PackageManager
 		oldSession.APITokenMgr = newSession.APITokenMgr
+		oldSession.ServiceTokenMgr = newSession.ServiceTokenMgr
+		oldSession.ProjectJobRuntime = newSession.ProjectJobRuntime
 		oldSession.AccountID = newSession.AccountID
 		oldSession.AccountRegistry = newSession.AccountRegistry
 		oldSession.Fanout = newSession.Fanout
@@ -186,6 +189,7 @@ func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Sess
 		Store:             td.Store,
 		Config:            td.Account.Config,
 		McpRegistry:       td.McpRegistry,
+		BrowserController: td.BrowserController,
 		BaseDir:           td.Account.BaseDir,
 		PackageManager:    td.PkgMgr,
 		APITokenMgr:       td.APITokenMgr,
