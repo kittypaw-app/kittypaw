@@ -234,7 +234,7 @@ func TestChatRelayDispatcherChatCompletionsReturnsServerErrorShape(t *testing.T)
 	}
 }
 
-func TestChatRelayDispatcherLocalAPIRoutesKanbanToAccountStore(t *testing.T) {
+func TestChatRelayDispatcherLocalAPIRoutesProjectsToAccountStore(t *testing.T) {
 	aliceCfg := core.DefaultConfig()
 	bobCfg := core.DefaultConfig()
 	srv := newMultiAccountAuthTestServer(t, "alice", map[string]string{
@@ -245,10 +245,10 @@ func TestChatRelayDispatcherLocalAPIRoutesKanbanToAccountStore(t *testing.T) {
 		"bob":   &bobCfg,
 	})
 	bobDeps := srv.accountDepsForID("bob")
-	if _, err := bobDeps.Store.CreateKanbanProject(store.CreateKanbanProjectRequest{
-		Slug:     "bob-work",
+	if _, err := bobDeps.Store.CreateProject(store.CreateProjectRequest{
+		Key:      "bob",
 		Name:     "Bob Work",
-		RootPath: "/tmp/bob-work",
+		RootPath: t.TempDir(),
 	}); err != nil {
 		t.Fatalf("seed bob project: %v", err)
 	}
@@ -268,14 +268,14 @@ func TestChatRelayDispatcherLocalAPIRoutesKanbanToAccountStore(t *testing.T) {
 	}
 	var decoded struct {
 		Projects []struct {
-			Slug string `json:"slug"`
+			Key string `json:"key"`
 		} `json:"projects"`
 	}
 	if err := json.Unmarshal(result.Body, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Projects) != 1 || decoded.Projects[0].Slug != "bob-work" {
-		t.Fatalf("projects = %+v, want bob-work from bob account store", decoded.Projects)
+	if len(decoded.Projects) != 1 || decoded.Projects[0].Key != "BOB" {
+		t.Fatalf("projects = %+v, want BOB from bob account store", decoded.Projects)
 	}
 }
 

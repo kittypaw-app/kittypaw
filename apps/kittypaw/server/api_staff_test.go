@@ -24,7 +24,7 @@ func TestStaffAPIRequiresAuthAndReturnsStaffEnvelope(t *testing.T) {
 	var body struct {
 		Staff []any `json:"staff"`
 	}
-	kanbanAPIRequest(t, srv, http.MethodGet, "/api/v1/staff", nil, http.StatusOK, &body)
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/staff", nil, http.StatusOK, &body)
 	if body.Staff == nil {
 		t.Fatalf("staff envelope missing staff key")
 	}
@@ -37,7 +37,7 @@ func TestStaffAPICreatePersistsStaffMeta(t *testing.T) {
 		Success bool   `json:"success"`
 		ID      string `json:"id"`
 	}
-	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/staff", map[string]any{
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/staff", map[string]any{
 		"id":          "coder",
 		"description": "Writes code",
 	}, http.StatusCreated, &created)
@@ -73,7 +73,7 @@ func TestStaffAPIActivateExistingStaff(t *testing.T) {
 		Success bool   `json:"success"`
 		ID      string `json:"id"`
 	}
-	kanbanAPIRequest(t, srv, http.MethodPost, "/api/v1/staff/coder/activate", nil, http.StatusOK, &activated)
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/staff/coder/activate", nil, http.StatusOK, &activated)
 	if !activated.Success || activated.ID != "coder" {
 		t.Fatalf("activated staff response = %+v", activated)
 	}
@@ -88,7 +88,7 @@ func TestOldProfilesAPIRouteIsRemoved(t *testing.T) {
 
 	legacyPath := "/api/v1/profiles"
 	legacyBodyKey := `"profiles"`
-	rr := kanbanAPIRequest(t, srv, http.MethodGet, legacyPath, nil, http.StatusNotFound, nil)
+	rr := projectsAPIRequest(t, srv, http.MethodGet, legacyPath, nil, http.StatusNotFound, nil)
 	if strings.Contains(rr.Body.String(), legacyBodyKey) {
 		t.Fatalf("old profiles route body = %s, want removed route", rr.Body.String())
 	}
