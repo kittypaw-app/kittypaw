@@ -41,6 +41,7 @@
 
 > App: `apps/kittypaw`
 > Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-10-project-job-runtime-design.md`
+> Released: `kittypaw/v0.5.21`
 
 - [x] **D1**: approved Job 의 `one_shot` 실행, account-managed git worktree, non-git `git init` 승인 흐름, bounded log, success→review/failure→blocked 정책 설계 (`25254b5`).
 - [x] **D2**: 사용자 spec review.
@@ -51,7 +52,7 @@
 - [x] **T2a-fix2**: driver 출력이 커도 runtime error capture 가 bounded 되도록 보강 (`5742c2b`).
 - [x] **T2a-fix3**: concurrent start guard 에 걸린 Job 의 임시 worktree/branch 를 정리 (`5880c2d`).
 - [x] **T2a-fix4**: Projects tool `cancelJob` 이 실행 중인 runtime job 을 실제 취소하고, default account config reload 가 runtime/browser/token manager 포인터를 누락하지 않도록 보강 (`9392a45`).
-- [ ] **T2b**: Review Project Job Runtime Phase 1.5 implementation.
+- [x] **T2b**: Review Project Job Runtime Phase 1.5 implementation and fix follow-up issues (`9392a45`, `3cba9fe`).
 
 ## Follow-up: Product-Wide I18n
 
