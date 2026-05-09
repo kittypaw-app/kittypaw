@@ -25,7 +25,7 @@ Workspace/Kanban 사용자 표면을 Project Folder 중심의 Projects/Board 흐
 - [x] **T5a**: Engine `Projects` tool과 slash command 연결 (`e0d492f`).
 - [ ] **T5b**: project/ticket chat 화면과 실제 conversation scope 기반 대화 라우팅.
 - [x] **T6**: Job planning records와 Driver 설정 UI/API 추가. 실제 Codex/Claude 실행은 후속 phase (`7718bb3`, `27cde64`, `6ceaafd`).
-- [x] **T7**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`).
+- [x] **T7**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`).
 
 ---
 
