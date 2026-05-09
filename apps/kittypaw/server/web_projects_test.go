@@ -78,6 +78,26 @@ func TestProjectsWebModuleUsesProjectsTicketsJobsAndDriversAPIs(t *testing.T) {
 	}
 }
 
+func TestProjectsWebIncludesJobRuntimeControls(t *testing.T) {
+	src := readWebAssetForProjectsTest(t, "web/projects.js")
+	for _, token := range []string{
+		"_selectedJob",
+		"_startJob",
+		"_cancelJob",
+		"_loadJobLogs",
+		"_promptGitInit",
+		"/api/v1/projects/' + encodeURIComponent(project.id || project.key) + '/git/init",
+		"/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/start",
+		"/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/cancel",
+		"/api/v1/jobs/' + encodeURIComponent(jobID) + '/logs",
+		"Open Worktree",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("projects module missing job runtime token %s", token)
+		}
+	}
+}
+
 func TestProjectsWebModuleMountsProjectAndTicketChats(t *testing.T) {
 	src := readWebAssetForProjectsTest(t, "web/projects.js")
 	for _, token := range []string{

@@ -12,13 +12,17 @@ const Projects = {
   _drivers: [],
   _board: null,
   _tickets: [],
+  _jobs: [],
   _selectedProject: '',
   _selectedTicketID: '',
+  _selectedJob: '',
+  _jobLogs: null,
   _detail: null,
   _activeProjectTab: 'board',
   _projectKickoffMessage: '',
   _loading: false,
   _error: '',
+  _notice: '',
   _selectedProjectPath: '',
   _directoryPickerRequestID: 0,
   _projectFieldsAuto: true,
@@ -39,13 +43,17 @@ const Projects = {
     this._drivers = [];
     this._board = null;
     this._tickets = [];
+    this._jobs = [];
     this._selectedProject = '';
     this._selectedTicketID = '';
+    this._selectedJob = '';
+    this._jobLogs = null;
     this._detail = null;
     this._activeProjectTab = 'board';
     this._projectKickoffMessage = '';
     this._loading = false;
     this._error = '';
+    this._notice = '';
     this._selectedProjectPath = '';
     this._directoryPickerRequestID = 0;
     this._projectFieldsAuto = true;
@@ -92,6 +100,9 @@ const Projects = {
     }
     if (this._selectedTicketID && !this._tickets.some(ticket => ticket.id === this._selectedTicketID)) {
       this._selectedTicketID = '';
+      this._selectedJob = '';
+      this._jobs = [];
+      this._jobLogs = null;
       this._detail = null;
     }
   },
@@ -102,7 +113,19 @@ const Projects = {
     this._error = '';
     this._render();
     try {
-      this._detail = await api('/api/v1/tickets/' + encodeURIComponent(ticketID));
+      const [detail, jobsData] = await Promise.all([
+        api('/api/v1/tickets/' + encodeURIComponent(ticketID)),
+        api('/api/v1/tickets/' + encodeURIComponent(ticketID) + '/jobs'),
+      ]);
+      this._detail = detail;
+      this._jobs = jobsData.jobs || [];
+      if (this._selectedJob && !this._jobs.some(job => job.id === this._selectedJob)) {
+        this._selectedJob = '';
+        this._jobLogs = null;
+      }
+      if (!this._selectedJob && this._jobs.length) {
+        this._selectedJob = this._jobs[0].id || '';
+      }
     } catch (e) {
       this._setError(e);
     }
@@ -119,6 +142,7 @@ const Projects = {
       '<div class="projects-view">' +
         this._toolbarHTML() +
         (this._error ? '<div class="projects-error">' + esc(this._error) + '</div>' : '') +
+        (this._notice ? '<div class="projects-kickoff-message">' + esc(this._notice) + '</div>' : '') +
         (this._loading ? '<div class="projects-loading">' + esc(projectsT('common.loading', null, 'Loading...')) + '</div>' : this._boardLayoutHTML()) +
       '</div>';
     this._bindEvents();
@@ -281,7 +305,40 @@ const Projects = {
     }
     html += '</select></label>';
     html += '<button class="btn btn--secondary btn--sm" id="projects-plan-job" type="button">' + esc(projectsT('projects.planJob', null, 'Plan Job')) + '</button>';
-    html += '</div></section>';
+    html += '</div>';
+    html += '<div class="projects-job-list">';
+    for (const job of this._jobs || []) {
+      const active = this._selectedJob === job.id ? ' projects-job--active' : '';
+      html += '<button class="projects-job' + escHTMLAttr(active) + '" data-projects-job="' + escHTMLAttr(job.id || '') + '" type="button">' +
+        '<span>' + esc(job.prompt_summary || job.id || '') + '</span>' +
+        '<small>' + esc(job.status || '') + ' · ' + esc(job.driver_id || '') + '</small>' +
+        '</button>';
+    }
+    html += '</div>';
+    html += this._jobDetailHTML();
+    html += '</section>';
+    return html;
+  },
+
+  _jobDetailHTML() {
+    const job = this._currentJob();
+    if (!job) return '';
+    const logs = this._jobLogs && this._jobLogs.job && this._jobLogs.job.id === job.id ? this._jobLogs : null;
+    const current = logs && logs.job ? logs.job : job;
+    let html = '<section class="projects-job-detail">';
+    html += '<h4>' + esc(current.prompt_summary || current.id || '') + '</h4>';
+    html += '<dl class="projects-job-meta">';
+    html += '<dt>Status</dt><dd>' + esc(current.status || '') + '</dd>';
+    html += '<dt>Driver</dt><dd>' + esc(current.driver_id || '') + ' / ' + esc(current.mode || '') + '</dd>';
+    html += '<dt>Branch</dt><dd>' + esc(current.branch_name || '') + '</dd>';
+    html += '<dt>Worktree</dt><dd>' + esc(current.worktree_path || '') + '</dd>';
+    html += '</dl>';
+    if (current.status === 'approved') html += '<button class="btn btn--primary btn--sm" id="projects-job-start" type="button">Start</button>';
+    if (current.status === 'running') html += '<button class="btn btn--secondary btn--sm" id="projects-job-cancel" type="button">Cancel</button>';
+    if (current.worktree_path) html += '<button class="btn btn--secondary btn--sm" id="projects-job-open-worktree" type="button">Open Worktree</button>';
+    const logTail = (logs && logs.log_tail) || current.log_tail || '';
+    if (logTail) html += '<pre class="projects-job-log">' + esc(logTail) + '</pre>';
+    html += '</section>';
     return html;
   },
 
@@ -327,6 +384,9 @@ const Projects = {
       projectSelect.onchange = async () => {
         this._selectedProject = projectSelect.value;
         this._selectedTicketID = '';
+        this._selectedJob = '';
+        this._jobs = [];
+        this._jobLogs = null;
         this._detail = null;
         this._projectKickoffMessage = '';
         await this._loadProjectBoard();
@@ -351,6 +411,9 @@ const Projects = {
     const close = document.getElementById('projects-close-ticket');
     if (close) close.onclick = () => {
       this._selectedTicketID = '';
+      this._selectedJob = '';
+      this._jobs = [];
+      this._jobLogs = null;
       this._detail = null;
       this._render();
     };
@@ -360,6 +423,19 @@ const Projects = {
     if (archive) archive.onclick = () => this._archiveTicket();
     const planJob = document.getElementById('projects-plan-job');
     if (planJob) planJob.onclick = () => this._planJob();
+    document.querySelectorAll('[data-projects-job]').forEach(button => {
+      button.onclick = async () => {
+        this._selectedJob = button.dataset.projectsJob || '';
+        await this._loadJobLogs(this._selectedJob);
+        this._render();
+      };
+    });
+    const startJob = document.getElementById('projects-job-start');
+    if (startJob) startJob.onclick = () => this._startJob();
+    const cancelJob = document.getElementById('projects-job-cancel');
+    if (cancelJob) cancelJob.onclick = () => this._cancelJob();
+    const openWorktree = document.getElementById('projects-job-open-worktree');
+    if (openWorktree) openWorktree.onclick = () => this._openSelectedJobWorktree();
     const project = this._selectedProjectObject();
     const projectChatPanel = document.getElementById('projects-project-chat-panel');
     if (this._activeProjectTab === 'chat' && project && projectChatPanel && typeof Chat !== 'undefined') {
@@ -509,6 +585,81 @@ const Projects = {
       this._setError(e);
       this._render();
     }
+  },
+
+  async _startJob() {
+    if (!this._selectedJob) return;
+    try {
+      const res = await fetch('/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor_id: 'web' }),
+      });
+      const data = await res.json();
+      if (!res.ok && data.code === 'project_not_git_repository') {
+        await this._promptGitInit();
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || 'Job start failed');
+      await this._loadJobLogs(this._selectedJob);
+      await this._loadProjectBoard();
+    } catch (e) {
+      this._setError(e);
+    }
+    this._render();
+  },
+
+  async _cancelJob() {
+    if (!this._selectedJob) return;
+    try {
+      await api('/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor_id: 'web', reason: 'canceled from Projects UI' }),
+      });
+      await this._loadJobLogs(this._selectedJob);
+      await this._loadProjectBoard();
+    } catch (e) {
+      this._setError(e);
+    }
+    this._render();
+  },
+
+  async _loadJobLogs(jobID) {
+    if (!jobID) return null;
+    const data = await api('/api/v1/jobs/' + encodeURIComponent(jobID) + '/logs');
+    this._jobLogs = data;
+    if (data && data.job) {
+      this._jobs = (this._jobs || []).map(job => job.id === data.job.id ? data.job : job);
+    }
+    return data;
+  },
+
+  async _promptGitInit() {
+    const project = this._selectedProjectObject();
+    if (!project) return;
+    if (!window.confirm('This project is not a git repository. Initialize git for this project?')) return;
+    const res = await fetch('/api/v1/projects/' + encodeURIComponent(project.id || project.key) + '/git/init', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Git init failed');
+    this._notice = data.git && !data.git.has_head ? 'Create an initial commit before starting a job.' : 'Git initialized.';
+  },
+
+  _openSelectedJobWorktree() {
+    const job = this._currentJob();
+    if (job && job.worktree_path) {
+      this._notice = job.worktree_path;
+      this._render();
+    }
+  },
+
+  _currentJob() {
+    if (!this._selectedJob && this._jobs && this._jobs.length) {
+      return this._jobs[0];
+    }
+    const logs = this._jobLogs && this._jobLogs.job ? this._jobLogs.job : null;
+    if (logs && logs.id === this._selectedJob) return logs;
+    return (this._jobs || []).find(job => job.id === this._selectedJob) || null;
   },
 
   async _loadDirectoryPicker(path) {
