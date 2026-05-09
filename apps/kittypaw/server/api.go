@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -445,8 +446,9 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text      string `json:"text"`
-		SessionID string `json:"session_id"`
+		Text           string `json:"text"`
+		SessionID      string `json:"session_id"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -460,11 +462,26 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		sessionID = "api"
 	}
+	conversationID := strings.TrimSpace(body.ConversationID)
+	if conversationID != "" {
+		if _, ok, err := s.store.ConversationScope(conversationID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		} else if !ok {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+	}
+	chatID := sessionID
+	if conversationID != "" {
+		chatID = conversationID
+	}
 
 	payload := core.ChatPayload{
-		ChatID:    sessionID,
-		Text:      body.Text,
-		SessionID: sessionID,
+		ChatID:         chatID,
+		Text:           body.Text,
+		SessionID:      sessionID,
+		ConversationID: conversationID,
 	}
 	raw, _ := json.Marshal(payload)
 	event := core.Event{Type: core.EventWebChat, Payload: raw}

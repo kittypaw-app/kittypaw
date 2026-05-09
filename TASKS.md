@@ -31,7 +31,10 @@
 - [x] **T2**: `/api/v1/projects`, `/api/v1/tickets`, `/api/v1/jobs`, `/api/v1/drivers` API 구현.
 - [x] **T3**: Projects/Board 중심 웹 UI로 Workspace/Kanban 사용자 표면 대체.
 - [x] **T4a**: Engine Projects tool, slash command, Brief Draft 저장/commit 흐름 구현.
-- [ ] **T4b**: 채팅 주도 Project Kickoff 및 project/ticket conversation scope 라우팅.
+- [x] **T4b-1**: Project 생성 직후 kickoff assistant turn 기록 및 API 응답 제공.
+- [x] **T4b-2**: project/ticket conversation scope 기반 File 도구 범위 제한.
+- [x] **T4b-3**: project/ticket chat UI와 API/WS conversation id 전달 경로 연결.
+- [x] **T4b-4**: 비어있지 않은 Project Folder 구조 스캔 후 티켓 초안 제안 흐름 연결.
 - [x] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`).
 
 ## Follow-up: Product-Wide I18n

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
@@ -107,6 +109,40 @@ func TestProjectsAPICreateListShowBoard(t *testing.T) {
 	if board.Board.ProjectID != project.ID || board.Board.Columns["backlog"] == nil {
 		t.Fatalf("board = %+v, project = %+v", board.Board, project)
 	}
+}
+
+func TestProjectsAPICreateRecordsKickoffMessage(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var created struct {
+		Project struct {
+			ProjectConversationID string `json:"project_conversation_id"`
+		} `json:"project"`
+		KickoffMessage string `json:"kickoff_message"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/projects", map[string]any{
+		"key":       "scan",
+		"name":      "Scan",
+		"root_path": root,
+	}, http.StatusCreated, &created)
+
+	if created.KickoffMessage != "내용을 파악해서 티켓 초안을 만들까요?" {
+		t.Fatalf("kickoff_message = %q", created.KickoffMessage)
+	}
+	turns, err := srv.store.ListConversationTurns(10)
+	if err != nil {
+		t.Fatalf("ListConversationTurns: %v", err)
+	}
+	for _, turn := range turns {
+		if turn.ChatID == created.Project.ProjectConversationID && turn.Role == core.RoleAssistant && turn.Content == created.KickoffMessage {
+			return
+		}
+	}
+	t.Fatalf("kickoff assistant turn not recorded for project chat %q: %+v", created.Project.ProjectConversationID, turns)
 }
 
 func TestProjectsAPITicketLifecycle(t *testing.T) {

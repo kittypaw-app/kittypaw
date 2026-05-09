@@ -133,7 +133,7 @@ func TestLocalWebModulesUseI18nKeys(t *testing.T) {
 		"web/chat.js":     {"chat.placeholder", "chat.send", "chat.permissionRequest"},
 		"web/settings.js": {"settings.title", "settings.channels", "settings.llmProvider"},
 		"web/skills.js":   {"skills.title", "skills.subtitle", "skills.search"},
-		"web/projects.js": {"projects.title", "projects.newTicket", "projects.jobs", "projects.drivers"},
+		"web/projects.js": {"projects.title", "projects.newTicket", "projects.jobs", "projects.drivers", "projects.projectChat", "projects.ticketChat"},
 	}
 	for path, keys := range cases {
 		src := readWebAssetForI18nTest(t, path)

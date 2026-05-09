@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -244,11 +245,30 @@ func (s *Server) handleWebSocketWithAccount(
 				sendWsMsg(ctx, conn, core.NewErrorMsg(msg))
 				continue
 			}
+			conversationID := strings.TrimSpace(clientMsg.ConversationID)
+			if conversationID != "" {
+				if acct.Deps == nil || acct.Deps.Store == nil {
+					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "conversation store unavailable"))
+					continue
+				}
+				if _, ok, err := acct.Deps.Store.ConversationScope(conversationID); err != nil {
+					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, err.Error()))
+					continue
+				} else if !ok {
+					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "conversation not found"))
+					continue
+				}
+			}
+			chatID := sessionID
+			if conversationID != "" {
+				chatID = conversationID
+			}
 
 			payload, _ := json.Marshal(core.ChatPayload{
-				ChatID:    sessionID,
-				Text:      clientMsg.Text,
-				SessionID: sessionID,
+				ChatID:         chatID,
+				Text:           clientMsg.Text,
+				SessionID:      sessionID,
+				ConversationID: conversationID,
 			})
 			event := core.Event{
 				Type:      core.EventWebChat,

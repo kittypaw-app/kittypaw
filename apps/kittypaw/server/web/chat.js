@@ -12,6 +12,7 @@ const Chat = {
   messagesEl: null,
   inputEl: null,
   sessionId: null,
+  conversationID: '',
   currentBubble: null,
   reconnectAttempts: 0,
   maxReconnectAttempts: 10,
@@ -20,8 +21,9 @@ const Chat = {
   permissionQueue: [],
   permissionActive: false,
 
-  mount(container) {
+  mount(container, options = {}) {
     this.container = container;
+    this.conversationID = options.conversationID || '';
     container.innerHTML = `
       <div class="chat-container">
         <div class="chat-status" id="chat-status"></div>
@@ -162,7 +164,7 @@ const Chat = {
     this._autoResize();
     this.inputEl.disabled = true;
 
-    this.ws.send(JSON.stringify({ type: 'chat', text }));
+    this.ws.send(JSON.stringify({ type: 'chat', text, conversation_id: this.conversationID }));
   },
 
   // ── UI helpers ────────────────────────────────────────

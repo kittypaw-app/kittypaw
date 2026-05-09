@@ -207,6 +207,28 @@ func TestConversationStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestListConversationTurnsForChatFiltersAndOrders(t *testing.T) {
+	st := openTestStore(t)
+	turns := []core.ConversationTurn{
+		{Role: core.RoleUser, Content: "a1", ChatID: "chat-a", Timestamp: "1"},
+		{Role: core.RoleUser, Content: "b1", ChatID: "chat-b", Timestamp: "2"},
+		{Role: core.RoleAssistant, Content: "a2", ChatID: "chat-a", Timestamp: "3"},
+	}
+	for i := range turns {
+		if err := st.AddConversationTurn(&turns[i]); err != nil {
+			t.Fatalf("add turn %d: %v", i, err)
+		}
+	}
+
+	got, err := st.ListConversationTurnsForChat("chat-a", 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForChat: %v", err)
+	}
+	if len(got) != 2 || got[0].Content != "a1" || got[1].Content != "a2" {
+		t.Fatalf("chat-a turns = %+v, want a1 then a2", got)
+	}
+}
+
 func TestConversationSchemaUsesV2Turns(t *testing.T) {
 	st := openTestStore(t)
 

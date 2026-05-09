@@ -508,6 +508,41 @@ func (s *Store) ListConversationTurns(limit int) ([]ConversationTurnRecord, erro
 	return out, nil
 }
 
+// ListConversationTurnsForChat returns recent turns for a specific chat_id in
+// chronological order. It keeps scoped project/ticket chat follow-ups from
+// being displaced by unrelated account-wide turns.
+func (s *Store) ListConversationTurnsForChat(chatID string, limit int) ([]ConversationTurnRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT id, role, content, code, result, channel, channel_user_id, chat_id, message_id, timestamp
+		FROM v2_conversation_turns
+		WHERE chat_id = ?
+		ORDER BY id DESC
+		LIMIT ?`, strings.TrimSpace(chatID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ConversationTurnRecord
+	for rows.Next() {
+		rec, err := scanConversationTurnRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 // CompactConversation records a summary of older turns for prompt context while
 // preserving every raw turn in v2_conversation_turns.
 func (s *Store) CompactConversation(keepRecent int) (int, error) {
@@ -2286,6 +2321,11 @@ func (s *Store) DeleteStaleWorkspaceFiles(wsID string, cutoff string) error {
 // Returns matching rows and the total count (independent of limit/offset).
 // An empty query returns an error.
 func (s *Store) SearchWorkspaceFTS(query, pathPrefix, ext string, limit, offset int) ([]WorkspaceFTSRow, int, error) {
+	return s.SearchWorkspaceFTSScoped(query, pathPrefix, ext, nil, limit, offset)
+}
+
+// SearchWorkspaceFTSScoped performs full-text search within optional workspace roots.
+func (s *Store) SearchWorkspaceFTSScoped(query, pathPrefix, ext string, workspaceIDs []string, limit, offset int) ([]WorkspaceFTSRow, int, error) {
 	if query == "" {
 		return nil, 0, fmt.Errorf("empty search query")
 	}
@@ -2305,6 +2345,12 @@ func (s *Store) SearchWorkspaceFTS(query, pathPrefix, ext string, limit, offset 
 	// Build WHERE clauses.
 	where := "WHERE workspace_fts MATCH ?"
 	args := []any{safeQuery}
+	if ids := compactStrings(workspaceIDs); len(ids) > 0 {
+		where += " AND wf.workspace_id IN (" + sqlPlaceholders(len(ids)) + ")"
+		for _, id := range ids {
+			args = append(args, id)
+		}
+	}
 	if pathPrefix != "" {
 		where += " AND wf.rel_path LIKE ? ESCAPE '\\'"
 		args = append(args, escapeLIKE(pathPrefix)+"%")
@@ -2367,13 +2413,34 @@ func (s *Store) AggregateWorkspaceFiles(pathPrefix string) (
 	latestAt string,
 	err error,
 ) {
+	return s.AggregateWorkspaceFilesScoped(pathPrefix, nil)
+}
+
+// AggregateWorkspaceFilesScoped returns statistics within optional workspace roots.
+func (s *Store) AggregateWorkspaceFilesScoped(pathPrefix string, workspaceIDs []string) (
+	totalFiles, indexedFiles int,
+	totalSize int64,
+	byExt map[string][2]int64, // [count, size]
+	latestAt string,
+	err error,
+) {
 	byExt = make(map[string][2]int64)
 
-	where := ""
+	var whereParts []string
 	var args []any
+	if ids := compactStrings(workspaceIDs); len(ids) > 0 {
+		whereParts = append(whereParts, "workspace_id IN ("+sqlPlaceholders(len(ids))+")")
+		for _, id := range ids {
+			args = append(args, id)
+		}
+	}
 	if pathPrefix != "" {
-		where = " WHERE rel_path LIKE ? ESCAPE '\\'"
+		whereParts = append(whereParts, "rel_path LIKE ? ESCAPE '\\'")
 		args = append(args, escapeLIKE(pathPrefix)+"%")
+	}
+	where := ""
+	if len(whereParts) > 0 {
+		where = " WHERE " + strings.Join(whereParts, " AND ")
 	}
 
 	// Totals.
@@ -2409,6 +2476,24 @@ func (s *Store) AggregateWorkspaceFiles(pathPrefix string) (
 	}
 	err = rows.Err()
 	return
+}
+
+func compactStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func sqlPlaceholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", n), ",")
 }
 
 // BeginTx starts a new database transaction. Used by the indexer for chunked

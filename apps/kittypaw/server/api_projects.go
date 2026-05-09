@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -70,7 +71,8 @@ func (s *Server) handleProjectsCreate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	project, err := s.projectsStore(r).CreateProject(store.CreateProjectRequest{
+	st := s.projectsStore(r)
+	project, err := st.CreateProject(store.CreateProjectRequest{
 		Key:       body.Key,
 		Name:      body.Name,
 		RootPath:  body.RootPath,
@@ -82,7 +84,26 @@ func (s *Server) handleProjectsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshProjectFileRoot(r, project)
 	class, _ := store.ClassifyProjectFolder(project.RootPath)
-	writeJSON(w, http.StatusCreated, map[string]any{"project": project, "folder_class": class})
+	kickoff := projectKickoffMessage(class)
+	if kickoff != "" {
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			Role:      core.RoleAssistant,
+			Content:   kickoff,
+			Channel:   "project",
+			ChatID:    project.ProjectConversationID,
+			Timestamp: core.NowTimestamp(),
+		}); err != nil {
+			slog.Warn("record project kickoff message failed", "project", project.ID, "error", err)
+		}
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"project": project, "folder_class": class, "kickoff_message": kickoff})
+}
+
+func projectKickoffMessage(class store.ProjectFolderClass) string {
+	if class == store.ProjectFolderNonEmpty {
+		return "내용을 파악해서 티켓 초안을 만들까요?"
+	}
+	return "이 프로젝트에서 무엇을 만들까요?"
 }
 
 func (s *Server) handleProjectShow(w http.ResponseWriter, r *http.Request) {

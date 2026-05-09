@@ -15,6 +15,8 @@ const Projects = {
   _selectedProject: '',
   _selectedTicketID: '',
   _detail: null,
+  _activeProjectTab: 'board',
+  _projectKickoffMessage: '',
   _loading: false,
   _error: '',
   _selectedProjectPath: '',
@@ -40,6 +42,8 @@ const Projects = {
     this._selectedProject = '';
     this._selectedTicketID = '';
     this._detail = null;
+    this._activeProjectTab = 'board';
+    this._projectKickoffMessage = '';
     this._loading = false;
     this._error = '';
     this._selectedProjectPath = '';
@@ -141,6 +145,25 @@ const Projects = {
   },
 
   _boardLayoutHTML() {
+    return this._projectTabsHTML() +
+      (this._activeProjectTab === 'chat' ? this._projectChatHTML(this._selectedProjectObject()) : this._boardTabHTML());
+  },
+
+  _projectTabsHTML() {
+    const tabs = [
+      { key: 'board', label: projectsT('projects.board', null, 'Board') },
+      { key: 'chat', label: projectsT('projects.projectChat', null, 'Project Chat') },
+    ];
+    let html = '<div class="projects-tabs">';
+    for (const tab of tabs) {
+      const active = this._activeProjectTab === tab.key ? ' projects-tab--active' : '';
+      html += '<button class="projects-tab' + escHTMLAttr(active) + '" type="button" data-project-tab="' + escHTMLAttr(tab.key) + '">' + esc(tab.label) + '</button>';
+    }
+    html += '</div>';
+    return html;
+  },
+
+  _boardTabHTML() {
     return '<div class="projects-layout">' +
       '<div class="projects-board-shell">' +
       this._ticketFormHTML() +
@@ -148,6 +171,17 @@ const Projects = {
       '</div>' +
       this._drawerHTML() +
       '</div>';
+  },
+
+  _projectChatHTML(project) {
+    if (!project) {
+      return '<section class="projects-chat-panel"></section>';
+    }
+    const kickoff = this._projectKickoffMessage ? '<div class="projects-kickoff-message">' + esc(this._projectKickoffMessage) + '</div>' : '';
+    return '<section class="projects-chat-panel">' +
+      kickoff +
+      '<div id="projects-project-chat-panel"></div>' +
+      '</section>';
   },
 
   _ticketFormHTML() {
@@ -210,8 +244,17 @@ const Projects = {
       '<div class="projects-drawer-meta"><span>' + esc(ticket.key || '') + '</span><span>' + esc(this._statusLabelForKey(ticket.status)) + '</span></div>' +
       '<p class="projects-ticket-body">' + esc(ticket.body || '') + '</p>' +
       this._ticketActionsHTML(ticket) +
+      this._ticketChatHTML(ticket) +
       this._jobSectionHTML() +
       '</aside>';
+  },
+
+  _ticketChatHTML(ticket) {
+    if (!ticket) return '';
+    return '<section class="projects-ticket-chat">' +
+      '<h3>' + esc(projectsT('projects.ticketChat', null, 'Ticket Chat')) + '</h3>' +
+      '<div id="projects-ticket-chat-panel"></div>' +
+      '</section>';
   },
 
   _ticketActionsHTML(ticket) {
@@ -285,10 +328,17 @@ const Projects = {
         this._selectedProject = projectSelect.value;
         this._selectedTicketID = '';
         this._detail = null;
+        this._projectKickoffMessage = '';
         await this._loadProjectBoard();
         this._render();
       };
     }
+    document.querySelectorAll('[data-project-tab]').forEach(button => {
+      button.onclick = () => {
+        this._activeProjectTab = button.dataset.projectTab || 'board';
+        this._render();
+      };
+    });
     const refresh = document.getElementById('projects-refresh');
     if (refresh) refresh.onclick = () => this._loadProjects();
     const newProject = document.getElementById('projects-new-project');
@@ -310,6 +360,16 @@ const Projects = {
     if (archive) archive.onclick = () => this._archiveTicket();
     const planJob = document.getElementById('projects-plan-job');
     if (planJob) planJob.onclick = () => this._planJob();
+    const project = this._selectedProjectObject();
+    const projectChatPanel = document.getElementById('projects-project-chat-panel');
+    if (this._activeProjectTab === 'chat' && project && projectChatPanel && typeof Chat !== 'undefined') {
+      Chat.mount(projectChatPanel, { conversationID: project.project_conversation_id || '' });
+    }
+    const ticket = this._detail && this._detail.ticket ? this._detail.ticket : null;
+    const ticketChatPanel = document.getElementById('projects-ticket-chat-panel');
+    if (this._activeProjectTab === 'board' && ticket && ticketChatPanel && typeof Chat !== 'undefined') {
+      Chat.mount(ticketChatPanel, { conversationID: ticket.ticket_conversation_id || '' });
+    }
   },
 
   _bindProjectForm() {
@@ -340,7 +400,7 @@ const Projects = {
         }
         const projectPath = await this._resolveProjectPathForSave(folderInput);
         if (!projectPath) throw new Error(projectsT('projects.selectProjectFolder', null, 'Select a project folder.'));
-        await api('/api/v1/projects', {
+        const created = await api('/api/v1/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -349,6 +409,11 @@ const Projects = {
             root_path: projectPath,
           }),
         });
+        if (created && created.project) {
+          this._selectedProject = this._projectKey(created.project);
+          this._activeProjectTab = 'chat';
+          this._projectKickoffMessage = created.kickoff_message || '';
+        }
         await this._loadProjects();
       } catch (e) {
         if (error) {

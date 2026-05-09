@@ -300,6 +300,18 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 	if response, handled := tryHandleCommand(ctx, eventText, s); handled {
 		return response, nil
 	}
+	if response, handled := tryHandleProjectBriefDraftApproval(s, event, eventText); handled {
+		if err := s.recordPipelineTurn(event, eventText, response); err != nil {
+			slog.Warn("project brief draft approval turn record failed", "error", err)
+		}
+		return response, nil
+	}
+	if response, handled := tryHandleProjectKickoffApproval(s, event, eventText); handled {
+		if err := s.recordPipelineTurn(event, eventText, response); err != nil {
+			slog.Warn("project kickoff turn record failed", "error", err)
+		}
+		return response, nil
+	}
 
 	// Pipeline dispatch — deterministic branches before the LLM runner
 	// loop. Legacy fallback when classifyIntent returns
@@ -583,7 +595,7 @@ func stripBranchControlMarker(response string) string {
 // extracting a shared helper — would entangle the legacy loop with the
 // branch path more than is worth the saved lines.
 func (s *Session) recordPipelineTurn(event core.Event, eventText, response string) error {
-	convKey := conversationKey(s)
+	convKey := conversationKeyForEvent(s, &event)
 	meta := conversationTurnSource(&event)
 	state, err := s.Store.LoadConversationState()
 	if err != nil {
@@ -633,7 +645,7 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventText string, opts *RunOptions) (string, error) {
 	loopStart := time.Now()
 	channelName := event.Type.ChannelName()
-	convKey := conversationKey(s)
+	convKey := conversationKeyForEvent(s, &event)
 	meta := conversationTurnSource(&event)
 
 	// Extract callbacks from options.
@@ -1171,6 +1183,26 @@ func conversationKey(s *Session) string {
 		return s.AccountID
 	}
 	return "account"
+}
+
+func conversationKeyForEvent(s *Session, event *core.Event) string {
+	if s == nil || s.Store == nil || event == nil {
+		return conversationKey(s)
+	}
+	payload, err := event.ParsePayload()
+	if err != nil {
+		return conversationKey(s)
+	}
+	for _, candidate := range []string{payload.ConversationID, payload.SessionID, payload.ChatID} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok, err := s.Store.ConversationScope(candidate); err == nil && ok {
+			return candidate
+		}
+	}
+	return conversationKey(s)
 }
 
 func conversationTurnSource(event *core.Event) conversationTurnMetadata {

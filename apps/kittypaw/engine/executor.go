@@ -492,6 +492,103 @@ func webFetch(ctx context.Context, url string) (string, error) {
 
 const maxFileReadSize = 10 * 1024 * 1024 // 10MB — protects LLM context from huge files.
 
+type fileToolScope struct {
+	allowedPaths []string
+	workspaceIDs []string
+}
+
+func currentFileToolScope(ctx context.Context, s *Session) (fileToolScope, error) {
+	scope := fileToolScope{}
+	if s == nil {
+		return scope, nil
+	}
+	scope.allowedPaths = s.AllowedPaths()
+	if scope.allowedPaths != nil {
+		allowed, err := normalizeFileToolAllowedPaths(scope.allowedPaths)
+		if err != nil {
+			return fileToolScope{}, err
+		}
+		scope.allowedPaths = allowed
+	}
+	if s.Store == nil {
+		return scope, nil
+	}
+
+	conversationID := strings.TrimSpace(ConversationIDFromContext(ctx))
+	if conversationID == "" {
+		conversationID = conversationKey(s)
+	}
+	project, ok, err := projectForConversationScope(s.Store, conversationID)
+	if err != nil {
+		return fileToolScope{}, err
+	}
+	if ok {
+		allowed, err := normalizeFileToolAllowedPaths([]string{project.RootPath})
+		if err != nil {
+			return fileToolScope{}, err
+		}
+		return fileToolScope{
+			allowedPaths: allowed,
+			workspaceIDs: []string{project.ID},
+		}, nil
+	}
+
+	projects, err := s.Store.ListProjects(false)
+	if err != nil {
+		return fileToolScope{}, fmt.Errorf("list projects: %w", err)
+	}
+	if len(projects) > 0 {
+		return fileToolScope{}, fmt.Errorf("project를 선택하세요")
+	}
+	return scope, nil
+}
+
+func projectForConversationScope(st *store.Store, conversationID string) (*store.Project, bool, error) {
+	if st == nil || strings.TrimSpace(conversationID) == "" {
+		return nil, false, nil
+	}
+	scope, ok, err := st.ConversationScope(conversationID)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	switch scope.ScopeType {
+	case "project":
+		project, err := st.GetProject(scope.ScopeID)
+		if err != nil {
+			return nil, true, fmt.Errorf("project conversation scope: %w", err)
+		}
+		return project, true, nil
+	case "ticket":
+		ticket, err := st.GetTicket(scope.ScopeID)
+		if err != nil {
+			return nil, true, fmt.Errorf("ticket conversation scope: %w", err)
+		}
+		project, err := st.GetProject(ticket.ProjectID)
+		if err != nil {
+			return nil, true, fmt.Errorf("ticket project scope: %w", err)
+		}
+		return project, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+func normalizeFileToolAllowedPaths(paths []string) ([]string, error) {
+	allowed := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("path not allowed")
+		}
+		allowed = append(allowed, resolveForValidation(abs))
+	}
+	return allowed, nil
+}
+
 func executeFile(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	// Index-based methods dispatch early — they don't take a file path.
 	switch call.Method {
@@ -512,11 +609,15 @@ func executeFile(ctx context.Context, call core.SkillCall, s *Session) (string, 
 	if err := json.Unmarshal(call.Args[0], &rawPath); err != nil {
 		return "", fmt.Errorf("invalid path argument")
 	}
+	scope, err := currentFileToolScope(ctx, s)
+	if err != nil {
+		return "", err
+	}
 
 	// Resolve the path once and use it for both validation and all file operations.
 	// Relative paths are interpreted inside the account's default workspace, not
 	// the server's current working directory.
-	resolvedPath, err := resolveFileToolPath(rawPath, s.AllowedPaths())
+	resolvedPath, err := resolveFileToolPath(rawPath, scope.allowedPaths)
 	if err != nil {
 		return "", err
 	}
@@ -626,6 +727,11 @@ func executeFileSearch(ctx context.Context, call core.SkillCall, s *Session) (st
 	if len(call.Args) > 1 {
 		_ = json.Unmarshal(call.Args[1], &opts)
 	}
+	scope, err := currentFileToolScope(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	opts.WorkspaceIDs = scope.workspaceIDs
 
 	result, err := s.Indexer.Search(ctx, query, opts)
 	if err != nil {
@@ -633,7 +739,7 @@ func executeFileSearch(ctx context.Context, call core.SkillCall, s *Session) (st
 	}
 
 	// Post-filter by AllowedPaths (defense-in-depth).
-	allowed := s.AllowedPaths()
+	allowed := scope.allowedPaths
 	if allowed != nil {
 		filtered := make([]SearchHit, 0, len(result.Files))
 		for _, hit := range result.Files {
@@ -641,6 +747,9 @@ func executeFileSearch(ctx context.Context, call core.SkillCall, s *Session) (st
 			if isPathAllowedResolved(resolved, allowed) {
 				filtered = append(filtered, hit)
 			}
+		}
+		if len(filtered) != len(result.Files) {
+			result.Total = len(filtered)
 		}
 		result.Files = filtered
 	}
@@ -659,6 +768,11 @@ func executeFileStats(ctx context.Context, call core.SkillCall, s *Session) (str
 			opts.Path = path
 		}
 	}
+	scope, err := currentFileToolScope(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	opts.WorkspaceIDs = scope.workspaceIDs
 	result, err := s.Indexer.Stats(ctx, opts)
 	if err != nil {
 		return "", fmt.Errorf("file stats: %w", err)
@@ -681,9 +795,23 @@ func executeFileReindex(ctx context.Context, call core.SkillCall, s *Session) (s
 	if err != nil {
 		return "", fmt.Errorf("list file index roots: %w", err)
 	}
+	scope, err := currentFileToolScope(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	scopedWorkspaceIDs := map[string]bool{}
+	for _, id := range scope.workspaceIDs {
+		scopedWorkspaceIDs[id] = true
+	}
 
 	var totalResult IndexResult
 	for _, root := range roots {
+		if len(scopedWorkspaceIDs) > 0 && !scopedWorkspaceIDs[root.ID] {
+			continue
+		}
+		if len(scopedWorkspaceIDs) == 0 && scope.allowedPaths != nil && !isPathAllowed(root.RootPath, scope.allowedPaths) {
+			continue
+		}
 		// If a path is given, only reindex matching root.
 		if targetPath != "" {
 			absTarget, _ := filepath.Abs(targetPath)
@@ -719,8 +847,12 @@ func executeFileSummary(ctx context.Context, call core.SkillCall, s *Session) (s
 	if err := json.Unmarshal(call.Args[0], &rawPath); err != nil {
 		return "", fmt.Errorf("invalid path argument")
 	}
+	scope, err := currentFileToolScope(ctx, s)
+	if err != nil {
+		return "", err
+	}
 
-	resolvedPath, err := resolveFileToolPath(rawPath, s.AllowedPaths())
+	resolvedPath, err := resolveFileToolPath(rawPath, scope.allowedPaths)
 	if err != nil {
 		return "", err
 	}

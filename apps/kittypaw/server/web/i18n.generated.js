@@ -321,6 +321,11 @@
       "ja": "アーカイブ",
       "en": "Archive"
     },
+    "projects.board": {
+      "ko": "보드",
+      "ja": "ボード",
+      "en": "Board"
+    },
     "projects.createProject": {
       "ko": "프로젝트 만들기",
       "ja": "プロジェクトを作成",
@@ -386,6 +391,11 @@
       "ja": "名前",
       "en": "Name"
     },
+    "projects.projectChat": {
+      "ko": "프로젝트 채팅",
+      "ja": "プロジェクトチャット",
+      "en": "Project Chat"
+    },
     "projects.requestFailed": {
       "ko": "요청 실패",
       "ja": "リクエストに失敗しました",
@@ -445,6 +455,11 @@
       "ko": "본문",
       "ja": "本文",
       "en": "Body"
+    },
+    "projects.ticketChat": {
+      "ko": "티켓 채팅",
+      "ja": "チケットチャット",
+      "en": "Ticket Chat"
     },
     "projects.ticketTitle": {
       "ko": "제목",

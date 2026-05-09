@@ -39,10 +39,11 @@ type Indexer interface {
 
 // SearchOptions controls File.search behavior.
 type SearchOptions struct {
-	Path   string `json:"path"`   // relative path prefix filter
-	Ext    string `json:"ext"`    // extension filter (e.g. ".go")
-	Limit  int    `json:"limit"`  // default 20, max 100
-	Offset int    `json:"offset"` // pagination
+	Path         string   `json:"path"`   // relative path prefix filter
+	Ext          string   `json:"ext"`    // extension filter (e.g. ".go")
+	Limit        int      `json:"limit"`  // default 20, max 100
+	Offset       int      `json:"offset"` // pagination
+	WorkspaceIDs []string `json:"-"`      // internal project/ticket conversation scope
 }
 
 // SearchResult is the response from File.search.
@@ -66,7 +67,8 @@ type Snippet struct {
 
 // StatsOptions controls File.stats behavior.
 type StatsOptions struct {
-	Path string `json:"path"` // relative path prefix filter
+	Path         string   `json:"path"` // relative path prefix filter
+	WorkspaceIDs []string `json:"-"`    // internal project/ticket conversation scope
 }
 
 // IndexStats is the response from File.stats.
@@ -476,7 +478,7 @@ func (ix *FTS5Indexer) Search(ctx context.Context, query string, opts SearchOpti
 		limit = 100
 	}
 
-	rows, total, err := ix.store.SearchWorkspaceFTS(query, opts.Path, opts.Ext, limit, opts.Offset)
+	rows, total, err := ix.store.SearchWorkspaceFTSScoped(query, opts.Path, opts.Ext, opts.WorkspaceIDs, limit, opts.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +498,7 @@ func (ix *FTS5Indexer) Search(ctx context.Context, query string, opts SearchOpti
 
 // Stats returns aggregate statistics about indexed workspace files.
 func (ix *FTS5Indexer) Stats(ctx context.Context, opts StatsOptions) (*IndexStats, error) {
-	total, indexed, totalSize, byExtRaw, latestAt, err := ix.store.AggregateWorkspaceFiles(opts.Path)
+	total, indexed, totalSize, byExtRaw, latestAt, err := ix.store.AggregateWorkspaceFilesScoped(opts.Path, opts.WorkspaceIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -78,6 +78,25 @@ func TestProjectsWebModuleUsesProjectsTicketsJobsAndDriversAPIs(t *testing.T) {
 	}
 }
 
+func TestProjectsWebModuleMountsProjectAndTicketChats(t *testing.T) {
+	src := readWebAssetForProjectsTest(t, "web/projects.js")
+	for _, token := range []string{
+		"_projectChatHTML",
+		"_ticketChatHTML",
+		"data-project-tab=\"' + escHTMLAttr(tab.key)",
+		"projects-project-chat-panel",
+		"projects-ticket-chat-panel",
+		"project.project_conversation_id",
+		"ticket.ticket_conversation_id",
+		"Chat.mount(projectChatPanel, { conversationID: project.project_conversation_id || '' })",
+		"Chat.mount(ticketChatPanel, { conversationID: ticket.ticket_conversation_id || '' })",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("projects module missing chat token %s", token)
+		}
+	}
+}
+
 func TestProjectsWebModuleCreatesProjectsFromFoldersDirectly(t *testing.T) {
 	src := readWebAssetForProjectsTest(t, "web/projects.js")
 	for _, token := range []string{

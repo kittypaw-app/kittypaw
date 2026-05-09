@@ -28,6 +28,23 @@ func TestWebChatUsesChatScopedSocketOnChatSurface(t *testing.T) {
 	}
 }
 
+func TestChatWebModuleSendsConversationIDWhenMountedWithScope(t *testing.T) {
+	src, err := os.ReadFile("web/chat.js")
+	if err != nil {
+		t.Fatalf("read web chat: %v", err)
+	}
+	body := string(src)
+	for _, token := range []string{
+		"mount(container, options = {})",
+		"this.conversationID = options.conversationID || ''",
+		"conversation_id: this.conversationID",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("chat module missing scoped conversation token %q", token)
+		}
+	}
+}
+
 func TestWebSettingsDoesNotLaunchSetupWizard(t *testing.T) {
 	src, err := os.ReadFile("web/settings.js")
 	if err != nil {

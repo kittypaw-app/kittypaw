@@ -93,15 +93,16 @@ type Event struct {
 
 // ChatPayload is the common structure inside Event.Payload.
 //
-// SessionID is transport/runtime metadata. It is not a database conversation
-// key; the local account owns one account-wide conversation timeline.
+// SessionID is transport/runtime metadata. ConversationID optionally selects
+// a scoped project or ticket conversation registered in conversation_scope.
 type ChatPayload struct {
-	ChatID      string           `json:"chat_id"`
-	Text        string           `json:"text"`
-	FromName    string           `json:"from_name,omitempty"`
-	WorkspaceID string           `json:"workspace_id,omitempty"`
-	SessionID   string           `json:"session_id,omitempty"`
-	Attachments []ChatAttachment `json:"attachments,omitempty"`
+	ChatID         string           `json:"chat_id"`
+	Text           string           `json:"text"`
+	FromName       string           `json:"from_name,omitempty"`
+	WorkspaceID    string           `json:"workspace_id,omitempty"`
+	SessionID      string           `json:"session_id,omitempty"`
+	ConversationID string           `json:"conversation_id,omitempty"`
+	Attachments    []ChatAttachment `json:"attachments,omitempty"`
 	// ReplyToMessageID is the platform-specific message ID of the inbound
 	// message. When set, channels that support reply-quoting (Telegram) will
 	// quote the original message in the response. Empty = plain send.

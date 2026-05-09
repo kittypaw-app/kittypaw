@@ -20,12 +20,20 @@ Workspace/Kanban 사용자 표면을 Project Folder 중심의 Projects/Board 흐
 - [x] **T2**: API 추가 — `/api/v1/projects`, `/api/v1/tickets`, `/api/v1/jobs`, `/api/v1/drivers` (`27cde64`).
 - [x] **T3a**: Project Folder 선택/생성/분류/인덱싱 연결 (`6ceaafd`, `7bda4c0`).
 - [x] **T3b**: Project Brief Draft 저장/API/tool commit 흐름 (`7718bb3`, `27cde64`, `e0d492f`).
-- [ ] **T3c**: 채팅 주도 Project Kickoff — 폴더 구조 스캔 후 티켓 초안 제안.
+- [x] **T3c**: 채팅 주도 Project Kickoff — 생성 직후 안내 메시지, 폴더 구조 스캔, 티켓 초안 제안.
 - [x] **T4**: Projects/Board UI 구현 및 기존 Workspace/Kanban 사용자 표면 제거 (`6ceaafd`, `7bda4c0`).
 - [x] **T5a**: Engine `Projects` tool과 slash command 연결 (`e0d492f`).
-- [ ] **T5b**: project/ticket chat 화면과 실제 conversation scope 기반 대화 라우팅.
+- [x] **T5b**: project/ticket chat 화면과 실제 conversation scope 기반 대화/파일 도구 라우팅.
 - [x] **T6**: Job planning records와 Driver 설정 UI/API 추가. 실제 Codex/Claude 실행은 후속 phase (`7718bb3`, `27cde64`, `6ceaafd`).
-- [x] **T7**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`).
+- [x] **T7a**: 기존 구현 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`).
+- [x] **T7b**: 남은 Kickoff/scope routing 구현 후 affected/full regression, 최종 리뷰, 커밋 준비.
+
+현재 남은 MVP 작업:
+
+- [x] Project 생성 시 project conversation에 kickoff assistant turn 기록 + API 응답 제공.
+- [x] `conversation_scope` 기준으로 project/ticket chat의 File 도구 범위 제한.
+- [x] project/ticket chat UI와 API/WS conversation id 전달 경로 연결.
+- [x] 비어있지 않은 Project Folder 구조 스캔 후 티켓 초안 제안 흐름 연결.
 
 ---
 

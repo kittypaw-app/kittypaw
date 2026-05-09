@@ -3,9 +3,10 @@ package core
 // WsClientMsg represents messages from the WebSocket client.
 // Discriminated by the "type" field.
 type WsClientMsg struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"` // for "chat"
-	OK   *bool  `json:"ok,omitempty"`   // for "permit"
+	Type           string `json:"type"`
+	Text           string `json:"text,omitempty"` // for "chat"
+	OK             *bool  `json:"ok,omitempty"`   // for "permit"
+	ConversationID string `json:"conversation_id,omitempty"`
 	// TurnID is a client-allocated UUID identifying a single user input.
 	// A retry of the same input must reuse the same TurnID — the server
 	// then dedupes via Session.RunTurn so the LLM is not invoked twice
