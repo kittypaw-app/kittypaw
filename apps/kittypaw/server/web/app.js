@@ -147,11 +147,11 @@ const App = {
         <h1 class="login-title">Kitty<span class="accent">Paw</span></h1>
         <div class="login-fields">
           <div class="text-left">
-            <label for="login-account">Account ID</label>
+            <label for="login-account" data-i18n="app.accountId">${esc(t('app.accountId'))}</label>
             <input class="input" id="login-account" name="account_id" autocomplete="username" required>
           </div>
           <div class="text-left">
-            <label for="login-password">Password</label>
+            <label for="login-password" data-i18n="app.password">${esc(t('app.password'))}</label>
             <input class="input" id="login-password" name="password" type="password" autocomplete="current-password" required>
           </div>
         </div>
@@ -187,7 +187,7 @@ const App = {
           location.assign('/_settings');
         }
       } catch (e) {
-        error.textContent = 'Invalid account ID or password.';
+        error.textContent = t('app.invalidLogin');
         error.hidden = false;
       } finally {
         button.disabled = false;
@@ -240,7 +240,7 @@ const App = {
     this.root.innerHTML = `
       <div class="card card--center">
         <h1>Kitty<span class="accent">Paw</span></h1>
-        <p class="sub mt-16">Run <code class="inline-code">kittypaw setup</code> in your terminal before starting web chat.</p>
+        <p class="sub mt-16">${esc(t('app.runSetupChat'))}</p>
       </div>`;
   },
 
@@ -250,14 +250,14 @@ const App = {
     this.root.innerHTML = `
       <div class="card card--center">
         <h1>Kitty<span class="accent">Paw</span></h1>
-        <p class="sub mt-16">Run <code class="inline-code">kittypaw setup</code> in your terminal to finish local setup.</p>
+        <p class="sub mt-16">${esc(t('app.runSetupLocal'))}</p>
       </div>`;
   },
 
   showShell() {
     this._teardown();
     const defaultNav = this.isDefault
-      ? '<button class="nav-item" data-tab="dashboard">Dashboard</button><button class="nav-item" data-tab="skills">Skills</button>'
+      ? '<button class="nav-item" data-tab="dashboard" data-i18n="nav.dashboard">' + esc(t('nav.dashboard')) + '</button><button class="nav-item" data-tab="skills" data-i18n="nav.skills">' + esc(t('nav.skills')) + '</button>'
       : '';
 
     // Override #app centering from stylesheet
@@ -375,17 +375,17 @@ const App = {
   _showDashboard(container) {
     container.innerHTML = `
       <div class="dashboard">
-        <h1>\u{1F43E} KittyPaw Dashboard</h1>
-        <p class="hint">Auto-refreshes every 30s</p>
+        <h1>\u{1F43E} ${esc(t('dashboard.title'))}</h1>
+        <p class="hint">${esc(t('dashboard.autoRefresh'))}</p>
         <div class="stats-grid" id="stats"></div>
-        <h2>Conversation</h2>
-        <table><thead><tr><th>Time</th><th>Role</th><th>Channel</th><th>Content</th></tr></thead>
+        <h2>${esc(t('dashboard.conversation'))}</h2>
+        <table><thead><tr><th>${esc(t('dashboard.time'))}</th><th>${esc(t('dashboard.role'))}</th><th>${esc(t('dashboard.channel'))}</th><th>${esc(t('dashboard.content'))}</th></tr></thead>
         <tbody id="conversation"></tbody></table>
-        <h2 class="mt-20">LLM Usage</h2>
-        <table><thead><tr><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Cache</th><th>Cost</th></tr></thead>
+        <h2 class="mt-20">${esc(t('dashboard.llmUsage'))}</h2>
+        <table><thead><tr><th>${esc(t('dashboard.model'))}</th><th>${esc(t('dashboard.calls'))}</th><th>${esc(t('dashboard.input'))}</th><th>${esc(t('dashboard.output'))}</th><th>${esc(t('dashboard.cache'))}</th><th>${esc(t('dashboard.cost'))}</th></tr></thead>
         <tbody id="llm-usage"></tbody></table>
-        <h2 class="mt-20">Recent Executions</h2>
-        <table><thead><tr><th>Time</th><th>Skill</th><th>Status</th><th>Duration</th><th>Summary</th></tr></thead>
+        <h2 class="mt-20">${esc(t('dashboard.recentExecutions'))}</h2>
+        <table><thead><tr><th>${esc(t('dashboard.time'))}</th><th>${esc(t('dashboard.skill'))}</th><th>${esc(t('dashboard.status'))}</th><th>${esc(t('dashboard.duration'))}</th><th>${esc(t('dashboard.summary'))}</th></tr></thead>
         <tbody id="exec"></tbody></table>
       </div>`;
     this._refreshDashboard();
@@ -398,11 +398,11 @@ const App = {
       const statsEl = document.getElementById('stats');
       if (statsEl) {
         statsEl.innerHTML =
-          statCard(s.total_runs || 0, "Today's Runs") +
-          statCard(s.successful || 0, 'Successful', 'ok') +
-          statCard(s.failed || 0, 'Failed', 'fail') +
-          statCard(s.total_tokens || 0, 'Tokens') +
-          statCard(formatUSD(s.estimated_cost_usd || 0), 'Est. Cost');
+          statCard(s.total_runs || 0, t('dashboard.todayRuns')) +
+          statCard(s.successful || 0, t('dashboard.successful'), 'ok') +
+          statCard(s.failed || 0, t('dashboard.failed'), 'fail') +
+          statCard(s.total_tokens || 0, t('dashboard.tokens')) +
+          statCard(formatUSD(s.estimated_cost_usd || 0), t('dashboard.estimatedCost'));
       }
 
       const usageRows = s.llm_usage_by_model || [];
@@ -419,7 +419,7 @@ const App = {
               `<td>${esc(String(cacheTokens))}</td>` +
               `<td>${esc(formatUSD(r.estimated_cost_usd || 0))}</td></tr>`;
           }).join('')
-          : '<tr><td colspan="6">No LLM usage yet</td></tr>';
+          : '<tr><td colspan="6">' + esc(t('dashboard.noLLMUsage')) + '</td></tr>';
       }
 
       const historyData = await api('/api/v1/chat/history?limit=10');
@@ -433,7 +433,7 @@ const App = {
             `<td>${esc(t.Channel || t.channel || '')}</td>` +
             `<td>${esc(t.Content || t.content || '')}</td></tr>`
           ).join('')
-          : '<tr><td colspan="4">No conversation yet</td></tr>';
+          : '<tr><td colspan="4">' + esc(t('dashboard.noConversation')) + '</td></tr>';
       }
 
       const execData = await api('/api/v1/executions');
@@ -444,18 +444,18 @@ const App = {
           ? execs.map(r =>
             `<tr><td>${esc(((r.StartedAt || r.started_at) || '').slice(0,19))}</td>` +
             `<td>${esc(r.SkillName || r.skill_name || '')}</td>` +
-            `<td class="${(r.Success || r.success) ? 'ok' : 'fail'}">${(r.Success || r.success) ? 'OK' : 'FAIL'}</td>` +
+            `<td class="${escHTMLAttr((r.Success || r.success) ? 'ok' : 'fail')}">${esc((r.Success || r.success) ? t('dashboard.executionOK') : t('dashboard.executionFail'))}</td>` +
             `<td>${esc(String(r.DurationMs || r.duration_ms || 0))}ms</td>` +
             `<td>${esc(((r.ResultSummary || r.result_summary) || '').slice(0,60))}</td></tr>`
           ).join('')
-          : '<tr><td colspan="5">No executions yet</td></tr>';
+          : '<tr><td colspan="5">' + esc(t('dashboard.noExecutions')) + '</td></tr>';
       }
     } catch (e) { console.error('Dashboard refresh failed:', e); }
   },
 };
 
 function statCard(value, label, cls) {
-  return `<div class="stat-card"><div class="value ${cls||''}">${esc(String(value))}</div><div class="label">${esc(label)}</div></div>`;
+  return `<div class="stat-card"><div class="value ${escHTMLAttr(cls || '')}">${esc(String(value))}</div><div class="label">${esc(label)}</div></div>`;
 }
 
 function formatUSD(value) {
@@ -470,11 +470,20 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function escHTMLAttr(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** Fetch without auth (for setup/bootstrap endpoints). */
 async function apiRaw(url, opts) {
   const res = await fetch(url, Object.assign({ credentials: 'same-origin' }, opts || {}));
   if (res.status === 401) {
-    App.showLogin('Session expired. Sign in again.');
+    App.showLogin(t('app.sessionExpired'));
     throw new Error('unauthorized');
   }
   if (res.status === 403) {
@@ -499,7 +508,7 @@ async function api(url, opts = {}) {
   }
   const res = await fetch(url, opts);
   if (res.status === 401) {
-    App.showLogin('Session expired. Sign in again.');
+    App.showLogin(t('app.sessionExpired'));
     throw new Error('unauthorized');
   }
   if (res.status === 403) {

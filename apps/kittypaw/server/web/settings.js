@@ -1,5 +1,11 @@
 // KittyPaw Settings Panel — Channel & LLM status
 
+function settingsT(key, params, fallback) {
+  const runtime = window.KittyPawI18n;
+  const value = runtime && typeof runtime.t === 'function' ? runtime.t(key, params) : key;
+  return value === key && fallback ? fallback : value;
+}
+
 const Settings = {
   _selectedWorkspacePath: '',
   _directoryPickerRequestID: 0,
@@ -8,9 +14,9 @@ const Settings = {
   mount(container) {
     container.innerHTML = `
       <div class="settings-view">
-        <h1>Settings</h1>
+        <h1>${esc(settingsT('settings.title', null, 'Settings'))}</h1>
         <div id="settings-content" class="settings-content">
-          <p class="hint">Loading...</p>
+          <p class="hint">${esc(settingsT('common.loading', null, 'Loading...'))}</p>
         </div>
       </div>`;
     this._load(document.getElementById('settings-content'));
@@ -27,7 +33,7 @@ const Settings = {
       // --- Workspaces section ---
       const wsSection = document.createElement('section');
       wsSection.className = 'settings-section';
-      wsSection.innerHTML = '<h2>Workspaces</h2>';
+      wsSection.innerHTML = '<h2>' + esc(settingsT('settings.workspaces', null, 'Workspaces')) + '</h2>';
       if (workspaces.length) {
         workspaces.forEach(ws => wsSection.appendChild(this._workspaceRow(ws, container)));
       } else {
@@ -36,31 +42,31 @@ const Settings = {
         emptyRow.innerHTML = `
           <div class="settings-row-icon"></div>
           <div class="settings-row-body">
-            <div class="settings-row-title">No workspaces</div>
-            <div class="settings-row-sub">Not connected</div>
+            <div class="settings-row-title">${esc(settingsT('settings.noWorkspaces', null, 'No workspaces'))}</div>
+            <div class="settings-row-sub">${esc(settingsT('common.notConnected', null, 'Not connected'))}</div>
           </div>`;
         wsSection.appendChild(emptyRow);
       }
-      wsSection.appendChild(this._actionButton('Add Workspace', () => this._showWorkspaceForm(container)));
+      wsSection.appendChild(this._actionButton(settingsT('settings.addWorkspace', null, 'Add Workspace'), () => this._showWorkspaceForm(container)));
       container.appendChild(wsSection);
 
       // --- Channels section ---
       const chSection = document.createElement('section');
       chSection.className = 'settings-section';
-      chSection.innerHTML = '<h2>Channels</h2>';
+      chSection.innerHTML = '<h2>' + esc(settingsT('settings.channels', null, 'Channels')) + '</h2>';
 
       const telegramRow = this._channelRow(
         'Telegram',
         s.has_telegram,
-        s.has_telegram ? `Chat ID: ${esc(s.telegram_chat_id || '')}` : null,
+        s.has_telegram ? `${settingsT('settings.chatID', null, 'Chat ID')}: ${s.telegram_chat_id || ''}` : null,
       );
-      telegramRow.appendChild(this._actionButton(s.has_telegram ? 'Change' : 'Connect', () => this._showTelegramForm(container, s)));
+      telegramRow.appendChild(this._actionButton(s.has_telegram ? settingsT('settings.change', null, 'Change') : settingsT('settings.connect', null, 'Connect'), () => this._showTelegramForm(container, s)));
       chSection.appendChild(telegramRow);
 
       chSection.appendChild(this._channelRow(
         'KakaoTalk',
         s.has_kakao,
-        s.kakao_available ? null : 'Relay not available',
+        s.kakao_available ? null : settingsT('settings.relayNotAvailable', null, 'Relay not available'),
       ));
 
       container.appendChild(chSection);
@@ -68,7 +74,7 @@ const Settings = {
       // --- LLM section ---
       const llmSection = document.createElement('section');
       llmSection.className = 'settings-section';
-      llmSection.innerHTML = '<h2>LLM Provider</h2>';
+      llmSection.innerHTML = '<h2>' + esc(settingsT('settings.llmProvider', null, 'LLM Provider')) + '</h2>';
       const llmRow = document.createElement('div');
       llmRow.className = 'settings-row';
       if (s.existing_provider) {
@@ -76,21 +82,21 @@ const Settings = {
           <div class="settings-row-icon connected"></div>
           <div class="settings-row-body">
             <div class="settings-row-title">${esc(s.existing_provider)}</div>
-            <div class="settings-row-sub">Connected</div>
+            <div class="settings-row-sub">${esc(settingsT('common.connected', null, 'Connected'))}</div>
           </div>`;
       } else {
         llmRow.innerHTML = `
           <div class="settings-row-icon"></div>
           <div class="settings-row-body">
-            <div class="settings-row-title">Not configured</div>
-            <div class="settings-row-sub">Not connected</div>
+            <div class="settings-row-title">${esc(settingsT('settings.notConfigured', null, 'Not configured'))}</div>
+            <div class="settings-row-sub">${esc(settingsT('common.notConnected', null, 'Not connected'))}</div>
           </div>`;
       }
       llmSection.appendChild(llmRow);
-      llmRow.appendChild(this._actionButton(s.existing_provider ? 'Change' : 'Connect', () => this._showLLMForm(container, s)));
+      llmRow.appendChild(this._actionButton(s.existing_provider ? settingsT('settings.change', null, 'Change') : settingsT('settings.connect', null, 'Connect'), () => this._showLLMForm(container, s)));
       container.appendChild(llmSection);
     } catch (e) {
-      container.innerHTML = `<div class="error-box">Failed to load settings: ${esc(String(e))}</div>`;
+      container.innerHTML = `<div class="error-box">${esc(settingsT('settings.failedToLoad', { error: String(e) }, `Failed to load settings: ${String(e)}`))}</div>`;
     }
   },
 
@@ -98,13 +104,13 @@ const Settings = {
     const row = document.createElement('div');
     row.className = 'settings-row';
     const statusClass = connected ? 'connected' : '';
-    const statusText = connected ? 'Connected' : 'Not connected';
+    const statusText = connected ? settingsT('common.connected', null, 'Connected') : settingsT('common.notConnected', null, 'Not connected');
     const detailHtml = detail ? `<span class="settings-row-detail">${esc(detail)}</span>` : '';
     row.innerHTML = `
       <div class="settings-row-icon ${statusClass}"></div>
       <div class="settings-row-body">
         <div class="settings-row-title">${esc(name)} ${detailHtml}</div>
-        <div class="settings-row-sub">${statusText}</div>
+        <div class="settings-row-sub">${esc(statusText)}</div>
       </div>`;
     return row;
   },
@@ -115,11 +121,12 @@ const Settings = {
     row.innerHTML = `
       <div class="settings-row-icon connected"></div>
       <div class="settings-row-body">
-        <div class="settings-row-title">${esc(ws.alias || ws.name || 'Workspace')}</div>
+        <div class="settings-row-title">${esc(ws.alias || ws.name || settingsT('settings.workspace', null, 'Workspace'))}</div>
         <div class="settings-row-sub settings-row-path">${esc(ws.root_path || '')}</div>
       </div>`;
-    row.appendChild(this._actionButton('Remove', async () => {
-      if (!window.confirm(`Remove workspace "${ws.alias || ws.name || ws.root_path}"?`)) return;
+    row.appendChild(this._actionButton(settingsT('common.remove', null, 'Remove'), async () => {
+      const workspaceName = ws.alias || ws.name || ws.root_path;
+      if (!window.confirm(settingsT('settings.removeWorkspaceConfirm', { name: workspaceName }, `Remove workspace "${workspaceName}"?`))) return;
       try {
         await this._deleteJSON(`/api/settings/workspaces/${encodeURIComponent(ws.id)}`);
         await this._load(container);
@@ -143,16 +150,16 @@ const Settings = {
     this._workspaceAliasAuto = true;
     container.innerHTML = `
       <section class="settings-section">
-        <h2>Workspace</h2>
+        <h2>${esc(settingsT('settings.workspace', null, 'Workspace'))}</h2>
         <div class="settings-form settings-form--wide">
-          <label>Alias</label>
+          <label>${esc(settingsT('settings.alias', null, 'Alias'))}</label>
           <input class="input" id="settings-workspace-alias" autocomplete="off">
-          <label>Path</label>
+          <label>${esc(settingsT('settings.path', null, 'Path'))}</label>
           <input class="input input--mono" id="settings-workspace-path" autocomplete="off" spellcheck="false">
           <div class="settings-dir-picker">
             <div class="settings-dir-body">
               <div class="settings-dir-sidebar">
-                <button class="btn btn--ghost btn--sm settings-dir-up" id="settings-directory-parent" type="button" disabled>Up</button>
+                <button class="btn btn--ghost btn--sm settings-dir-up" id="settings-directory-parent" type="button" disabled>${esc(settingsT('settings.up', null, 'Up'))}</button>
                 <div class="settings-dir-breadcrumb" id="settings-directory-breadcrumb"></div>
               </div>
               <div class="settings-dir-main">
@@ -160,13 +167,13 @@ const Settings = {
               </div>
             </div>
             <div class="settings-dir-footer">
-              <span class="settings-dir-footer-label">Selected</span>
+              <span class="settings-dir-footer-label">${esc(settingsT('settings.selected', null, 'Selected'))}</span>
               <span class="settings-dir-selected-path" id="settings-workspace-selected"></span>
             </div>
           </div>
           <div class="settings-actions">
-            <button class="btn btn--primary btn--sm" id="settings-workspace-save">Add Workspace</button>
-            <button class="btn btn--ghost btn--sm" id="settings-back">Cancel</button>
+            <button class="btn btn--primary btn--sm" id="settings-workspace-save">${esc(settingsT('settings.addWorkspace', null, 'Add Workspace'))}</button>
+            <button class="btn btn--ghost btn--sm" id="settings-back">${esc(settingsT('common.cancel', null, 'Cancel'))}</button>
           </div>
           <div class="error-box mt-12" id="settings-form-error" hidden></div>
         </div>
@@ -189,7 +196,7 @@ const Settings = {
       button.disabled = true;
       error.hidden = true;
       try {
-        if (!this._selectedWorkspacePath) throw new Error('Select a workspace path.');
+        if (!this._selectedWorkspacePath) throw new Error(settingsT('settings.selectWorkspacePath', null, 'Select a workspace path.'));
         await this._postJSON('/api/settings/workspaces', {
           alias: document.getElementById('settings-workspace-alias').value.trim(),
           path: this._selectedWorkspacePath,
@@ -223,7 +230,7 @@ const Settings = {
       if (requestID !== this._directoryPickerRequestID) return;
       this._selectedWorkspacePath = data.path || '';
       pathInput.value = this._selectedWorkspacePath;
-      selected.textContent = this._selectedWorkspacePath || 'No folder selected';
+      selected.textContent = this._selectedWorkspacePath || settingsT('settings.noFolderSelected');
       this._renderDirectoryBreadcrumb(breadcrumb, this._selectedWorkspacePath);
       this._suggestWorkspaceAlias(this._selectedWorkspacePath);
 
@@ -237,7 +244,7 @@ const Settings = {
       if (requestID !== this._directoryPickerRequestID) return;
       this._selectedWorkspacePath = previousPath;
       pathInput.value = previousPath;
-      selected.textContent = previousPath || 'No folder selected';
+      selected.textContent = previousPath || settingsT('settings.noFolderSelected');
       this._renderDirectoryBreadcrumb(breadcrumb, previousPath);
       if (error) {
         error.textContent = String(e.message || e);
@@ -252,7 +259,7 @@ const Settings = {
 
   _renderDirectoryEntries(container, entries) {
     if (!entries.length) {
-      this._renderDirectoryEmpty(container, 'No folders');
+      this._renderDirectoryEmpty(container, settingsT('settings.noFolders', null, 'No folders'));
       return;
     }
     const fragment = document.createDocumentFragment();
@@ -289,7 +296,7 @@ const Settings = {
     if (!parts.length) {
       const empty = document.createElement('span');
       empty.className = 'settings-dir-empty-inline';
-      empty.textContent = 'No path';
+      empty.textContent = settingsT('settings.noPath', null, 'No path');
       container.replaceChildren(empty);
       return;
     }
@@ -356,9 +363,9 @@ const Settings = {
     const provider = status.existing_provider || 'anthropic';
     container.innerHTML = `
       <section class="settings-section">
-        <h2>LLM Provider</h2>
+        <h2>${esc(settingsT('settings.llmProvider', null, 'LLM Provider'))}</h2>
         <div class="settings-form">
-          <label>Provider</label>
+          <label>${esc(settingsT('settings.provider', null, 'Provider'))}</label>
           <select class="input" id="settings-llm-provider">
             <option value="anthropic">Anthropic</option>
             <option value="openai">OpenAI</option>
@@ -366,15 +373,15 @@ const Settings = {
             <option value="openrouter">OpenRouter</option>
             <option value="local">Local</option>
           </select>
-          <label>API Key</label>
+          <label>${esc(settingsT('settings.apiKey', null, 'API Key'))}</label>
           <input class="input input--mono" id="settings-llm-api-key" type="password" autocomplete="off">
-          <label>Model</label>
+          <label>${esc(settingsT('settings.model', null, 'Model'))}</label>
           <input class="input input--mono" id="settings-llm-model">
-          <label>Local URL</label>
+          <label>${esc(settingsT('settings.localURL', null, 'Local URL'))}</label>
           <input class="input input--mono" id="settings-llm-local-url" value="http://localhost:11434/v1">
           <div class="settings-actions">
-            <button class="btn btn--primary btn--sm" id="settings-llm-save">Save</button>
-            <button class="btn btn--ghost btn--sm" id="settings-back">Cancel</button>
+            <button class="btn btn--primary btn--sm" id="settings-llm-save">${esc(settingsT('common.save', null, 'Save'))}</button>
+            <button class="btn btn--ghost btn--sm" id="settings-back">${esc(settingsT('common.cancel', null, 'Cancel'))}</button>
           </div>
           <div class="error-box mt-12" id="settings-form-error" hidden></div>
         </div>
@@ -412,14 +419,14 @@ const Settings = {
       <section class="settings-section">
         <h2>Telegram</h2>
         <div class="settings-form">
-          <label>Bot Token</label>
+          <label>${esc(settingsT('settings.botToken', null, 'Bot Token'))}</label>
           <input class="input input--mono" id="settings-telegram-token" type="password" autocomplete="off">
-          <label>Chat ID</label>
-          <input class="input input--mono" id="settings-telegram-chat-id" value="${esc(chatID)}">
+          <label>${esc(settingsT('settings.chatID', null, 'Chat ID'))}</label>
+          <input class="input input--mono" id="settings-telegram-chat-id" value="${escHTMLAttr(chatID)}">
           <div class="settings-actions">
-            <button class="btn btn--secondary btn--sm" id="settings-telegram-detect">Detect Chat ID</button>
-            <button class="btn btn--primary btn--sm" id="settings-telegram-save">Save</button>
-            <button class="btn btn--ghost btn--sm" id="settings-back">Cancel</button>
+            <button class="btn btn--secondary btn--sm" id="settings-telegram-detect">${esc(settingsT('settings.detectChatID', null, 'Detect Chat ID'))}</button>
+            <button class="btn btn--primary btn--sm" id="settings-telegram-save">${esc(settingsT('common.save', null, 'Save'))}</button>
+            <button class="btn btn--ghost btn--sm" id="settings-back">${esc(settingsT('common.cancel', null, 'Cancel'))}</button>
           </div>
           <div class="error-box mt-12" id="settings-form-error" hidden></div>
         </div>

@@ -22,14 +22,14 @@
       "en": "Password"
     },
     "app.runSetupChat": {
-      "ko": "원격 채팅을 쓰려면 kittypaw setup-chat을 실행하세요.",
-      "ja": "リモートチャットを使うには kittypaw setup-chat を実行してください。",
-      "en": "Run kittypaw setup-chat to use remote chat."
+      "ko": "웹 채팅을 시작하기 전에 터미널에서 kittypaw setup을 실행하세요.",
+      "ja": "Web チャットを始める前に、ターミナルで kittypaw setup を実行してください。",
+      "en": "Run kittypaw setup in your terminal before starting web chat."
     },
     "app.runSetupLocal": {
-      "ko": "로컬 서버를 시작하려면 kittypaw server start를 실행하세요.",
-      "ja": "ローカルサーバーを開始するには kittypaw server start を実行してください。",
-      "en": "Run kittypaw server start to start the local server."
+      "ko": "로컬 설정을 마치려면 터미널에서 kittypaw setup을 실행하세요.",
+      "ja": "ローカル設定を完了するには、ターミナルで kittypaw setup を実行してください。",
+      "en": "Run kittypaw setup in your terminal to finish local setup."
     },
     "app.sessionExpired": {
       "ko": "세션이 만료되었습니다. 다시 로그인하세요.",
@@ -66,6 +66,11 @@
       "ja": "接続が切れました。",
       "en": "Connection lost."
     },
+    "chat.connectionLostPrompt": {
+      "ko": "연결이 끊겼습니다. 다시 연결하려면 클릭하세요.",
+      "ja": "接続が切れました。再接続するにはクリックしてください。",
+      "en": "Connection lost. Click to reconnect."
+    },
     "chat.deny": {
       "ko": "거부",
       "ja": "拒否",
@@ -82,14 +87,19 @@
       "en": "Permission request"
     },
     "chat.placeholder": {
-      "ko": "메시지를 입력하세요",
-      "ja": "メッセージを入力",
-      "en": "Type a message"
+      "ko": "메시지를 입력하세요...",
+      "ja": "メッセージを入力...",
+      "en": "Type a message..."
     },
     "chat.reconnect": {
       "ko": "다시 연결",
       "ja": "再接続",
       "en": "Reconnect"
+    },
+    "chat.reconnectingIn": {
+      "ko": "{seconds}초 후 다시 연결합니다...",
+      "ja": "{seconds}秒後に再接続します...",
+      "en": "Reconnecting in {seconds}s..."
     },
     "chat.send": {
       "ko": "보내기",
@@ -110,6 +120,11 @@
       "ko": "연결됨",
       "ja": "接続済み",
       "en": "Connected"
+    },
+    "common.delete": {
+      "ko": "삭제",
+      "ja": "削除",
+      "en": "Delete"
     },
     "common.english": {
       "ko": "영어",
@@ -146,10 +161,170 @@
       "ja": "更新",
       "en": "Refresh"
     },
+    "common.remove": {
+      "ko": "제거",
+      "ja": "削除",
+      "en": "Remove"
+    },
     "common.save": {
       "ko": "저장",
       "ja": "保存",
       "en": "Save"
+    },
+    "dashboard.autoRefresh": {
+      "ko": "30초마다 자동 새로고침",
+      "ja": "30秒ごとに自動更新",
+      "en": "Auto-refreshes every 30s"
+    },
+    "dashboard.cache": {
+      "ko": "캐시",
+      "ja": "キャッシュ",
+      "en": "Cache"
+    },
+    "dashboard.calls": {
+      "ko": "호출",
+      "ja": "呼び出し",
+      "en": "Calls"
+    },
+    "dashboard.channel": {
+      "ko": "채널",
+      "ja": "チャンネル",
+      "en": "Channel"
+    },
+    "dashboard.content": {
+      "ko": "내용",
+      "ja": "内容",
+      "en": "Content"
+    },
+    "dashboard.conversation": {
+      "ko": "대화",
+      "ja": "会話",
+      "en": "Conversation"
+    },
+    "dashboard.cost": {
+      "ko": "비용",
+      "ja": "コスト",
+      "en": "Cost"
+    },
+    "dashboard.duration": {
+      "ko": "소요 시간",
+      "ja": "所要時間",
+      "en": "Duration"
+    },
+    "dashboard.estimatedCost": {
+      "ko": "예상 비용",
+      "ja": "推定コスト",
+      "en": "Est. Cost"
+    },
+    "dashboard.executionFail": {
+      "ko": "실패",
+      "ja": "失敗",
+      "en": "FAIL"
+    },
+    "dashboard.executionOK": {
+      "ko": "정상",
+      "ja": "OK",
+      "en": "OK"
+    },
+    "dashboard.failed": {
+      "ko": "실패",
+      "ja": "失敗",
+      "en": "Failed"
+    },
+    "dashboard.input": {
+      "ko": "입력",
+      "ja": "入力",
+      "en": "Input"
+    },
+    "dashboard.llmUsage": {
+      "ko": "LLM 사용량",
+      "ja": "LLM 使用量",
+      "en": "LLM Usage"
+    },
+    "dashboard.model": {
+      "ko": "모델",
+      "ja": "モデル",
+      "en": "Model"
+    },
+    "dashboard.noConversation": {
+      "ko": "아직 대화가 없습니다",
+      "ja": "会話はまだありません",
+      "en": "No conversation yet"
+    },
+    "dashboard.noExecutions": {
+      "ko": "아직 실행 기록이 없습니다",
+      "ja": "実行履歴はまだありません",
+      "en": "No executions yet"
+    },
+    "dashboard.noLLMUsage": {
+      "ko": "아직 LLM 사용량이 없습니다",
+      "ja": "LLM 使用量はまだありません",
+      "en": "No LLM usage yet"
+    },
+    "dashboard.output": {
+      "ko": "출력",
+      "ja": "出力",
+      "en": "Output"
+    },
+    "dashboard.recentExecutions": {
+      "ko": "최근 실행",
+      "ja": "最近の実行",
+      "en": "Recent Executions"
+    },
+    "dashboard.role": {
+      "ko": "역할",
+      "ja": "ロール",
+      "en": "Role"
+    },
+    "dashboard.skill": {
+      "ko": "스킬",
+      "ja": "スキル",
+      "en": "Skill"
+    },
+    "dashboard.status": {
+      "ko": "상태",
+      "ja": "ステータス",
+      "en": "Status"
+    },
+    "dashboard.successful": {
+      "ko": "성공",
+      "ja": "成功",
+      "en": "Successful"
+    },
+    "dashboard.summary": {
+      "ko": "요약",
+      "ja": "概要",
+      "en": "Summary"
+    },
+    "dashboard.time": {
+      "ko": "시간",
+      "ja": "時刻",
+      "en": "Time"
+    },
+    "dashboard.title": {
+      "ko": "KittyPaw 대시보드",
+      "ja": "KittyPaw ダッシュボード",
+      "en": "KittyPaw Dashboard"
+    },
+    "dashboard.todayRuns": {
+      "ko": "오늘 실행",
+      "ja": "今日の実行",
+      "en": "Today's Runs"
+    },
+    "dashboard.tokens": {
+      "ko": "토큰",
+      "ja": "トークン",
+      "en": "Tokens"
+    },
+    "kanban.addWorkspaceGuidance": {
+      "ko": "칸반 프로젝트를 만들기 전에 설정에서 작업공간을 추가하세요.",
+      "ja": "カンバンプロジェクトを作成する前に、設定でワークスペースを追加してください。",
+      "en": "Add a workspace in Settings before creating a Kanban project."
+    },
+    "kanban.addWorkspaceInSettings": {
+      "ko": "설정에서 작업공간 추가",
+      "ja": "設定でワークスペースを追加",
+      "en": "Add a workspace in Settings"
     },
     "kanban.allMilestones": {
       "ko": "모든 마일스톤",
@@ -160,6 +335,11 @@
       "ko": "보관",
       "ja": "アーカイブ",
       "en": "Archive"
+    },
+    "kanban.archiveTaskConfirm": {
+      "ko": "이 작업을 보관할까요?",
+      "ja": "このタスクをアーカイブしますか？",
+      "en": "Archive this task?"
     },
     "kanban.assignee": {
       "ko": "담당자",
@@ -176,10 +356,25 @@
       "ja": "本文",
       "en": "Body"
     },
+    "kanban.cancel": {
+      "ko": "취소",
+      "ja": "キャンセル",
+      "en": "Cancel"
+    },
+    "kanban.cancelReason": {
+      "ko": "취소 사유",
+      "ja": "キャンセル理由",
+      "en": "Cancel reason"
+    },
     "kanban.claim": {
       "ko": "맡기",
       "ja": "担当する",
       "en": "Claim"
+    },
+    "kanban.comment": {
+      "ko": "댓글 작성",
+      "ja": "コメント",
+      "en": "Comment"
     },
     "kanban.comments": {
       "ko": "댓글",
@@ -191,10 +386,20 @@
       "ja": "完了",
       "en": "Complete"
     },
+    "kanban.createProject": {
+      "ko": "프로젝트 만들기",
+      "ja": "プロジェクトを作成",
+      "en": "Create Project"
+    },
     "kanban.empty": {
       "ko": "비어 있음",
       "ja": "空です",
       "en": "Empty"
+    },
+    "kanban.finished": {
+      "ko": "완료",
+      "ja": "終了",
+      "en": "finished"
     },
     "kanban.heartbeat": {
       "ko": "하트비트",
@@ -206,6 +411,11 @@
       "ja": "マイルストーン",
       "en": "Milestone"
     },
+    "kanban.name": {
+      "ko": "이름",
+      "ja": "名前",
+      "en": "Name"
+    },
     "kanban.newTask": {
       "ko": "새 작업",
       "ja": "新規タスク",
@@ -215,6 +425,11 @@
       "ko": "댓글 없음",
       "ja": "コメントはありません",
       "en": "No comments"
+    },
+    "kanban.noProjects": {
+      "ko": "프로젝트 없음",
+      "ja": "プロジェクトはありません",
+      "en": "No projects"
     },
     "kanban.noRuns": {
       "ko": "실행 기록 없음",
@@ -226,25 +441,95 @@
       "ja": "なし",
       "en": "None"
     },
+    "kanban.optional": {
+      "ko": "선택 사항",
+      "ja": "任意",
+      "en": "optional"
+    },
     "kanban.priority": {
       "ko": "우선순위",
       "ja": "優先度",
       "en": "Priority"
+    },
+    "kanban.reason": {
+      "ko": "사유",
+      "ja": "理由",
+      "en": "Reason"
     },
     "kanban.reclaim": {
       "ko": "다시 맡기",
       "ja": "再担当",
       "en": "Reclaim"
     },
+    "kanban.reclaimReason": {
+      "ko": "다시 맡는 사유",
+      "ja": "再担当理由",
+      "en": "Reclaim reason"
+    },
+    "kanban.requestFailed": {
+      "ko": "요청 실패",
+      "ja": "リクエストに失敗しました",
+      "en": "Request failed"
+    },
     "kanban.runs": {
       "ko": "실행",
       "ja": "実行",
       "en": "Runs"
     },
+    "kanban.selectWorkspaceFirst": {
+      "ko": "먼저 작업공간을 선택하세요.",
+      "ja": "先にワークスペースを選択してください。",
+      "en": "Select a workspace first."
+    },
+    "kanban.slug": {
+      "ko": "슬러그",
+      "ja": "スラッグ",
+      "en": "Slug"
+    },
+    "kanban.started": {
+      "ko": "시작",
+      "ja": "開始",
+      "en": "started"
+    },
     "kanban.status": {
       "ko": "상태",
       "ja": "ステータス",
       "en": "Status"
+    },
+    "kanban.status.blocked": {
+      "ko": "막힘",
+      "ja": "ブロック中",
+      "en": "Blocked"
+    },
+    "kanban.status.done": {
+      "ko": "완료",
+      "ja": "完了",
+      "en": "Done"
+    },
+    "kanban.status.ready": {
+      "ko": "준비됨",
+      "ja": "準備完了",
+      "en": "Ready"
+    },
+    "kanban.status.running": {
+      "ko": "진행 중",
+      "ja": "実行中",
+      "en": "Running"
+    },
+    "kanban.status.todo": {
+      "ko": "할 일",
+      "ja": "Todo",
+      "en": "Todo"
+    },
+    "kanban.status.triage": {
+      "ko": "분류",
+      "ja": "トリアージ",
+      "en": "Triage"
+    },
+    "kanban.summary": {
+      "ko": "요약",
+      "ja": "概要",
+      "en": "Summary"
     },
     "kanban.task": {
       "ko": "작업",
@@ -261,10 +546,20 @@
       "ja": "タイトル",
       "en": "Title"
     },
+    "kanban.unassigned": {
+      "ko": "미지정",
+      "ja": "未割り当て",
+      "en": "Unassigned"
+    },
     "kanban.unblock": {
       "ko": "막힘 해제",
       "ja": "ブロック解除",
       "en": "Unblock"
+    },
+    "kanban.workspace": {
+      "ko": "작업공간",
+      "ja": "ワークスペース",
+      "en": "Workspace"
     },
     "nav.dashboard": {
       "ko": "대시보드",
@@ -286,6 +581,21 @@
       "ja": "ワークスペースを追加",
       "en": "Add workspace"
     },
+    "settings.alias": {
+      "ko": "별칭",
+      "ja": "エイリアス",
+      "en": "Alias"
+    },
+    "settings.apiKey": {
+      "ko": "API 키",
+      "ja": "API キー",
+      "en": "API key"
+    },
+    "settings.botToken": {
+      "ko": "봇 토큰",
+      "ja": "ボットトークン",
+      "en": "Bot token"
+    },
     "settings.change": {
       "ko": "변경",
       "ja": "変更",
@@ -296,35 +606,250 @@
       "ja": "チャンネル",
       "en": "Channels"
     },
+    "settings.chatID": {
+      "ko": "채팅 ID",
+      "ja": "チャット ID",
+      "en": "Chat ID"
+    },
     "settings.connect": {
       "ko": "연결",
       "ja": "接続",
       "en": "Connect"
+    },
+    "settings.detectChatID": {
+      "ko": "채팅 ID 감지",
+      "ja": "チャット ID を検出",
+      "en": "Detect Chat ID"
+    },
+    "settings.failedToLoad": {
+      "ko": "설정을 불러오지 못했습니다: {error}",
+      "ja": "設定を読み込めませんでした: {error}",
+      "en": "Failed to load settings: {error}"
     },
     "settings.llmProvider": {
       "ko": "LLM 제공자",
       "ja": "LLM プロバイダー",
       "en": "LLM provider"
     },
+    "settings.localURL": {
+      "ko": "로컬 URL",
+      "ja": "ローカル URL",
+      "en": "Local URL"
+    },
+    "settings.model": {
+      "ko": "모델",
+      "ja": "モデル",
+      "en": "Model"
+    },
+    "settings.noFolderSelected": {
+      "ko": "선택된 폴더 없음",
+      "ja": "フォルダー未選択",
+      "en": "No folder selected"
+    },
+    "settings.noFolders": {
+      "ko": "폴더 없음",
+      "ja": "フォルダーはありません",
+      "en": "No folders"
+    },
+    "settings.noPath": {
+      "ko": "경로 없음",
+      "ja": "パスなし",
+      "en": "No path"
+    },
     "settings.noWorkspaces": {
       "ko": "등록된 작업공간이 없습니다.",
       "ja": "登録済みのワークスペースはありません。",
       "en": "No workspaces configured."
+    },
+    "settings.notConfigured": {
+      "ko": "설정되지 않음",
+      "ja": "未設定",
+      "en": "Not configured"
+    },
+    "settings.path": {
+      "ko": "경로",
+      "ja": "パス",
+      "en": "Path"
+    },
+    "settings.provider": {
+      "ko": "제공자",
+      "ja": "プロバイダー",
+      "en": "Provider"
+    },
+    "settings.relayNotAvailable": {
+      "ko": "릴레이를 사용할 수 없습니다.",
+      "ja": "リレーは利用できません。",
+      "en": "Relay not available"
+    },
+    "settings.removeWorkspaceConfirm": {
+      "ko": "\"{name}\" 작업공간을 제거할까요?",
+      "ja": "ワークスペース「{name}」を削除しますか？",
+      "en": "Remove workspace \"{name}\"?"
+    },
+    "settings.selectWorkspacePath": {
+      "ko": "작업공간 경로를 선택하세요.",
+      "ja": "ワークスペースのパスを選択してください。",
+      "en": "Select a workspace path."
+    },
+    "settings.selected": {
+      "ko": "선택됨",
+      "ja": "選択中",
+      "en": "Selected"
     },
     "settings.title": {
       "ko": "설정",
       "ja": "設定",
       "en": "Settings"
     },
+    "settings.up": {
+      "ko": "위로",
+      "ja": "上へ",
+      "en": "Up"
+    },
+    "settings.workspace": {
+      "ko": "작업공간",
+      "ja": "ワークスペース",
+      "en": "Workspace"
+    },
     "settings.workspaces": {
       "ko": "작업공간",
       "ja": "ワークスペース",
       "en": "Workspaces"
     },
+    "skills.available": {
+      "ko": "사용 가능",
+      "ja": "利用可能",
+      "en": "Available"
+    },
+    "skills.availableCount": {
+      "ko": "사용 가능 ({count})",
+      "ja": "利用可能 ({count})",
+      "en": "Available ({count})"
+    },
+    "skills.backToGallery": {
+      "ko": "갤러리로 돌아가기",
+      "ja": "ギャラリーに戻る",
+      "en": "Back to gallery"
+    },
+    "skills.configuration": {
+      "ko": "구성",
+      "ja": "設定",
+      "en": "Configuration"
+    },
+    "skills.configurationSaved": {
+      "ko": "구성이 저장되었습니다.",
+      "ja": "設定を保存しました。",
+      "en": "Configuration saved."
+    },
+    "skills.cron": {
+      "ko": "크론",
+      "ja": "Cron",
+      "en": "Cron"
+    },
+    "skills.deleteSkillConfirm": {
+      "ko": "\"{name}\" 스킬을 삭제할까요?",
+      "ja": "スキル「{name}」を削除しますか？",
+      "en": "Delete skill \"{name}\"?"
+    },
+    "skills.disable": {
+      "ko": "비활성화",
+      "ja": "無効化",
+      "en": "Disable"
+    },
+    "skills.disabled": {
+      "ko": "비활성화됨",
+      "ja": "無効",
+      "en": "Disabled"
+    },
+    "skills.enable": {
+      "ko": "활성화",
+      "ja": "有効化",
+      "en": "Enable"
+    },
+    "skills.enabled": {
+      "ko": "활성화됨",
+      "ja": "有効",
+      "en": "Enabled"
+    },
+    "skills.failedToLoad": {
+      "ko": "불러오지 못했습니다: {error}",
+      "ja": "読み込めませんでした: {error}",
+      "en": "Failed to load: {error}"
+    },
+    "skills.failedToLoadGallery": {
+      "ko": "갤러리를 불러오지 못했습니다: {error}",
+      "ja": "ギャラリーを読み込めませんでした: {error}",
+      "en": "Failed to load gallery: {error}"
+    },
+    "skills.install": {
+      "ko": "설치",
+      "ja": "インストール",
+      "en": "Install"
+    },
+    "skills.installFailed": {
+      "ko": "설치 실패: {error}",
+      "ja": "インストールに失敗しました: {error}",
+      "en": "Install failed: {error}"
+    },
+    "skills.installed": {
+      "ko": "설치됨",
+      "ja": "インストール済み",
+      "en": "Installed"
+    },
+    "skills.installedCount": {
+      "ko": "설치됨 ({count})",
+      "ja": "インストール済み ({count})",
+      "en": "Installed ({count})"
+    },
+    "skills.installing": {
+      "ko": "설치 중...",
+      "ja": "インストール中...",
+      "en": "Installing..."
+    },
+    "skills.loading": {
+      "ko": "스킬을 불러오는 중...",
+      "ja": "スキルを読み込み中...",
+      "en": "Loading skills..."
+    },
+    "skills.noAdditionalPackages": {
+      "ko": "추가 패키지가 없습니다.",
+      "ja": "追加パッケージはありません。",
+      "en": "No additional packages found."
+    },
+    "skills.packageType": {
+      "ko": "패키지",
+      "ja": "パッケージ",
+      "en": "package"
+    },
+    "skills.saveConfiguration": {
+      "ko": "구성 저장",
+      "ja": "設定を保存",
+      "en": "Save Configuration"
+    },
+    "skills.saveFailed": {
+      "ko": "저장 실패: {error}",
+      "ja": "保存に失敗しました: {error}",
+      "en": "Save failed: {error}"
+    },
+    "skills.saving": {
+      "ko": "저장 중...",
+      "ja": "保存中...",
+      "en": "Saving..."
+    },
     "skills.search": {
       "ko": "스킬 검색",
       "ja": "スキルを検索",
       "en": "Search skills"
+    },
+    "skills.setHidden": {
+      "ko": "설정됨 (숨김)",
+      "ja": "設定済み (非表示)",
+      "en": "Set (hidden)"
+    },
+    "skills.skillType": {
+      "ko": "스킬",
+      "ja": "スキル",
+      "en": "skill"
     },
     "skills.subtitle": {
       "ko": "KittyPaw가 사용할 수 있는 로컬 도구입니다.",
@@ -335,6 +860,26 @@
       "ko": "스킬",
       "ja": "スキル",
       "en": "Skills"
+    },
+    "skills.trigger": {
+      "ko": "트리거",
+      "ja": "トリガー",
+      "en": "Trigger"
+    },
+    "skills.uninstall": {
+      "ko": "제거",
+      "ja": "アンインストール",
+      "en": "Uninstall"
+    },
+    "skills.uninstallFailed": {
+      "ko": "제거 실패: {error}",
+      "ja": "アンインストールに失敗しました: {error}",
+      "en": "Uninstall failed: {error}"
+    },
+    "skills.uninstallPackageConfirm": {
+      "ko": "\"{id}\" 패키지를 제거할까요?",
+      "ja": "パッケージ「{id}」をアンインストールしますか？",
+      "en": "Uninstall package \"{id}\"?"
     }
   };
   const languageNames = {
