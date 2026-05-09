@@ -122,6 +122,41 @@ func TestProjectJobRuntimeRunsShellDriverAndRecordsSuccess(t *testing.T) {
 	}
 }
 
+func TestProjectJobRuntimeLiveShellDriverRunsApprovedScript(t *testing.T) {
+	st := openProjectJobRuntimeStore(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	gitCommitFile(t, root, "README.md", "clean\n")
+	project := createRuntimeProject(t, st, root)
+	job := planApprovedRuntimeJobWithPrompt(t, st, project.ID, "printf 'smoke\\n' > smoke.txt\n")
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{
+		Store:     st,
+		AccountID: "alice",
+		BaseDir:   t.TempDir(),
+	})
+
+	if _, err := rt.StartJob(context.Background(), job.ID, StartProjectJobOptions{ActorID: "pm"}); err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	if !rt.WaitForJob(job.ID, 2*time.Second) {
+		t.Fatal("job did not finish")
+	}
+	got, err := st.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if got.Status != store.JobStatusSucceeded || got.ExitCode != 0 {
+		t.Fatalf("job after live shell run = %+v, want succeeded exit 0", got)
+	}
+	data, err := os.ReadFile(filepath.Join(got.WorktreePath, "smoke.txt"))
+	if err != nil {
+		t.Fatalf("read smoke output: %v", err)
+	}
+	if string(data) != "smoke\n" {
+		t.Fatalf("smoke output = %q, want smoke newline", string(data))
+	}
+}
+
 func TestProjectJobRuntimeRecordsFailureExitCodeAndBoundedLogs(t *testing.T) {
 	st := openProjectJobRuntimeStore(t)
 	root := t.TempDir()
@@ -218,6 +253,11 @@ func createRuntimeProject(t *testing.T, st *store.Store, root string) *store.Pro
 
 func planApprovedRuntimeJob(t *testing.T, st *store.Store, projectID string) *store.Job {
 	t.Helper()
+	return planApprovedRuntimeJobWithPrompt(t, st, projectID, "echo ok")
+}
+
+func planApprovedRuntimeJobWithPrompt(t *testing.T, st *store.Store, projectID, prompt string) *store.Job {
+	t.Helper()
 	if err := st.EnsureDefaultDrivers(); err != nil {
 		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
 	}
@@ -231,7 +271,7 @@ func planApprovedRuntimeJob(t *testing.T, st *store.Store, projectID string) *st
 		DriverID:      "shell",
 		Mode:          store.JobModeOneShot,
 		PromptSummary: "Run driver",
-		PromptText:    "echo ok",
+		PromptText:    prompt,
 		CreatedBy:     "pm",
 	})
 	if err != nil {

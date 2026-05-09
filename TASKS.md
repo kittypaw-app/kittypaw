@@ -46,7 +46,8 @@
 - [x] **D2**: 사용자 spec review.
 - [x] **T0**: 구현 계획 작성 (`81ed837`).
 - [x] **T1**: store lifecycle, git worktree runtime, API/tool wiring, web Job controls 구현 (`b68e06f`, `f0c89eb`, `c2cdb32`, `db5f0a5`).
-- [ ] **T2**: Review Project Job Runtime Phase 1.5 implementation and run live smoke on a disposable repo.
+- [x] **T2a**: disposable repo live smoke regression 추가 및 통과 — 실제 `shell` process 가 approved script 를 per-job worktree 에서 실행함을 검증.
+- [ ] **T2b**: Review Project Job Runtime Phase 1.5 implementation.
 
 ## Follow-up: Product-Wide I18n
 

@@ -464,6 +464,21 @@ func buildProjectJobCommand(p *preparedProjectJob) (JobCommandSpec, error) {
 			Args:    []string{"-p", "--output-format", "stream-json", "--permission-mode", "acceptEdits", p.Prompt},
 			Dir:     p.WorktreePath,
 		}, nil
+	case "shell":
+		args, err := driverDefaultArgs(p.Driver.DefaultArgsJSON)
+		if err != nil {
+			return JobCommandSpec{}, err
+		}
+		return JobCommandSpec{
+			Command: command,
+			Args:    args,
+			Dir:     p.WorktreePath,
+			Stdin:   p.Job.PromptText,
+			Env: []string{
+				"KITTYPAW_JOB_PROMPT=" + p.Job.PromptText,
+				"KITTYPAW_JOB_CONTEXT=" + p.Prompt,
+			},
+		}, nil
 	default:
 		args, err := driverDefaultArgs(p.Driver.DefaultArgsJSON)
 		if err != nil {
