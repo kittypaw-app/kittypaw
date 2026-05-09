@@ -43,8 +43,10 @@
 > Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-10-project-job-runtime-design.md`
 
 - [x] **D1**: approved Job 의 `one_shot` 실행, account-managed git worktree, non-git `git init` 승인 흐름, bounded log, success→review/failure→blocked 정책 설계 (`25254b5`).
-- [ ] **D2**: 사용자 spec review.
-- [ ] **T0**: 구현 계획 작성.
+- [x] **D2**: 사용자 spec review.
+- [x] **T0**: 구현 계획 작성 (`81ed837`).
+- [x] **T1**: store lifecycle, git worktree runtime, API/tool wiring, web Job controls 구현 (`b68e06f`, `f0c89eb`, `c2cdb32`, `db5f0a5`).
+- [ ] **T2**: Review Project Job Runtime Phase 1.5 implementation and run live smoke on a disposable repo.
 
 ## Follow-up: Product-Wide I18n
 
