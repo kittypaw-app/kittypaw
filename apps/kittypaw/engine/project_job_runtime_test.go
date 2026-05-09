@@ -258,6 +258,49 @@ func TestProjectJobRuntimeCancelBestEffort(t *testing.T) {
 	}
 }
 
+func TestProjectJobRuntimeCleansWorktreeWhenStoreStartRejectsConcurrentJob(t *testing.T) {
+	st := openProjectJobRuntimeStore(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	gitCommitFile(t, root, "README.md", "clean\n")
+	project := createRuntimeProject(t, st, root)
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "Concurrent"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	first := planApprovedRuntimeJobForTicket(t, st, project.ID, ticket.ID, "first")
+	second := planApprovedRuntimeJobForTicket(t, st, project.ID, ticket.ID, "second")
+	baseDir := t.TempDir()
+	block := make(chan struct{})
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{
+		Store:     st,
+		AccountID: "alice",
+		BaseDir:   baseDir,
+		Runner:    fakeBlockingJobCommandRunner{Block: block},
+	})
+
+	if _, err := rt.StartJob(context.Background(), first.ID, StartProjectJobOptions{ActorID: "pm"}); err != nil {
+		t.Fatalf("StartJob(first) error = %v", err)
+	}
+	secondWorktree := filepath.Join(baseDir, "worktrees", project.ID, ticket.ID, second.ID)
+	_, err = rt.StartJob(context.Background(), second.ID, StartProjectJobOptions{ActorID: "pm"})
+	close(block)
+	if !rt.WaitForJob(first.ID, 2*time.Second) {
+		t.Fatal("first job did not finish")
+	}
+	if !store.IsProjectJobError(err, store.ProjectJobErrTicketHasRunningJob) {
+		t.Fatalf("StartJob(second) error = %v, want %s", err, store.ProjectJobErrTicketHasRunningJob)
+	}
+	if _, statErr := os.Stat(secondWorktree); !os.IsNotExist(statErr) {
+		t.Fatalf("second worktree stat error = %v, want not exist", statErr)
+	}
+	secondBranch := projectJobBranchName(ticket.Key, second.ID)
+	out := gitOutputForTest(t, root, "branch", "--list", secondBranch)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("second branch still exists: %q", out)
+	}
+}
+
 func openProjectJobRuntimeStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(":memory:")
@@ -310,6 +353,30 @@ func planApprovedRuntimeJobWithPrompt(t *testing.T, st *store.Store, projectID, 
 	return approved
 }
 
+func planApprovedRuntimeJobForTicket(t *testing.T, st *store.Store, projectID, ticketID, summary string) *store.Job {
+	t.Helper()
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(store.PlanJobRequest{
+		ProjectID:     projectID,
+		TicketID:      ticketID,
+		DriverID:      "shell",
+		Mode:          store.JobModeOneShot,
+		PromptSummary: summary,
+		PromptText:    "echo " + summary,
+		CreatedBy:     "pm",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob(%s) error = %v", summary, err)
+	}
+	approved, err := st.ApproveJob(job.ID, "pm")
+	if err != nil {
+		t.Fatalf("ApproveJob(%s) error = %v", summary, err)
+	}
+	return approved
+}
+
 func gitInit(t *testing.T, root string) {
 	t.Helper()
 	runGit(t, root, "init")
@@ -333,6 +400,16 @@ func runGit(t *testing.T, root string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
+}
+
+func gitOutputForTest(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
+	return string(out)
 }
 
 type fakeJobCommandRunner struct {

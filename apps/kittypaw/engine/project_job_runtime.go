@@ -226,6 +226,7 @@ func (r *ProjectJobRuntime) StartJob(ctx context.Context, jobID string, opts Sta
 		MetadataJSON: metadata,
 	})
 	if err != nil {
+		cleanupPreparedJobWorktree(prepared)
 		return nil, err
 	}
 	prepared.Job = started
@@ -354,6 +355,20 @@ func (r *ProjectJobRuntime) prepareApprovedJob(ctx context.Context, job *store.J
 	}
 	prepared.Prompt = buildProjectJobPrompt(prepared)
 	return prepared, nil
+}
+
+func cleanupPreparedJobWorktree(prepared *preparedProjectJob) {
+	if prepared == nil || prepared.Project == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if strings.TrimSpace(prepared.WorktreePath) != "" {
+		_, _ = gitCombined(ctx, prepared.Project.RootPath, "worktree", "remove", "--force", prepared.WorktreePath)
+	}
+	if strings.TrimSpace(prepared.BranchName) != "" {
+		_, _ = gitCombined(ctx, prepared.Project.RootPath, "branch", "-D", prepared.BranchName)
+	}
 }
 
 func (r *ProjectJobRuntime) runPreparedJob(ctx context.Context, prepared *preparedProjectJob, done chan struct{}) {
