@@ -4,6 +4,8 @@
   --bg: #F5F3F0;
   --card-bg: #FFFFFF;
   --card-border: #E7E5E4;
+  --surface: var(--card-bg);
+  --border: var(--card-border);
   --accent: #86EFAC;
   --accent-dark: #166534;
   --text: #1C1917;
@@ -485,6 +487,57 @@ th {
   flex-direction: column;
   min-width: 0;
   position: relative;
+}
+
+.app-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 52px;
+  padding: 16px 24px 0;
+}
+
+.app-language {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 36px;
+}
+
+.i18n-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.i18n-language-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text);
+}
+
+.i18n-language-select {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+}
+
+.i18n-language-select:focus {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 #chat-panel {
@@ -1519,4 +1572,8 @@ th {
   }
   .nav-item.active { border-bottom-color: var(--accent); }
   .sidebar-footer { display: none; }
+  .app-header {
+    min-height: 44px;
+    padding: 8px 12px 0;
+  }
 }

@@ -1,5 +1,8 @@
 // KittyPaw Web App — Router + Auth Bootstrap + Tab Navigation
 
+const I18n = window.KittyPawI18n;
+const t = (key, params) => I18n ? I18n.t(key, params) : key;
+
 const App = {
   root: null,
   apiKey: null,
@@ -12,6 +15,7 @@ const App = {
   settingsSurface: false,
   activeTab: null,
   _dashboardInterval: null,
+  _languagePicker: null,
 
   async init() {
     this.root = document.getElementById('app');
@@ -152,7 +156,7 @@ const App = {
           </div>
         </div>
         <div class="error-box login-error" id="login-error" ${errorMessage ? '' : 'hidden'}>${esc(errorMessage)}</div>
-        <button class="btn btn--primary login-submit" type="submit">Sign in</button>
+        <button class="btn btn--primary login-submit" type="submit" data-i18n="app.signIn">${esc(t('app.signIn'))}</button>
       </form>`;
 
     const form = document.getElementById('login-form');
@@ -194,6 +198,7 @@ const App = {
   _chatMounted: false,
 
   _teardown() {
+    this.destroyLanguagePicker();
     if (this._chatMounted) {
       if (Chat.ws) { Chat.ws.onclose = null; Chat.ws.close(); Chat.ws = null; }
       if (Chat.reconnectTimer) { clearTimeout(Chat.reconnectTimer); Chat.reconnectTimer = null; }
@@ -265,13 +270,16 @@ const App = {
           <div class="sidebar-logo">Kitty<span class="accent">Paw</span></div>
           <nav class="sidebar-nav">
             ${defaultNav}
-            <button class="nav-item" data-tab="settings">Settings</button>
+            <button class="nav-item" data-tab="settings" data-i18n="nav.settings">${esc(t('nav.settings'))}</button>
           </nav>
           <div class="sidebar-footer">
             <span class="sidebar-version">v0.1.0</span>
           </div>
         </aside>
         <main class="main-content">
+          <header class="app-header">
+            <div class="app-language" id="app-language"></div>
+          </header>
           <div id="tab-content"></div>
         </main>
       </div>`;
@@ -280,7 +288,56 @@ const App = {
       btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
     });
 
+    this.mountLanguagePicker(document.getElementById('app-language'));
     this.switchTab('settings');
+  },
+
+  mountLanguagePicker(target) {
+    this.destroyLanguagePicker();
+    if (!I18n || !target || typeof I18n.mountLanguagePicker !== 'function') {
+      return;
+    }
+    this._languagePicker = I18n.mountLanguagePicker(target, {
+      className: 'i18n-language',
+      onChange: async (locale) => {
+        try {
+          await apiRaw('/api/settings/locale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ locale }),
+          });
+        } catch (e) {
+          console.warn('Locale preference save failed:', e);
+        }
+        await this.refreshCurrentSurface();
+      },
+    });
+    if (this._languagePicker && this._languagePicker.element) {
+      const globe = this._languagePicker.element.querySelector('.kp-language-picker__globe');
+      if (globe) {
+        globe.classList.add('i18n-language-button');
+      }
+    }
+    if (this._languagePicker && this._languagePicker.select) {
+      this._languagePicker.select.classList.add('i18n-language-select');
+    }
+  },
+
+  destroyLanguagePicker() {
+    if (this._languagePicker && typeof this._languagePicker.destroy === 'function') {
+      this._languagePicker.destroy();
+    }
+    this._languagePicker = null;
+  },
+
+  async refreshCurrentSurface() {
+    const tab = this.activeTab;
+    if (tab && document.getElementById('tab-content')) {
+      this.activeTab = null;
+      this.switchTab(tab);
+      return;
+    }
+    await this.startCurrentSurface();
   },
 
   switchTab(tab) {
