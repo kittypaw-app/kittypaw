@@ -26,12 +26,13 @@
 
 - [x] **D1**: Workspace/Kanban 대체 방향 설계 확정.
 - [x] **D2**: Project, Ticket, Board, Conversation, Job, Driver, Staff Assignment 개념 정리.
-- [ ] **T0**: 구현 계획 작성 및 DB/API/UI 영향 범위 점검.
-- [ ] **T1**: Project/Ticket/Job/Driver/Conversation scope 저장소 기반 구현.
-- [ ] **T2**: `/api/v1/projects`, `/api/v1/tickets`, `/api/v1/jobs`, `/api/v1/drivers` API 구현.
-- [ ] **T3**: Projects/Board 중심 웹 UI로 Workspace/Kanban 사용자 표면 대체.
-- [ ] **T4**: 채팅/엔진 Projects tool과 Project Kickoff/Brief Draft 흐름 구현.
-- [ ] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리.
+- [x] **T0**: 구현 계획 작성 및 DB/API/UI 영향 범위 점검.
+- [x] **T1**: Project/Ticket/Job/Driver/Conversation scope 저장소 기반 구현.
+- [x] **T2**: `/api/v1/projects`, `/api/v1/tickets`, `/api/v1/jobs`, `/api/v1/drivers` API 구현.
+- [x] **T3**: Projects/Board 중심 웹 UI로 Workspace/Kanban 사용자 표면 대체.
+- [x] **T4a**: Engine Projects tool, slash command, Brief Draft 저장/commit 흐름 구현.
+- [ ] **T4b**: 채팅 주도 Project Kickoff 및 project/ticket conversation scope 라우팅.
+- [x] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리.
 
 ## Follow-up: Product-Wide I18n
 

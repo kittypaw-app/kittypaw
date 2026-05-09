@@ -802,7 +802,7 @@ git commit -m "feat(projects): scope indexing and file tools to projects"
 - Modify: `TASKS.md`
 - Modify: `apps/kittypaw/TASKS.md`
 
-- [ ] **Step 1: Add deterministic e2e test for staff/project brief flow**
+- [x] **Step 1: Add deterministic e2e test for staff/project brief flow**
 
 Add a non-live e2e test that uses a fake LLM provider and verifies the chat sequence:
 
@@ -825,7 +825,7 @@ go test -tags e2e ./engine -run TestE2EProjectsStaffDraftApprovalDoesNotLoseCont
 
 Expected before implementation: FAIL if route/tool context is missing; PASS after prompt/context fixes are in place.
 
-- [ ] **Step 2: Add live LLM e2e test gated behind env**
+- [x] **Step 2: Add live LLM e2e test gated behind env**
 
 Add:
 
@@ -846,7 +846,7 @@ test-e2e-live:
 	KITTYPAW_E2E_LIVE=1 KITTYPAW_E2E_ACCOUNT=$(KITTYPAW_E2E_ACCOUNT) go test -tags e2e ./engine -run 'TestE2ELiveStaffDraftReproducesContextualPMRequest|TestE2ELiveProjectsStaffDraftReproducesContextualPMRequest' -v -count=1
 ```
 
-- [ ] **Step 3: Run project-focused verification**
+- [x] **Step 3: Run project-focused verification**
 
 Run:
 
@@ -857,7 +857,7 @@ go test -tags e2e ./engine -run 'TestE2EProjectsStaffDraftApprovalDoesNotLoseCon
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit Task 7**
+- [x] **Step 4: Commit Task 7**
 
 Run:
 

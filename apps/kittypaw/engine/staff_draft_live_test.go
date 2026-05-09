@@ -14,6 +14,15 @@ import (
 )
 
 func TestE2ELiveStaffDraftReproducesContextualPMRequest(t *testing.T) {
+	runE2ELiveStaffDraftReproducesContextualPMRequest(t)
+}
+
+func TestE2ELiveProjectsStaffDraftReproducesContextualPMRequest(t *testing.T) {
+	runE2ELiveStaffDraftReproducesContextualPMRequest(t)
+}
+
+func runE2ELiveStaffDraftReproducesContextualPMRequest(t *testing.T) {
+	t.Helper()
 	if os.Getenv("KITTYPAW_E2E_LIVE") != "1" && os.Getenv("KITTYPAW_LIVE_LLM") != "1" {
 		t.Skip("set KITTYPAW_E2E_LIVE=1 to call the configured live LLM")
 	}

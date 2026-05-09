@@ -29,7 +29,7 @@ test-e2e:
 	go test -tags e2e ./... -v -count=1
 
 test-e2e-live:
-	KITTYPAW_E2E_LIVE=1 KITTYPAW_E2E_ACCOUNT=$(KITTYPAW_E2E_ACCOUNT) go test -tags e2e ./engine -run TestE2ELiveStaffDraftReproducesContextualPMRequest -v -count=1
+	KITTYPAW_E2E_LIVE=1 KITTYPAW_E2E_ACCOUNT=$(KITTYPAW_E2E_ACCOUNT) go test -tags e2e ./engine -run 'TestE2ELiveStaffDraftReproducesContextualPMRequest|TestE2ELiveProjectsStaffDraftReproducesContextualPMRequest' -v -count=1
 
 test-full: test-ci test-e2e-live
 
