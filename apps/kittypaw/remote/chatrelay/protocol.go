@@ -141,42 +141,72 @@ func allowedKittyPawV1Request(method string, parts []string) bool {
 		if len(parts) == 2 {
 			return method == http.MethodGet
 		}
-		if len(parts) == 3 && (parts[2] == "boards" || parts[2] == "milestones") {
-			if parts[2] == "milestones" {
-				return method == http.MethodGet || method == http.MethodPost
-			}
+		if len(parts) == 3 && parts[2] == "board" {
 			return method == http.MethodGet
 		}
-	case "kanban":
-		return allowedKittyPawKanbanRequest(method, parts[1:])
+		if len(parts) == 3 && parts[2] == "brief-drafts" {
+			return method == http.MethodGet || method == http.MethodPost
+		}
+		if len(parts) == 4 && parts[2] == "brief-drafts" {
+			return method == http.MethodPatch
+		}
+		if len(parts) == 5 && parts[2] == "brief-drafts" && parts[4] == "commit" {
+			return method == http.MethodPost
+		}
+	case "tickets":
+		return allowedKittyPawTicketsRequest(method, parts)
+	case "jobs":
+		return allowedKittyPawJobsRequest(method, parts)
+	case "drivers":
+		return allowedKittyPawDriversRequest(method, parts)
 	}
 	return false
 }
 
-func allowedKittyPawKanbanRequest(method string, parts []string) bool {
-	if len(parts) == 2 && parts[0] == "runs" && parts[1] == "stale" {
-		return method == http.MethodGet
-	}
-	if len(parts) == 1 && parts[0] == "tasks" {
+func allowedKittyPawTicketsRequest(method string, parts []string) bool {
+	if len(parts) == 1 {
 		return method == http.MethodGet || method == http.MethodPost
 	}
-	if len(parts) < 2 || parts[0] != "tasks" {
-		return false
-	}
 	if len(parts) == 2 {
-		return method == http.MethodGet || method == http.MethodPatch
+		return method == http.MethodGet
+	}
+	if len(parts) == 3 && parts[2] == "actions" {
+		return method == http.MethodPost
+	}
+	if len(parts) == 3 && parts[2] == "archive" {
+		return method == http.MethodPost
+	}
+	if len(parts) == 3 && parts[2] == "jobs" {
+		return method == http.MethodGet
+	}
+	if len(parts) == 4 && parts[2] == "jobs" && parts[3] == "plan" {
+		return method == http.MethodPost
+	}
+	return false
+}
+
+func allowedKittyPawJobsRequest(method string, parts []string) bool {
+	if len(parts) == 2 {
+		return method == http.MethodGet
 	}
 	if len(parts) != 3 {
 		return false
 	}
 	switch parts[2] {
-	case "claim", "heartbeat", "complete", "fail", "cancel", "reclaim", "archive", "block", "unblock", "links":
+	case "approve", "start", "cancel":
 		return method == http.MethodPost
-	case "comments":
-		return method == http.MethodGet || method == http.MethodPost
-	case "runs":
+	case "logs":
 		return method == http.MethodGet
-	default:
-		return false
 	}
+	return false
+}
+
+func allowedKittyPawDriversRequest(method string, parts []string) bool {
+	if len(parts) == 1 {
+		return method == http.MethodGet || method == http.MethodPost
+	}
+	if len(parts) == 2 {
+		return method == http.MethodPatch
+	}
+	return false
 }

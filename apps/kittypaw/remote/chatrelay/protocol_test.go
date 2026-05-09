@@ -65,7 +65,7 @@ func TestOperationSupportIsOperationBased(t *testing.T) {
 	}
 }
 
-func TestDefaultCapabilitiesIncludeLocalAPIForHostedKanban(t *testing.T) {
+func TestDefaultCapabilitiesIncludeLocalAPIForHostedProjects(t *testing.T) {
 	got := DefaultCapabilities()
 	for _, want := range []string{OperationOpenAIModels, OperationOpenAIChatCompletions, OperationKittyPawAPI} {
 		found := false
@@ -77,6 +77,54 @@ func TestDefaultCapabilitiesIncludeLocalAPIForHostedKanban(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("DefaultCapabilities() = %#v, missing %q", got, want)
+		}
+	}
+}
+
+func TestAllowedKittyPawAPIRequestUsesProjectsRoutes(t *testing.T) {
+	allowed := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/v1/projects"},
+		{"POST", "/api/v1/projects"},
+		{"GET", "/api/v1/projects/KITTY"},
+		{"GET", "/api/v1/projects/KITTY/board"},
+		{"GET", "/api/v1/projects/KITTY/brief-drafts"},
+		{"POST", "/api/v1/projects/KITTY/brief-drafts"},
+		{"PATCH", "/api/v1/projects/KITTY/brief-drafts/draft_1"},
+		{"POST", "/api/v1/projects/KITTY/brief-drafts/draft_1/commit"},
+		{"GET", "/api/v1/tickets?project=KITTY"},
+		{"POST", "/api/v1/tickets"},
+		{"GET", "/api/v1/tickets/KITTY-001"},
+		{"POST", "/api/v1/tickets/KITTY-001/actions"},
+		{"POST", "/api/v1/tickets/KITTY-001/archive"},
+		{"GET", "/api/v1/tickets/KITTY-001/jobs"},
+		{"POST", "/api/v1/tickets/KITTY-001/jobs/plan"},
+		{"GET", "/api/v1/jobs/job_1"},
+		{"POST", "/api/v1/jobs/job_1/approve"},
+		{"POST", "/api/v1/jobs/job_1/start"},
+		{"POST", "/api/v1/jobs/job_1/cancel"},
+		{"GET", "/api/v1/jobs/job_1/logs"},
+		{"GET", "/api/v1/drivers"},
+		{"POST", "/api/v1/drivers"},
+		{"PATCH", "/api/v1/drivers/codex"},
+	}
+	for _, tc := range allowed {
+		if !AllowedKittyPawAPIRequest(tc.method, tc.path) {
+			t.Fatalf("AllowedKittyPawAPIRequest(%q, %q) = false, want true", tc.method, tc.path)
+		}
+	}
+}
+
+func TestAllowedKittyPawAPIRequestRejectsLegacyKanbanRoutes(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/kanban/tasks",
+		"/api/v1/kanban/tasks/tsk_1",
+		"/api/v1/kanban/runs/stale",
+	} {
+		if AllowedKittyPawAPIRequest("GET", path) {
+			t.Fatalf("AllowedKittyPawAPIRequest(GET, %q) = true, want false", path)
 		}
 	}
 }

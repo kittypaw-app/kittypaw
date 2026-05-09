@@ -412,6 +412,38 @@ func TestSkillRegistryCompleteness(t *testing.T) {
 	}
 }
 
+func TestSkillRegistryUsesProjectsInsteadOfLegacyKanban(t *testing.T) {
+	var foundProjects bool
+	for _, skill := range SkillRegistry {
+		if skill.Name == "Kanban" {
+			t.Fatal("SkillRegistry must not expose legacy Kanban tool metadata")
+		}
+		if skill.Name != "Projects" {
+			continue
+		}
+		foundProjects = true
+		methods := make(map[string]bool)
+		for _, method := range skill.Methods {
+			methods[method.Name] = true
+			if strings.Contains(method.Signature, "Kanban.") {
+				t.Fatalf("Projects.%s signature exposes legacy Kanban term: %q", method.Name, method.Signature)
+			}
+		}
+		for _, want := range []string{
+			"list", "current", "show", "listTickets", "createTicket", "showTicket",
+			"moveTicket", "commentTicket", "createBriefDraft", "updateBriefDraft",
+			"commitBriefDraft", "planJob", "showJob", "cancelJob", "appendJobInput",
+		} {
+			if !methods[want] {
+				t.Fatalf("Projects metadata missing method %q", want)
+			}
+		}
+	}
+	if !foundProjects {
+		t.Fatal("SkillRegistry missing Projects metadata")
+	}
+}
+
 func TestSkillMetadataUsesTeamSpaceTerminology(t *testing.T) {
 	for _, skill := range SkillRegistry {
 		if strings.Contains(strings.ToLower(skill.Name), "family account") {
