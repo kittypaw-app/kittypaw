@@ -144,8 +144,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeMemory(ctx, call, s)
 	case "Todo":
 		return executeTodo(ctx, call, s)
-	case "Kanban":
-		return executeKanban(ctx, call, s)
+	case "Projects":
+		return executeProjects(ctx, call, s)
 	case "Env":
 		return executeEnv(call)
 	case "Telegram":
@@ -1189,6 +1189,354 @@ func executeTodo(_ context.Context, call core.SkillCall, s *Session) (string, er
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Todo method: %s", call.Method)})
 	}
+}
+
+// --- Projects ---
+
+type projectsTicketOptions struct {
+	Project   string   `json:"project"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body"`
+	Status    string   `json:"status"`
+	Priority  int      `json:"priority"`
+	Labels    []string `json:"labels"`
+	CreatedBy string   `json:"created_by"`
+	ActorID   string   `json:"actor_id"`
+	Message   string   `json:"message"`
+	AuthorID  string   `json:"author_id"`
+}
+
+type projectsBriefOptions struct {
+	Project             string `json:"project"`
+	Title               string `json:"title"`
+	BriefJSON           string `json:"brief_json"`
+	ProposedTicketsJSON string `json:"proposed_tickets_json"`
+	CreatedBy           string `json:"created_by"`
+	ActorID             string `json:"actor_id"`
+}
+
+type projectsJobOptions struct {
+	DriverID      string `json:"driver_id"`
+	Mode          string `json:"mode"`
+	WorktreePath  string `json:"worktree_path"`
+	BranchName    string `json:"branch_name"`
+	PromptSummary string `json:"prompt_summary"`
+	PromptText    string `json:"prompt_text"`
+	CreatedBy     string `json:"created_by"`
+	ActorID       string `json:"actor_id"`
+	Reason        string `json:"reason"`
+	Text          string `json:"text"`
+}
+
+func executeProjects(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+	if s.Store == nil {
+		return jsonResult(map[string]any{"error": "projects store not configured"})
+	}
+	switch call.Method {
+	case "list":
+		projects, err := s.Store.ListProjects(false)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"projects": projects})
+	case "current":
+		projects, err := s.Store.ListProjects(false)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if len(projects) == 0 {
+			return jsonResult(map[string]any{"project": nil})
+		}
+		return jsonResult(map[string]any{"project": projects[0]})
+	case "show":
+		projectID, err := projectsToolStringArg(call, 0, "project")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		project, err := s.Store.GetProject(projectID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		board, err := s.Store.ProjectBoard(project.ID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"project": project, "board": board})
+	case "listTickets":
+		projectID, err := projectsToolStringArg(call, 0, "project")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		project, err := s.Store.GetProject(projectID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		tickets, err := s.Store.ListTickets(store.TicketListFilter{ProjectID: project.ID})
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"tickets": tickets})
+	case "createTicket":
+		return executeProjectsCreateTicket(call, s)
+	case "showTicket":
+		ticketID, err := projectsToolStringArg(call, 0, "ticket")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		ticket, err := s.Store.GetTicket(ticketID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		actions, err := s.Store.ListTicketActions(ticket.ID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"ticket": ticket, "actions": actions})
+	case "moveTicket":
+		return executeProjectsMoveTicket(call, s)
+	case "commentTicket":
+		return executeProjectsCommentTicket(call, s)
+	case "createBriefDraft":
+		return executeProjectsCreateBriefDraft(call, s)
+	case "updateBriefDraft":
+		return executeProjectsUpdateBriefDraft(call, s)
+	case "commitBriefDraft":
+		draftID, err := projectsToolStringArg(call, 0, "draft")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		opts := projectsBriefOptionsArg(call, 1)
+		result, err := s.Store.CommitProjectBriefDraft(draftID, strings.TrimSpace(opts.ActorID))
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"result": result})
+	case "planJob":
+		return executeProjectsPlanJob(call, s)
+	case "showJob":
+		jobID, err := projectsToolStringArg(call, 0, "job")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		job, err := s.Store.GetJob(jobID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"job": job})
+	case "cancelJob":
+		jobID, err := projectsToolStringArg(call, 0, "job")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		opts := projectsJobOptionsArg(call, 1)
+		job, err := s.Store.CancelJob(jobID, strings.TrimSpace(opts.ActorID), strings.TrimSpace(opts.Reason))
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"job": job})
+	case "appendJobInput":
+		jobID, err := projectsToolStringArg(call, 0, "job")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		opts := projectsJobOptionsArg(call, 1)
+		event, err := s.Store.AddJobEvent(store.AddJobEventRequest{JobID: jobID, Type: "input", ActorID: opts.ActorID, Message: opts.Text})
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"event": event})
+	default:
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Projects method: %s", call.Method)})
+	}
+}
+
+func executeProjectsCreateTicket(call core.SkillCall, s *Session) (string, error) {
+	opts := projectsTicketOptionsArg(call, 0)
+	if strings.TrimSpace(opts.Project) == "" {
+		return jsonResult(map[string]any{"error": "project required"})
+	}
+	project, err := s.Store.GetProject(opts.Project)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	ticket, err := s.Store.CreateTicket(store.CreateTicketRequest{
+		ProjectID: project.ID,
+		Title:     strings.TrimSpace(opts.Title),
+		Body:      strings.TrimSpace(opts.Body),
+		Status:    strings.TrimSpace(opts.Status),
+		Priority:  opts.Priority,
+		Labels:    opts.Labels,
+		CreatedBy: strings.TrimSpace(opts.CreatedBy),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"ticket": ticket})
+}
+
+func executeProjectsMoveTicket(call core.SkillCall, s *Session) (string, error) {
+	ticketID, err := projectsToolStringArg(call, 0, "ticket")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := projectsTicketOptionsArg(call, 1)
+	ticket, err := s.Store.MoveTicket(ticketID, store.MoveTicketRequest{
+		ActorID: strings.TrimSpace(opts.ActorID),
+		Status:  strings.TrimSpace(opts.Status),
+		Message: strings.TrimSpace(opts.Message),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"ticket": ticket})
+}
+
+func executeProjectsCommentTicket(call core.SkillCall, s *Session) (string, error) {
+	ticketID, err := projectsToolStringArg(call, 0, "ticket")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := projectsTicketOptionsArg(call, 1)
+	msg, err := s.Store.AddTicketMessage(store.AddTicketMessageRequest{
+		TicketID: ticketID,
+		AuthorID: strings.TrimSpace(opts.AuthorID),
+		Body:     strings.TrimSpace(opts.Body),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"message": msg})
+}
+
+func executeProjectsCreateBriefDraft(call core.SkillCall, s *Session) (string, error) {
+	projectID, err := projectsToolStringArg(call, 0, "project")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	project, err := s.Store.GetProject(projectID)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := projectsBriefOptionsArg(call, 1)
+	draft, err := s.Store.CreateProjectBriefDraft(store.CreateProjectBriefDraftRequest{
+		ProjectID:           project.ID,
+		Title:               strings.TrimSpace(opts.Title),
+		BriefJSON:           strings.TrimSpace(opts.BriefJSON),
+		ProposedTicketsJSON: strings.TrimSpace(opts.ProposedTicketsJSON),
+		CreatedBy:           strings.TrimSpace(opts.CreatedBy),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"draft": draft})
+}
+
+func executeProjectsUpdateBriefDraft(call core.SkillCall, s *Session) (string, error) {
+	draftID, err := projectsToolStringArg(call, 0, "draft")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := projectsBriefOptionsArg(call, 1)
+	var title *string
+	if strings.TrimSpace(opts.Title) != "" {
+		v := strings.TrimSpace(opts.Title)
+		title = &v
+	}
+	var briefJSON *string
+	if strings.TrimSpace(opts.BriefJSON) != "" {
+		v := strings.TrimSpace(opts.BriefJSON)
+		briefJSON = &v
+	}
+	var proposedJSON *string
+	if strings.TrimSpace(opts.ProposedTicketsJSON) != "" {
+		v := strings.TrimSpace(opts.ProposedTicketsJSON)
+		proposedJSON = &v
+	}
+	draft, err := s.Store.UpdateProjectBriefDraft(draftID, store.UpdateProjectBriefDraftRequest{
+		Title:               title,
+		BriefJSON:           briefJSON,
+		ProposedTicketsJSON: proposedJSON,
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"draft": draft})
+}
+
+func executeProjectsPlanJob(call core.SkillCall, s *Session) (string, error) {
+	ticketID, err := projectsToolStringArg(call, 0, "ticket")
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	ticket, err := s.Store.GetTicket(ticketID)
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	if err := s.Store.EnsureDefaultDrivers(); err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	opts := projectsJobOptionsArg(call, 1)
+	driverID := strings.TrimSpace(opts.DriverID)
+	if driverID == "" {
+		driverID = "codex"
+	}
+	job, err := s.Store.PlanJob(store.PlanJobRequest{
+		ProjectID:     ticket.ProjectID,
+		TicketID:      ticket.ID,
+		DriverID:      driverID,
+		Mode:          strings.TrimSpace(opts.Mode),
+		WorktreePath:  strings.TrimSpace(opts.WorktreePath),
+		BranchName:    strings.TrimSpace(opts.BranchName),
+		PromptSummary: strings.TrimSpace(opts.PromptSummary),
+		PromptText:    strings.TrimSpace(opts.PromptText),
+		CreatedBy:     strings.TrimSpace(opts.CreatedBy),
+	})
+	if err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	return jsonResult(map[string]any{"job": job})
+}
+
+func projectsToolStringArg(call core.SkillCall, index int, label string) (string, error) {
+	if len(call.Args) <= index {
+		return "", fmt.Errorf("%s required", label)
+	}
+	var value string
+	if err := json.Unmarshal(call.Args[index], &value); err != nil {
+		return "", fmt.Errorf("invalid %s argument", label)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s required", label)
+	}
+	return value, nil
+}
+
+func projectsTicketOptionsArg(call core.SkillCall, index int) projectsTicketOptions {
+	if len(call.Args) <= index {
+		return projectsTicketOptions{}
+	}
+	var opts projectsTicketOptions
+	_ = json.Unmarshal(call.Args[index], &opts)
+	return opts
+}
+
+func projectsBriefOptionsArg(call core.SkillCall, index int) projectsBriefOptions {
+	if len(call.Args) <= index {
+		return projectsBriefOptions{}
+	}
+	var opts projectsBriefOptions
+	_ = json.Unmarshal(call.Args[index], &opts)
+	return opts
+}
+
+func projectsJobOptionsArg(call core.SkillCall, index int) projectsJobOptions {
+	if len(call.Args) <= index {
+		return projectsJobOptions{}
+	}
+	var opts projectsJobOptions
+	_ = json.Unmarshal(call.Args[index], &opts)
+	return opts
 }
 
 // --- Kanban ---

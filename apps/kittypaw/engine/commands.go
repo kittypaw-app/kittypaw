@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/store"
 )
 
 // tryHandleCommand checks if the event text is a slash command.
@@ -41,6 +42,14 @@ func tryHandleCommand(ctx context.Context, text string, s *Session) (string, boo
 		return handleStaffCommand(parts[1:], s), true
 	case "/model":
 		return handleModel(parts[1:], s), true
+	case "/projects":
+		return handleProjectsCommand(s), true
+	case "/project":
+		return handleProjectCommand(parts[1:], s), true
+	case "/tickets":
+		return handleTicketsCommand(parts[1:], s), true
+	case "/ticket":
+		return handleTicketCommand(parts[1:], s), true
 	default:
 		return "", false
 	}
@@ -56,7 +65,12 @@ func handleHelp() string {
 /staff — staff 상태와 명령어 표시
 /staff use <staff-id> — 기본 staff 변경
 /model — 현재 LLM 정보 표시
-/model <id> — 채팅 중에 모델 변경 (재시작 시 기본값 복귀)`
+/model <id> — 채팅 중에 모델 변경 (재시작 시 기본값 복귀)
+/projects — 프로젝트 목록
+/project show <key> — 프로젝트 보기
+/tickets — 현재 프로젝트 티켓 목록
+/ticket show <key> — 티켓 보기
+/ticket move <key> <status> — 티켓 상태 변경`
 }
 
 func handleStatus(s *Session) string {
@@ -144,6 +158,202 @@ func handleTeach(ctx context.Context, description string, s *Session) string {
 	}
 	fmt.Fprintf(&sb, "\n코드:\n%s", result.Code)
 	return sb.String()
+}
+
+func handleProjectsCommand(s *Session) string {
+	if s == nil || s.Store == nil {
+		return "project 정보를 위한 세션이 준비되지 않았습니다."
+	}
+	projects, err := s.Store.ListProjects(false)
+	if err != nil {
+		return fmt.Sprintf("project 목록 조회 실패: %s", err)
+	}
+	if len(projects) == 0 {
+		return "등록된 project가 없습니다."
+	}
+	var sb strings.Builder
+	sb.WriteString("Projects:\n")
+	for _, project := range projects {
+		fmt.Fprintf(&sb, "- %s %s — %s\n", project.Key, project.Name, project.RootPath)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleProjectCommand(args []string, s *Session) string {
+	if s == nil || s.Store == nil {
+		return "project 정보를 위한 세션이 준비되지 않았습니다."
+	}
+	if len(args) == 0 {
+		return "사용법: /project current | show <key> | use <key> | new | settings"
+	}
+	switch strings.ToLower(args[0]) {
+	case "current":
+		project, ok, err := firstProject(s)
+		if err != nil {
+			return fmt.Sprintf("current project 조회 실패: %s", err)
+		}
+		if !ok {
+			return "current project가 없습니다."
+		}
+		return formatProjectSummary(project)
+	case "show":
+		if len(args) < 2 {
+			return "사용법: /project show <key>"
+		}
+		project, err := s.Store.GetProject(args[1])
+		if err != nil {
+			return fmt.Sprintf("project %q를 찾지 못했습니다.", args[1])
+		}
+		return formatProjectSummary(project)
+	case "use":
+		if len(args) < 2 {
+			return "사용법: /project use <key>"
+		}
+		project, err := s.Store.GetProject(args[1])
+		if err != nil {
+			return fmt.Sprintf("project %q를 찾지 못했습니다.", args[1])
+		}
+		return fmt.Sprintf("%s project를 선택했습니다.", project.Key)
+	case "new":
+		return "Projects 화면에서 새 project folder를 선택하세요."
+	case "settings":
+		return "Projects 화면의 Settings 탭에서 project 설정을 변경하세요."
+	default:
+		return "사용법: /project current | show <key> | use <key> | new | settings"
+	}
+}
+
+func handleTicketsCommand(args []string, s *Session) string {
+	if s == nil || s.Store == nil {
+		return "ticket 정보를 위한 세션이 준비되지 않았습니다."
+	}
+	project, ok, err := firstProject(s)
+	if err != nil {
+		return fmt.Sprintf("ticket 목록 조회 실패: %s", err)
+	}
+	if !ok {
+		return "ticket을 볼 project가 없습니다."
+	}
+	if len(args) > 0 {
+		if p, err := s.Store.GetProject(args[0]); err == nil {
+			project = p
+		}
+	}
+	tickets, err := s.Store.ListTickets(store.TicketListFilter{ProjectID: project.ID})
+	if err != nil {
+		return fmt.Sprintf("ticket 목록 조회 실패: %s", err)
+	}
+	if len(tickets) == 0 {
+		return fmt.Sprintf("%s project에 ticket이 없습니다.", project.Key)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s tickets:\n", project.Key)
+	for _, ticket := range tickets {
+		fmt.Fprintf(&sb, "- %s [%s] %s\n", ticket.Key, ticket.Status, ticket.Title)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleTicketCommand(args []string, s *Session) string {
+	if s == nil || s.Store == nil {
+		return "ticket 정보를 위한 세션이 준비되지 않았습니다."
+	}
+	if len(args) == 0 {
+		return "사용법: /ticket show <key> | chat <key> | job <key> | move <key> <status> | block <key> <reason> | done <key>"
+	}
+	switch strings.ToLower(args[0]) {
+	case "show":
+		if len(args) < 2 {
+			return "사용법: /ticket show <key>"
+		}
+		ticket, err := s.Store.GetTicket(args[1])
+		if err != nil {
+			return fmt.Sprintf("ticket %q를 찾지 못했습니다.", args[1])
+		}
+		return formatTicketSummary(ticket)
+	case "chat":
+		if len(args) < 2 {
+			return "사용법: /ticket chat <key>"
+		}
+		ticket, err := s.Store.GetTicket(args[1])
+		if err != nil {
+			return fmt.Sprintf("ticket %q를 찾지 못했습니다.", args[1])
+		}
+		return fmt.Sprintf("%s ticket chat을 여세요.", ticket.Key)
+	case "job":
+		if len(args) < 2 {
+			return "사용법: /ticket job <key>"
+		}
+		ticket, err := s.Store.GetTicket(args[1])
+		if err != nil {
+			return fmt.Sprintf("ticket %q를 찾지 못했습니다.", args[1])
+		}
+		if err := s.Store.EnsureDefaultDrivers(); err != nil {
+			return fmt.Sprintf("job driver 준비 실패: %s", err)
+		}
+		job, err := s.Store.PlanJob(store.PlanJobRequest{
+			ProjectID:     ticket.ProjectID,
+			TicketID:      ticket.ID,
+			DriverID:      "codex",
+			Mode:          store.JobModeOneShot,
+			PromptSummary: ticket.Title,
+			PromptText:    ticket.Body,
+			CreatedBy:     "chat",
+		})
+		if err != nil {
+			return fmt.Sprintf("job plan 생성 실패: %s", err)
+		}
+		return fmt.Sprintf("%s job plan을 만들었습니다. status: %s", job.ID, job.Status)
+	case "move":
+		if len(args) < 3 {
+			return "사용법: /ticket move <key> <status>"
+		}
+		ticket, err := s.Store.MoveTicket(args[1], store.MoveTicketRequest{Status: args[2], ActorID: "chat"})
+		if err != nil {
+			return fmt.Sprintf("ticket 이동 실패: %s", err)
+		}
+		return formatTicketSummary(ticket)
+	case "block":
+		if len(args) < 3 {
+			return "사용법: /ticket block <key> <reason>"
+		}
+		reason := strings.Join(args[2:], " ")
+		ticket, err := s.Store.MoveTicket(args[1], store.MoveTicketRequest{Status: store.TicketStatusBlocked, ActorID: "chat", Message: reason})
+		if err != nil {
+			return fmt.Sprintf("ticket block 실패: %s", err)
+		}
+		return formatTicketSummary(ticket)
+	case "done":
+		if len(args) < 2 {
+			return "사용법: /ticket done <key>"
+		}
+		ticket, err := s.Store.MoveTicket(args[1], store.MoveTicketRequest{Status: store.TicketStatusDone, ActorID: "chat"})
+		if err != nil {
+			return fmt.Sprintf("ticket done 실패: %s", err)
+		}
+		return formatTicketSummary(ticket)
+	default:
+		return "사용법: /ticket show <key> | chat <key> | job <key> | move <key> <status> | block <key> <reason> | done <key>"
+	}
+}
+
+func firstProject(s *Session) (*store.Project, bool, error) {
+	projects, err := s.Store.ListProjects(false)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(projects) == 0 {
+		return nil, false, nil
+	}
+	return &projects[0], true, nil
+}
+
+func formatProjectSummary(project *store.Project) string {
+	return fmt.Sprintf("%s %s\npath: %s\nstate: %s", project.Key, project.Name, project.RootPath, project.State)
+}
+
+func formatTicketSummary(ticket *store.Ticket) string {
+	return fmt.Sprintf("%s [%s] %s", ticket.Key, ticket.Status, ticket.Title)
 }
 
 // handleModel implements `/model` (info) and `/model <id>` (turn-level swap).

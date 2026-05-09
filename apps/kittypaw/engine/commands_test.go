@@ -7,6 +7,7 @@ import (
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/sandbox"
+	"github.com/jinto/kittypaw/store"
 )
 
 func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
@@ -167,6 +168,41 @@ func TestSlashStaffCancelClearsAllPendingStaffState(t *testing.T) {
 	}
 	if _, ok, err := loadPendingStaffSwitch(st, "alice"); err != nil || ok {
 		t.Fatalf("switch after cancel ok=%v err=%v, want false nil", ok, err)
+	}
+}
+
+func TestSlashProjectAndTicketCommands(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "Wire Projects commands"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+
+	out, handled := tryHandleCommand(context.Background(), "/projects", sess)
+	if !handled || !strings.Contains(out, "KITTY") || !strings.Contains(out, "KittyPaw") {
+		t.Fatalf("/projects output = %q handled=%v", out, handled)
+	}
+	out, handled = tryHandleCommand(context.Background(), "/project show KITTY", sess)
+	if !handled || !strings.Contains(out, "KITTY") || !strings.Contains(out, project.RootPath) {
+		t.Fatalf("/project show output = %q handled=%v", out, handled)
+	}
+	out, handled = tryHandleCommand(context.Background(), "/tickets", sess)
+	if !handled || !strings.Contains(out, ticket.Key) || !strings.Contains(out, "Wire Projects commands") {
+		t.Fatalf("/tickets output = %q handled=%v", out, handled)
+	}
+	out, handled = tryHandleCommand(context.Background(), "/ticket move "+ticket.Key+" ready", sess)
+	if !handled || !strings.Contains(out, "ready") {
+		t.Fatalf("/ticket move output = %q handled=%v", out, handled)
+	}
+	out, handled = tryHandleCommand(context.Background(), "/ticket show "+ticket.Key, sess)
+	if !handled || !strings.Contains(out, ticket.Key) || !strings.Contains(out, "ready") {
+		t.Fatalf("/ticket show output = %q handled=%v", out, handled)
 	}
 }
 

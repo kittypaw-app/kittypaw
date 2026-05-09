@@ -23,7 +23,7 @@ func looksLikeGeneratedJavaScript(code string) bool {
 		"if (", "if(", "for (", "for(", "while (", "while(",
 		"try {", "catch (", "function ", "=>",
 		"Skill.", "Web.", "Llm.", "Code.", "Http.", "Telegram.",
-		"Memory.", "Storage.", "Runner.", "Staff.", "Share.", "Kanban.",
+		"Memory.", "Storage.", "Runner.", "Staff.", "Share.", "Projects.",
 		"JSON.", "Math.", "Date(", "new ",
 	}
 	for _, token := range tokens {

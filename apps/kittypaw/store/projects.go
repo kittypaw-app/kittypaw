@@ -101,6 +101,24 @@ type TicketAction struct {
 	CreatedAt    string `json:"created_at"`
 }
 
+type TicketMessage struct {
+	ID             string `json:"id"`
+	TicketID       string `json:"ticket_id"`
+	ConversationID string `json:"conversation_id"`
+	AuthorID       string `json:"author_id"`
+	Body           string `json:"body"`
+	MetadataJSON   string `json:"metadata_json"`
+	CreatedAt      string `json:"created_at"`
+}
+
+type AddTicketMessageRequest struct {
+	TicketID       string
+	ConversationID string
+	AuthorID       string
+	Body           string
+	MetadataJSON   string
+}
+
 type TicketListFilter struct {
 	ProjectID       string
 	Status          string
@@ -616,6 +634,43 @@ func (s *Store) ListTicketActions(ticketID string) ([]TicketAction, error) {
 		out = append(out, action)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) AddTicketMessage(req AddTicketMessageRequest) (*TicketMessage, error) {
+	ticket, err := s.GetTicket(req.TicketID)
+	if err != nil {
+		return nil, err
+	}
+	body := strings.TrimSpace(req.Body)
+	if body == "" {
+		return nil, errors.New("ticket message body is required")
+	}
+	conversationID := strings.TrimSpace(req.ConversationID)
+	if conversationID == "" {
+		conversationID = ticket.TicketConversationID
+	}
+	metadataJSON := normalizeJSONDocument(req.MetadataJSON, "{}")
+	id := newProjectStoreID("msg_")
+	now := projectNow()
+	if _, err := s.db.Exec(`
+		INSERT INTO ticket_messages (id, ticket_id, conversation_id, author_id, body, metadata_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, ticket.ID, conversationID, strings.TrimSpace(req.AuthorID), body, metadataJSON, now); err != nil {
+		return nil, err
+	}
+	return s.GetTicketMessage(id)
+}
+
+func (s *Store) GetTicketMessage(id string) (*TicketMessage, error) {
+	var msg TicketMessage
+	if err := s.db.QueryRow(`
+		SELECT id, ticket_id, conversation_id, author_id, body, metadata_json, created_at
+		FROM ticket_messages
+		WHERE id = ?`, strings.TrimSpace(id)).
+		Scan(&msg.ID, &msg.TicketID, &msg.ConversationID, &msg.AuthorID, &msg.Body, &msg.MetadataJSON, &msg.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &msg, nil
 }
 
 func (s *Store) ProjectBoard(projectID string) (*ProjectBoard, error) {
