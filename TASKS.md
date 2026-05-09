@@ -50,6 +50,7 @@
 - [x] **T2a-fix**: `job_events` 정렬을 삽입 순서로 고정해 RFC3339Nano 문자열 정렬 흔들림 제거 (`81ff925`).
 - [x] **T2a-fix2**: driver 출력이 커도 runtime error capture 가 bounded 되도록 보강 (`5742c2b`).
 - [x] **T2a-fix3**: concurrent start guard 에 걸린 Job 의 임시 worktree/branch 를 정리 (`5880c2d`).
+- [x] **T2a-fix4**: Projects tool `cancelJob` 이 실행 중인 runtime job 을 실제 취소하고, default account config reload 가 runtime/browser/token manager 포인터를 누락하지 않도록 보강 (`9392a45`).
 - [ ] **T2b**: Review Project Job Runtime Phase 1.5 implementation.
 
 ## Follow-up: Product-Wide I18n
