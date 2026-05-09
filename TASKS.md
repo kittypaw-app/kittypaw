@@ -49,6 +49,10 @@
 - [ ] **Channel access policy**: Add per-channel allowlist / pairing /
   mention-required policy so Telegram, Slack, Discord, Kakao, and WebSocket
   entrypoints do not all share the same trust posture.
+- [ ] **카카오톡 선발송 기능 검토**: 현재 OpenBuilder callback relay 는
+  사용자 요청에 대한 응답 경로로 유지하고, BizMessage/FriendTalk/Brand
+  Message/Channel Message 등 별도 proactive outbound 경로의 정책,
+  자격 증명, 수신자 식별자, 과금/동의 요건을 검토한다.
 
 ## Plan: OpenAI Function Calling ✅
 
