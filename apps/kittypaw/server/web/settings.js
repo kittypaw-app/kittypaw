@@ -1,7 +1,7 @@
 // KittyPaw Settings Panel — Channel & LLM status
 
 function settingsT(key, params, fallback) {
-  const runtime = window.KittyPawI18n;
+  const runtime = typeof window !== 'undefined' ? window.KittyPawI18n : null;
   const value = runtime && typeof runtime.t === 'function' ? runtime.t(key, params) : key;
   return value === key && fallback ? fallback : value;
 }
