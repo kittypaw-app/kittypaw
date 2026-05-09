@@ -446,3 +446,113 @@ func fullAccessConfig() *core.Config {
 	cfg.AutonomyLevel = core.AutonomyFull
 	return &cfg
 }
+
+func TestProjectsToolStartJobCallsRuntime(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectsScopeRuntimeProject(t, st, "kitty")
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "Run"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(store.PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "shell",
+		Mode:          store.JobModeOneShot,
+		PromptSummary: "Run",
+		PromptText:    "echo ok",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if _, err := st.ApproveJob(job.ID, "pm"); err != nil {
+		t.Fatalf("ApproveJob() error = %v", err)
+	}
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{
+		Store:     st,
+		AccountID: "alice",
+		BaseDir:   t.TempDir(),
+		Runner:    fakeProjectsToolRunner{ExitCode: 0, ResultText: "done"},
+	})
+	sess := &Session{Store: st, ProjectJobRuntime: rt}
+
+	result, err := executeProjects(context.Background(), skillCallForProjectsTest("startJob", job.ID, map[string]any{"actor_id": "pm"}), sess)
+	if err != nil {
+		t.Fatalf("executeProjects(startJob) error = %v", err)
+	}
+	if !strings.Contains(result, `"status":"running"`) {
+		t.Fatalf("result = %s, want running job", result)
+	}
+}
+
+func TestProjectsToolJobLogsReturnsCurrentJobAndEvents(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectsScopeRuntimeProject(t, st, "kitty")
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "Logs"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(store.PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "shell",
+		Mode:          store.JobModeOneShot,
+		PromptSummary: "Logs",
+		PromptText:    "echo ok",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if _, err := st.AddJobEvent(store.AddJobEventRequest{JobID: job.ID, Type: "log", Message: "hello"}); err != nil {
+		t.Fatalf("AddJobEvent() error = %v", err)
+	}
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{Store: st, AccountID: "alice", BaseDir: t.TempDir(), Runner: fakeProjectsToolRunner{ExitCode: 0}})
+	sess := &Session{Store: st, ProjectJobRuntime: rt}
+
+	result, err := executeProjects(context.Background(), skillCallForProjectsTest("jobLogs", job.ID), sess)
+	if err != nil {
+		t.Fatalf("executeProjects(jobLogs) error = %v", err)
+	}
+	if !strings.Contains(result, `"events"`) || !strings.Contains(result, `"job"`) {
+		t.Fatalf("result = %s, want job logs", result)
+	}
+}
+
+type fakeProjectsToolRunner struct {
+	ExitCode   int
+	ResultText string
+}
+
+func (r fakeProjectsToolRunner) Run(ctx context.Context, spec JobCommandSpec) JobCommandResult {
+	return JobCommandResult{ExitCode: r.ExitCode, Summary: r.ResultText}
+}
+
+func createProjectsScopeRuntimeProject(t *testing.T, st *store.Store, key string) *store.Project {
+	t.Helper()
+	root := t.TempDir()
+	gitInit(t, root)
+	gitCommitFile(t, root, "README.md", "clean\n")
+	project, err := st.CreateProject(store.CreateProjectRequest{Key: key, Name: key, RootPath: root})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	return project
+}
+
+func skillCallForProjectsTest(method string, args ...any) core.SkillCall {
+	raw := make([]json.RawMessage, 0, len(args))
+	for _, arg := range args {
+		data, err := json.Marshal(arg)
+		if err != nil {
+			panic(err)
+		}
+		raw = append(raw, data)
+	}
+	return core.SkillCall{SkillName: "Projects", Method: method, Args: raw}
+}

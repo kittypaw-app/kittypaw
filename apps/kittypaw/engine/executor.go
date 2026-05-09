@@ -1363,7 +1363,7 @@ type projectsJobOptions struct {
 	Text          string `json:"text"`
 }
 
-func executeProjects(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeProjects(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	if s.Store == nil {
 		return jsonResult(map[string]any{"error": "projects store not configured"})
 	}
@@ -1458,6 +1458,46 @@ func executeProjects(_ context.Context, call core.SkillCall, s *Session) (string
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"job": job})
+	case "initProjectGit":
+		projectID, err := projectsToolStringArg(call, 0, "project")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if s.ProjectJobRuntime == nil {
+			return jsonResult(map[string]any{"error": "project job runtime unavailable"})
+		}
+		status, err := s.ProjectJobRuntime.InitProjectGit(ctx, projectID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"git": status})
+	case "startJob":
+		jobID, err := projectsToolStringArg(call, 0, "job")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if s.ProjectJobRuntime == nil {
+			return jsonResult(map[string]any{"error": "project job runtime unavailable"})
+		}
+		opts := projectsJobOptionsArg(call, 1)
+		job, err := s.ProjectJobRuntime.StartJob(ctx, jobID, StartProjectJobOptions{ActorID: strings.TrimSpace(opts.ActorID)})
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"job": job})
+	case "jobLogs":
+		jobID, err := projectsToolStringArg(call, 0, "job")
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if s.ProjectJobRuntime == nil {
+			return jsonResult(map[string]any{"error": "project job runtime unavailable"})
+		}
+		logs, err := s.ProjectJobRuntime.JobLogs(jobID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(logs)
 	case "cancelJob":
 		jobID, err := projectsToolStringArg(call, 0, "job")
 		if err != nil {

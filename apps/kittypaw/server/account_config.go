@@ -180,22 +180,32 @@ func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Sess
 	}
 
 	sess := &engine.Session{
-		Provider:         td.Provider,
-		FallbackProvider: td.Fallback,
-		Sandbox:          td.Sandbox,
-		Store:            td.Store,
-		Config:           td.Account.Config,
-		McpRegistry:      td.McpRegistry,
-		BaseDir:          td.Account.BaseDir,
-		PackageManager:   td.PkgMgr,
-		APITokenMgr:      td.APITokenMgr,
-		AccountID:        td.Account.ID,
-		AccountRegistry:  s.accountRegistry,
-		Health:           health,
-		SummaryFlight:    &singleflight.Group{},
-		Budget:           budget,
-		Indexer:          indexer,
-		Pipeline:         pipeline,
+		Provider:          td.Provider,
+		FallbackProvider:  td.Fallback,
+		Sandbox:           td.Sandbox,
+		Store:             td.Store,
+		Config:            td.Account.Config,
+		McpRegistry:       td.McpRegistry,
+		BaseDir:           td.Account.BaseDir,
+		PackageManager:    td.PkgMgr,
+		APITokenMgr:       td.APITokenMgr,
+		ServiceTokenMgr:   td.ServiceTokenMgr,
+		ProjectJobRuntime: td.JobRuntime,
+		AccountID:         td.Account.ID,
+		AccountRegistry:   s.accountRegistry,
+		Health:            health,
+		SummaryFlight:     &singleflight.Group{},
+		Budget:            budget,
+		Indexer:           indexer,
+		Pipeline:          pipeline,
+	}
+	if sess.ProjectJobRuntime == nil {
+		sess.ProjectJobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+			Store:     td.Store,
+			AccountID: td.Account.ID,
+			BaseDir:   td.Account.BaseDir,
+		})
+		td.JobRuntime = sess.ProjectJobRuntime
 	}
 	if td.Account.Config.IsTeamSpaceAccount() {
 		sess.Fanout = core.NewChannelFanout(s.eventCh, s.accountRegistry, td.Account.ID)

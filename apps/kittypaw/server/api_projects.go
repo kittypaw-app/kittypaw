@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,10 +11,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/engine"
 	"github.com/jinto/kittypaw/store"
 )
 
 type projectsStoreContextKey struct{}
+
+type projectsRequestContext struct {
+	Store   *store.Store
+	Session *engine.Session
+	Account *core.Account
+}
 
 func (s *Server) requireProjectsAPIAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +31,7 @@ func (s *Server) requireProjectsAPIAccess(next http.Handler) http.Handler {
 			return
 		}
 
-		st := s.store
+		ctxValue := projectsRequestContext{Store: s.store, Session: s.session}
 		if required {
 			acct, acctErr := s.requestAccount(r)
 			if acctErr == nil {
@@ -31,23 +39,33 @@ func (s *Server) requireProjectsAPIAccess(next http.Handler) http.Handler {
 					writeError(w, http.StatusInternalServerError, "account store unavailable")
 					return
 				}
-				st = acct.Deps.Store
+				ctxValue = projectsRequestContext{Store: acct.Deps.Store, Session: acct.Session, Account: acct.Deps.Account}
 			} else if !s.apiTokenAccepted(requestAuthToken(r)) {
 				writeError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 		}
 
-		ctx := context.WithValue(r.Context(), projectsStoreContextKey{}, st)
+		ctx := context.WithValue(r.Context(), projectsStoreContextKey{}, ctxValue)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 func (s *Server) projectsStore(r *http.Request) *store.Store {
+	if ctxValue, ok := r.Context().Value(projectsStoreContextKey{}).(projectsRequestContext); ok && ctxValue.Store != nil {
+		return ctxValue.Store
+	}
 	if st, ok := r.Context().Value(projectsStoreContextKey{}).(*store.Store); ok && st != nil {
 		return st
 	}
 	return s.store
+}
+
+func (s *Server) projectsSession(r *http.Request) *engine.Session {
+	if ctxValue, ok := r.Context().Value(projectsStoreContextKey{}).(projectsRequestContext); ok && ctxValue.Session != nil {
+		return ctxValue.Session
+	}
+	return s.session
 }
 
 func (s *Server) handleProjectsList(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +145,20 @@ func (s *Server) handleProjectBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"board": board})
+}
+
+func (s *Server) handleProjectGitInit(w http.ResponseWriter, r *http.Request) {
+	runtime := s.projectsSession(r).ProjectJobRuntime
+	if runtime == nil {
+		writeError(w, http.StatusInternalServerError, "project job runtime unavailable")
+		return
+	}
+	status, err := runtime.InitProjectGit(r.Context(), chi.URLParam(r, "project"))
+	if err != nil {
+		writeProjectJobAPIError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"git": status})
 }
 
 func (s *Server) handleProjectBriefDraftsList(w http.ResponseWriter, r *http.Request) {
@@ -326,7 +358,15 @@ func (s *Server) handleTicketArchive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTicketJobsList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
+	jobs, err := s.projectsStore(r).ListJobs(store.JobListFilter{TicketID: chi.URLParam(r, "ticket")})
+	if err != nil {
+		projectsWriteStoreError(w, err)
+		return
+	}
+	if jobs == nil {
+		jobs = []store.Job{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
 }
 
 func (s *Server) handleTicketJobsPlan(w http.ResponseWriter, r *http.Request) {
@@ -393,8 +433,24 @@ func (s *Server) handleJobApprove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"job": job})
 }
 
-func (s *Server) handleJobStart(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusConflict, "driver execution is not available in MVP 1")
+func (s *Server) handleJobStart(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ActorID string `json:"actor_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 && !decodeBody(w, r, &body) {
+		return
+	}
+	runtime := s.projectsSession(r).ProjectJobRuntime
+	if runtime == nil {
+		writeError(w, http.StatusInternalServerError, "project job runtime unavailable")
+		return
+	}
+	job, err := runtime.StartJob(r.Context(), chi.URLParam(r, "job"), engine.StartProjectJobOptions{ActorID: body.ActorID})
+	if err != nil {
+		writeProjectJobAPIError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 
 func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
@@ -403,6 +459,16 @@ func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 		Reason  string `json:"reason"`
 	}
 	if !decodeBody(w, r, &body) {
+		return
+	}
+	runtime := s.projectsSession(r).ProjectJobRuntime
+	if runtime != nil {
+		job, err := runtime.CancelJob(r.Context(), chi.URLParam(r, "job"), body.ActorID, body.Reason)
+		if err != nil {
+			writeProjectJobAPIError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"job": job})
 		return
 	}
 	job, err := s.projectsStore(r).CancelJob(chi.URLParam(r, "job"), body.ActorID, body.Reason)
@@ -414,12 +480,27 @@ func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
+	runtime := s.projectsSession(r).ProjectJobRuntime
+	if runtime != nil {
+		logs, err := runtime.JobLogs(chi.URLParam(r, "job"))
+		if err != nil {
+			projectsWriteStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, logs)
+		return
+	}
+	job, err := s.projectsStore(r).GetJob(chi.URLParam(r, "job"))
+	if err != nil {
+		projectsWriteStoreError(w, err)
+		return
+	}
 	events, err := s.projectsStore(r).ListJobEvents(chi.URLParam(r, "job"))
 	if err != nil {
 		projectsWriteStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	writeJSON(w, http.StatusOK, map[string]any{"job": job, "log_tail": job.LogTail, "events": events})
 }
 
 func (s *Server) handleDriversList(w http.ResponseWriter, r *http.Request) {
@@ -505,6 +586,15 @@ func projectsWriteStoreError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, err.Error())
+}
+
+func writeProjectJobAPIError(w http.ResponseWriter, err error) {
+	var jobErr *store.ProjectJobError
+	if errors.As(err, &jobErr) {
+		writeJSON(w, http.StatusConflict, map[string]string{"code": jobErr.Code, "error": jobErr.Error()})
+		return
+	}
+	projectsWriteStoreError(w, err)
 }
 
 func (s *Server) refreshProjectFileRoot(r *http.Request, project *store.Project) {

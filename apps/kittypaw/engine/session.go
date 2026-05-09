@@ -117,12 +117,13 @@ type Session struct {
 	BrowserController BrowserController
 	Budget            *SharedTokenBudget // shared across orchestration, MoA, File.summary
 	// SummaryFlight dedups concurrent File.summary misses; nil → per-call group.
-	SummaryFlight   *singleflight.Group
-	Indexer         Indexer                   // nil when workspace indexer is not initialized
-	PackageManager  *core.PackageManager      // nil when packages are not configured
-	APITokenMgr     *core.APITokenManager     // nil when API token management is not configured
-	ServiceTokenMgr *core.ServiceTokenManager // nil when external OAuth services are not configured
-	allowedPaths    atomic.Pointer[[]string]  // cached workspace paths for isPathAllowed
+	SummaryFlight     *singleflight.Group
+	Indexer           Indexer                   // nil when workspace indexer is not initialized
+	PackageManager    *core.PackageManager      // nil when packages are not configured
+	APITokenMgr       *core.APITokenManager     // nil when API token management is not configured
+	ServiceTokenMgr   *core.ServiceTokenManager // nil when external OAuth services are not configured
+	ProjectJobRuntime *ProjectJobRuntime
+	allowedPaths      atomic.Pointer[[]string] // cached workspace paths for isPathAllowed
 
 	// activeModelOverride: turn-level model swap from the chat REPL `/model`
 	// command. Read by chat-path handlers via GetActiveModel and forwarded

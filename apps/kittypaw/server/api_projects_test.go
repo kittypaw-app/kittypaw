@@ -2,14 +2,20 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/engine"
+	"github.com/jinto/kittypaw/store"
 )
 
 func TestProjectsAPIRequiresAuthAndUsesAccountStore(t *testing.T) {
@@ -232,42 +238,84 @@ func TestProjectsAPIBriefDraftCommit(t *testing.T) {
 	}
 }
 
-func TestProjectsAPIJobPlanApprovalNoExecutionStart(t *testing.T) {
-	srv := newProjectsAPITestServer(t)
-	project := projectsAPICreateProject(t, srv, "kitty")
+func TestProjectsAPIJobStartAndLogsUseRuntime(t *testing.T) {
+	srv := newProjectsAPITestServerWithRunner(t, fakeServerJobRunner{
+		Stdout:     "api job log\n",
+		ResultText: "api done",
+		ExitCode:   0,
+	})
+	project := projectsAPICreateGitProject(t, srv, "kitty")
 	ticket := projectsAPICreateTicket(t, srv, project.ID, "Run job")
+	planned := projectsAPIPlanJob(t, srv, ticket.ID, "shell", "echo ok")
 
-	var planned struct {
+	var approved struct {
 		Job struct {
 			ID     string `json:"id"`
 			Status string `json:"status"`
 		} `json:"job"`
 	}
-	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/tickets/"+ticket.ID+"/jobs/plan", map[string]any{
-		"driver_id":      "codex",
-		"mode":           "one_shot",
-		"prompt_summary": "Run job",
-		"prompt_text":    "Run this ticket.",
-	}, http.StatusCreated, &planned)
-	if planned.Job.Status != "planned" {
-		t.Fatalf("planned job = %+v", planned.Job)
-	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/approve", map[string]any{"actor_id": "alice"}, http.StatusOK, &approved)
 
-	var approved struct {
+	var started struct {
 		Job struct {
-			Status string `json:"status"`
+			ID           string `json:"id"`
+			Status       string `json:"status"`
+			WorktreePath string `json:"worktree_path"`
 		} `json:"job"`
 	}
-	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.Job.ID+"/approve", map[string]any{"actor_id": "alice"}, http.StatusOK, &approved)
-	if approved.Job.Status != "approved" {
-		t.Fatalf("approved job = %+v", approved.Job)
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/start", map[string]any{"actor_id": "alice"}, http.StatusAccepted, &started)
+	if started.Job.Status != "running" || started.Job.WorktreePath == "" {
+		t.Fatalf("started = %+v", started.Job)
 	}
+	if !srv.session.ProjectJobRuntime.WaitForJob(planned.ID, 2*time.Second) {
+		t.Fatal("job did not finish")
+	}
+
+	var logs struct {
+		Job struct {
+			Status        string `json:"status"`
+			ResultSummary string `json:"result_summary"`
+			ExitCode      int    `json:"exit_code"`
+		} `json:"job"`
+		LogTail string `json:"log_tail"`
+		Events  []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/jobs/"+planned.ID+"/logs", nil, http.StatusOK, &logs)
+	if logs.Job.Status != "succeeded" || logs.Job.ResultSummary != "api done" || logs.Job.ExitCode != 0 {
+		t.Fatalf("logs job = %+v", logs.Job)
+	}
+	if !strings.Contains(logs.LogTail, "api job log") || len(logs.Events) == 0 {
+		t.Fatalf("logs = %+v", logs)
+	}
+}
+
+func TestProjectsAPIStartNonGitReturnsStructuredCodeAndGitInitDoesNotStage(t *testing.T) {
+	srv := newProjectsAPITestServerWithRunner(t, fakeServerJobRunner{ExitCode: 0})
+	project := projectsAPICreateProject(t, srv, "kitty")
+	ticket := projectsAPICreateTicket(t, srv, project.ID, "Run job")
+	planned := projectsAPIPlanJob(t, srv, ticket.ID, "shell", "echo ok")
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/approve", map[string]any{"actor_id": "alice"}, http.StatusOK, nil)
+
 	var startErr struct {
+		Code  string `json:"code"`
 		Error string `json:"error"`
 	}
-	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.Job.ID+"/start", nil, http.StatusConflict, &startErr)
-	if startErr.Error != "driver execution is not available in MVP 1" {
-		t.Fatalf("start error = %+v", startErr)
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/start", map[string]any{"actor_id": "alice"}, http.StatusConflict, &startErr)
+	if startErr.Code != store.ProjectJobErrProjectNotGitRepository {
+		t.Fatalf("startErr = %+v", startErr)
+	}
+
+	var initResp struct {
+		Git struct {
+			IsGitRepository bool `json:"is_git_repository"`
+			HasHead         bool `json:"has_head"`
+		} `json:"git"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/projects/"+project.ID+"/git/init", nil, http.StatusOK, &initResp)
+	if !initResp.Git.IsGitRepository || initResp.Git.HasHead {
+		t.Fatalf("init git status = %+v", initResp.Git)
 	}
 }
 
@@ -285,6 +333,39 @@ func newProjectsAPITestServer(t *testing.T) *Server {
 	return newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
 }
 
+type fakeServerJobRunner struct {
+	Stdout     string
+	ResultText string
+	ExitCode   int
+}
+
+func (r fakeServerJobRunner) Run(ctx context.Context, spec engine.JobCommandSpec) engine.JobCommandResult {
+	if r.Stdout != "" {
+		spec.Emit([]byte(r.Stdout))
+	}
+	return engine.JobCommandResult{ExitCode: r.ExitCode, Summary: r.ResultText}
+}
+
+func newProjectsAPITestServerWithRunner(t *testing.T, runner engine.JobCommandRunner) *Server {
+	t.Helper()
+	cfg := core.DefaultConfig()
+	cfg.Server.APIKey = "api-key"
+	cfg.Workspace.LiveIndex = false
+	deps := buildAccountDeps(t, filepath.Join(t.TempDir(), "accounts"), "alice", &cfg)
+	deps.JobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+		Store:     deps.Store,
+		AccountID: deps.Account.ID,
+		BaseDir:   deps.Account.BaseDir,
+		Runner:    runner,
+	})
+	srv := New([]*AccountDeps{deps}, "test")
+	if srv.session != nil {
+		srv.session.Indexer = nil
+	}
+	deps.LiveIndexer = nil
+	return srv
+}
+
 func projectsAPICreateProject(t *testing.T, srv *Server, key string) struct {
 	ID  string
 	Key string
@@ -300,6 +381,31 @@ func projectsAPICreateProject(t *testing.T, srv *Server, key string) struct {
 		"key":       key,
 		"name":      key,
 		"root_path": t.TempDir(),
+	}, http.StatusCreated, &created)
+	return struct {
+		ID  string
+		Key string
+	}{ID: created.Project.ID, Key: created.Project.Key}
+}
+
+func projectsAPICreateGitProject(t *testing.T, srv *Server, key string) struct {
+	ID  string
+	Key string
+} {
+	t.Helper()
+	root := t.TempDir()
+	gitInitForServerTest(t, root)
+	gitCommitFileForServerTest(t, root, "README.md", "clean\n")
+	var created struct {
+		Project struct {
+			ID  string `json:"id"`
+			Key string `json:"key"`
+		} `json:"project"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/projects", map[string]any{
+		"key":       key,
+		"name":      key,
+		"root_path": root,
 	}, http.StatusCreated, &created)
 	return struct {
 		ID  string
@@ -326,6 +432,47 @@ func projectsAPICreateTicket(t *testing.T, srv *Server, projectID, title string)
 		ID  string
 		Key string
 	}{ID: created.Ticket.ID, Key: created.Ticket.Key}
+}
+
+func projectsAPIPlanJob(t *testing.T, srv *Server, ticketID, driverID, prompt string) struct{ ID string } {
+	t.Helper()
+	var planned struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/tickets/"+ticketID+"/jobs/plan", map[string]any{
+		"driver_id":      driverID,
+		"mode":           "one_shot",
+		"prompt_summary": "Run job",
+		"prompt_text":    prompt,
+	}, http.StatusCreated, &planned)
+	return struct{ ID string }{ID: planned.Job.ID}
+}
+
+func gitInitForServerTest(t *testing.T, root string) {
+	t.Helper()
+	runGitForServerTest(t, root, "init")
+	runGitForServerTest(t, root, "config", "user.email", "kittypaw@example.test")
+	runGitForServerTest(t, root, "config", "user.name", "KittyPaw Test")
+}
+
+func gitCommitFileForServerTest(t *testing.T, root, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	runGitForServerTest(t, root, "add", name)
+	runGitForServerTest(t, root, "commit", "-m", "initial")
+}
+
+func runGitForServerTest(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
 }
 
 func projectsAPIRequest(t *testing.T, srv *Server, method, path string, body any, wantStatus int, dst any) *httptest.ResponseRecorder {

@@ -41,6 +41,7 @@ type AccountDeps struct {
 	ServiceTokenMgr   *core.ServiceTokenManager
 	Secrets           *core.SecretsStore
 	LiveIndexer       *engine.LiveIndexer
+	JobRuntime        *engine.ProjectJobRuntime
 }
 
 // Close releases OS-owned resources: the LiveIndexer (fsnotify watchers),
@@ -63,6 +64,9 @@ func (td *AccountDeps) Close() error {
 		if err := td.BrowserController.Close(); err != nil {
 			slog.Warn("close browser controller", "account", td.Account.ID, "error", err)
 		}
+	}
+	if td.JobRuntime != nil {
+		td.JobRuntime.Close()
 	}
 	if td.McpRegistry != nil {
 		td.McpRegistry.Shutdown()
@@ -136,6 +140,11 @@ func OpenAccountDeps(t *core.Account) (*AccountDeps, error) {
 		Config:  t.Config.Browser,
 		BaseDir: t.BaseDir,
 	})
+	jobRuntime := engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+		Store:     st,
+		AccountID: t.ID,
+		BaseDir:   t.BaseDir,
+	})
 
 	var mcpReg *mcpreg.Registry
 	if len(t.Config.MCPServers) > 0 {
@@ -167,6 +176,7 @@ func OpenAccountDeps(t *core.Account) (*AccountDeps, error) {
 		APITokenMgr:       apiTokenMgr,
 		ServiceTokenMgr:   serviceTokenMgr,
 		Secrets:           secrets,
+		JobRuntime:        jobRuntime,
 	}, nil
 }
 
@@ -236,10 +246,24 @@ func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventC
 		PackageManager:    td.PkgMgr,
 		APITokenMgr:       td.APITokenMgr,
 		ServiceTokenMgr:   td.ServiceTokenMgr,
+		ProjectJobRuntime: td.JobRuntime,
 		AccountID:         td.Account.ID,
 		AccountRegistry:   registry,
 		Health:            core.NewHealthState(),
 		SummaryFlight:     &singleflight.Group{},
+	}
+	if sess.ProjectJobRuntime == nil {
+		sess.ProjectJobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+			Store:     td.Store,
+			AccountID: td.Account.ID,
+			BaseDir:   td.Account.BaseDir,
+		})
+		td.JobRuntime = sess.ProjectJobRuntime
+	}
+	if count, err := td.Store.MarkRunningJobsFailedOnStartup("daemon stopped while the job was running"); err != nil {
+		slog.Warn("mark interrupted project jobs failed", "account", td.Account.ID, "error", err)
+	} else if count > 0 {
+		slog.Warn("marked interrupted project jobs failed", "account", td.Account.ID, "count", count)
 	}
 	if td.Account.Config.IsTeamSpaceAccount() {
 		sess.Fanout = core.NewChannelFanout(eventCh, registry, td.Account.ID)

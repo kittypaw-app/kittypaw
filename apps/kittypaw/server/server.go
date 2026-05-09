@@ -494,6 +494,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Post("/projects", s.handleProjectsCreate)
 				r.Get("/projects/{project}", s.handleProjectShow)
 				r.Get("/projects/{project}/board", s.handleProjectBoard)
+				r.Post("/projects/{project}/git/init", s.handleProjectGitInit)
 				r.Get("/projects/{project}/brief-drafts", s.handleProjectBriefDraftsList)
 				r.Post("/projects/{project}/brief-drafts", s.handleProjectBriefDraftsCreate)
 				r.Patch("/projects/{project}/brief-drafts/{draft}", s.handleProjectBriefDraftUpdate)
