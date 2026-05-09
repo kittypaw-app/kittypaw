@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func runSettingsJSTest(t *testing.T, script string) {
+func runProjectsJSTest(t *testing.T, script string) {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not available")
 	}
-	wrapped := settingsJSTestHarness + `
+	wrapped := projectsJSTestHarness + `
 (async () => {
 ` + script + `
 })().catch((err) => {
@@ -22,24 +22,26 @@ func runSettingsJSTest(t *testing.T, script string) {
 	cmd := exec.Command(node, "--input-type=commonjs", "-e", wrapped)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("settings js test failed: %v\n%s", err, out)
+		t.Fatalf("projects js test failed: %v\n%s", err, out)
 	}
 }
 
-const settingsJSTestHarness = `
+const projectsJSTestHarness = `
 const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert');
 
-const source = fs.readFileSync('web/settings.js', 'utf8');
+const source = fs.readFileSync('web/projects.js', 'utf8');
 const sandbox = {
   console,
   esc: (value) => String(value),
+  escHTMLAttr: (value) => String(value),
+  api: async () => { throw new Error('api not stubbed'); },
   apiRaw: async () => { throw new Error('apiRaw not stubbed'); },
 };
 vm.createContext(sandbox);
-vm.runInContext(source + '\nglobalThis.SettingsForTest = Settings;', sandbox);
-const Settings = sandbox.SettingsForTest;
+vm.runInContext(source + '\nglobalThis.ProjectsForTest = Projects;', sandbox);
+const Projects = sandbox.ProjectsForTest;
 
 function sameJSON(actual, expected) {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(actual)), expected);
@@ -85,7 +87,7 @@ function makeElement(tagName) {
   return el;
 }
 
-function mountSettingsDocument() {
+function mountProjectsDocument() {
   const elements = {};
   sandbox.document = {
     createElement: makeElement,
@@ -97,20 +99,17 @@ function mountSettingsDocument() {
   return { container, elements };
 }
 
-function flushPromises() {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
 function mountDirectoryPickerElements() {
   const elements = {};
   for (const id of [
-    'settings-directory-list',
-    'settings-workspace-path',
-    'settings-workspace-selected',
-    'settings-directory-parent',
-    'settings-directory-breadcrumb',
-    'settings-form-error',
-    'settings-workspace-alias',
+    'projects-directory-list',
+    'projects-folder-path',
+    'projects-folder-selected',
+    'projects-directory-parent',
+    'projects-directory-breadcrumb',
+    'projects-form-error',
+    'projects-project-key',
+    'projects-project-name',
   ]) {
     elements[id] = makeElement('div');
   }
@@ -121,23 +120,27 @@ function mountDirectoryPickerElements() {
   };
   return elements;
 }
+
+function flushPromises() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 `
 
-func TestWebSettingsWorkspaceBreadcrumbsSupportUNCPaths(t *testing.T) {
-	runSettingsJSTest(t, `
-const unc = Settings._workspaceBreadcrumbs('\\\\server\\share\\repo');
+func TestProjectsFolderBreadcrumbsSupportUNCPaths(t *testing.T) {
+	runProjectsJSTest(t, `
+const unc = Projects._projectBreadcrumbs('\\\\server\\share\\repo');
 sameJSON(unc, [
   { label: '\\\\server\\share', path: '\\\\server\\share' },
   { label: 'repo', path: '\\\\server\\share\\repo' },
 ]);
 
-const slashUNC = Settings._workspaceBreadcrumbs('//server/share/repo');
+const slashUNC = Projects._projectBreadcrumbs('//server/share/repo');
 sameJSON(slashUNC, [
   { label: '//server/share', path: '//server/share' },
   { label: 'repo', path: '//server/share/repo' },
 ]);
 
-const drive = Settings._workspaceBreadcrumbs('C:\\Users\\jinto');
+const drive = Projects._projectBreadcrumbs('C:\\Users\\jinto');
 sameJSON(drive, [
   { label: 'C:', path: 'C:\\' },
   { label: 'Users', path: 'C:\\Users' },
@@ -146,14 +149,15 @@ sameJSON(drive, [
 `)
 }
 
-func TestWebSettingsWorkspacePickerPreservesStateAndManualAlias(t *testing.T) {
-	runSettingsJSTest(t, `
+func TestProjectsFolderPickerPreservesStateAndManualFields(t *testing.T) {
+	runProjectsJSTest(t, `
 const elements = mountDirectoryPickerElements();
-const list = elements['settings-directory-list'];
-const pathInput = elements['settings-workspace-path'];
-const selected = elements['settings-workspace-selected'];
-const error = elements['settings-form-error'];
-const alias = elements['settings-workspace-alias'];
+const list = elements['projects-directory-list'];
+const pathInput = elements['projects-folder-path'];
+const selected = elements['projects-folder-selected'];
+const error = elements['projects-form-error'];
+const key = elements['projects-project-key'];
+const name = elements['projects-project-name'];
 
 const responses = [
   {
@@ -174,26 +178,29 @@ sandbox.apiRaw = async () => {
   return response;
 };
 
-Settings._selectedWorkspacePath = '';
-Settings._directoryPickerRequestID = 0;
-Settings._workspaceAliasAuto = true;
+Projects._selectedProjectPath = '';
+Projects._directoryPickerRequestID = 0;
+Projects._projectFieldsAuto = true;
 
-await Settings._loadDirectoryPicker('/Users/jinto/projects');
+await Projects._loadDirectoryPicker('/Users/jinto/projects');
 assert.strictEqual(pathInput.value, '/Users/jinto/projects');
 assert.strictEqual(selected.textContent, '/Users/jinto/projects');
-assert.strictEqual(alias.value, 'projects');
+assert.strictEqual(key.value, 'PROJECTS');
+assert.strictEqual(name.value, 'projects');
 const previousList = list.children[0];
 
-await Settings._loadDirectoryPicker('/no/such/path');
+await Projects._loadDirectoryPicker('/no/such/path');
 assert.strictEqual(pathInput.value, '/Users/jinto/projects');
 assert.strictEqual(selected.textContent, '/Users/jinto/projects');
 assert.strictEqual(list.children[0], previousList);
 assert.strictEqual(error.hidden, false);
 
-alias.value = 'custom-alias';
-Settings._workspaceAliasAuto = false;
-await Settings._loadDirectoryPicker('/Users/jinto/projects/kittypaw');
-assert.strictEqual(alias.value, 'custom-alias');
+key.value = 'CUSTOM';
+name.value = 'custom name';
+Projects._projectFieldsAuto = false;
+await Projects._loadDirectoryPicker('/Users/jinto/projects/kittypaw');
+assert.strictEqual(key.value, 'CUSTOM');
+assert.strictEqual(name.value, 'custom name');
 const fragment = list.children[0];
 const item = fragment.children[0];
 assert.strictEqual(item.children[0].textContent, 'kitty<script>');
@@ -201,9 +208,9 @@ assert.strictEqual(item.children[1].textContent, '/Users/jinto/projects/kittypaw
 `)
 }
 
-func TestWebSettingsWorkspaceSaveResolvesEditedPath(t *testing.T) {
-	runSettingsJSTest(t, `
-const { container, elements } = mountSettingsDocument();
+func TestProjectsCreateResolvesEditedPath(t *testing.T) {
+	runProjectsJSTest(t, `
+const { container, elements } = mountProjectsDocument();
 let savedBody = null;
 const calls = [];
 sandbox.apiRaw = async (url, options = {}) => {
@@ -214,25 +221,34 @@ sandbox.apiRaw = async (url, options = {}) => {
   if (url === '/api/settings/directories?path=%2FUsers%2Fjinto%2Fprojects%2Fkittypaw') {
     return { path: '/Users/jinto/projects/kittypaw', parent: '/Users/jinto/projects', entries: [] };
   }
-  if (url === '/api/settings/workspaces' && options.method === 'POST') {
+  throw new Error('unexpected raw api call: ' + url);
+};
+sandbox.api = async (url, options = {}) => {
+  calls.push(url);
+  if (url === '/api/v1/projects' && options.method === 'POST') {
     savedBody = JSON.parse(options.body);
-    return { success: true };
+    return { project: { id: 'prj_1', key: 'KITTY', name: 'KittyPaw', root_path: savedBody.root_path } };
   }
-  if (url === '/api/setup/status') return {};
-  if (url === '/api/settings/workspaces') return [];
+  if (url === '/api/v1/projects') return { projects: [] };
+  if (url === '/api/v1/drivers') return { drivers: [] };
   throw new Error('unexpected api call: ' + url);
 };
 
-Settings._selectedWorkspacePath = '';
-Settings._directoryPickerRequestID = 0;
-Settings._workspaceAliasAuto = true;
-Settings._showWorkspaceForm(container);
+Projects._container = container;
+Projects._selectedProjectPath = '';
+Projects._directoryPickerRequestID = 0;
+Projects._projectFieldsAuto = true;
+Projects._renderProjectForm();
 await flushPromises();
 
-elements['settings-workspace-path'].value = '/Users/jinto/projects/kittypaw';
-await elements['settings-workspace-save'].onclick();
+elements['projects-folder-path'].value = '/Users/jinto/projects/kittypaw';
+elements['projects-project-key'].value = 'KITTY';
+elements['projects-project-name'].value = 'KittyPaw';
+await elements['projects-project-save'].onclick();
 
-assert.strictEqual(savedBody.path, '/Users/jinto/projects/kittypaw');
+assert.strictEqual(savedBody.root_path, '/Users/jinto/projects/kittypaw');
+assert.strictEqual(savedBody.key, 'KITTY');
+assert.strictEqual(savedBody.name, 'KittyPaw');
 assert(calls.includes('/api/settings/directories?path=%2FUsers%2Fjinto%2Fprojects%2Fkittypaw'));
 `)
 }

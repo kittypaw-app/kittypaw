@@ -11,7 +11,7 @@ const App = {
   accountID: null,
   isDefault: true,
   chatOnly: false,
-  kanbanOnly: false,
+  projectsOnly: false,
   settingsSurface: false,
   activeTab: null,
   _dashboardInterval: null,
@@ -20,7 +20,7 @@ const App = {
   async init() {
     this.root = document.getElementById('app');
     this.chatOnly = this.isChatSurface();
-    this.kanbanOnly = this.isKanbanSurface();
+    this.projectsOnly = this.isProjectsSurface();
     this.settingsSurface = this.isSettingsSurface();
     const auth = await this.checkAuth();
     this.authRequired = !!auth.auth_required;
@@ -31,7 +31,7 @@ const App = {
       return;
     }
     await this.loadAccountLocalePreference();
-    if (!this.chatOnly && !this.kanbanOnly && !this.settingsSurface) {
+    if (!this.chatOnly && !this.projectsOnly && !this.settingsSurface) {
       this.redirectToSettingsSurface();
       return;
     }
@@ -42,8 +42,8 @@ const App = {
     return location.pathname === '/chat' || location.pathname.startsWith('/chat/');
   },
 
-  isKanbanSurface() {
-    return location.pathname === '/kanban' || location.pathname.startsWith('/kanban/');
+  isProjectsSurface() {
+    return location.pathname === '/projects' || location.pathname.startsWith('/projects/');
   },
 
   isSettingsSurface() {
@@ -59,8 +59,8 @@ const App = {
       await this.startChatFlow();
       return;
     }
-    if (this.kanbanOnly) {
-      await this.startKanbanFlow();
+    if (this.projectsOnly) {
+      await this.startProjectsFlow();
       return;
     }
     await this.startMainFlow();
@@ -105,7 +105,7 @@ const App = {
     this.showChatSurface();
   },
 
-  async startKanbanFlow() {
+  async startProjectsFlow() {
     const status = await apiRaw('/api/setup/status');
     if (!status.completed) {
       this.showCliSetupRequired(status);
@@ -117,7 +117,7 @@ const App = {
       this.apiKey = null;
       this.wsUrl = null;
     }
-    this.showKanbanSurface();
+    this.showProjectsSurface();
   },
 
   async checkAuth() {
@@ -196,7 +196,7 @@ const App = {
         this.authRequired = true;
         this.accountID = auth.account_id || null;
         this.isDefault = auth.is_default !== false;
-        if (this.chatOnly || this.kanbanOnly) {
+        if (this.chatOnly || this.projectsOnly) {
           await this.startCurrentSurface();
         } else {
           location.assign('/_settings');
@@ -239,14 +239,14 @@ const App = {
     this.activeTab = 'chat';
   },
 
-  showKanbanSurface() {
+  showProjectsSurface() {
     this._teardown();
     this.root.style.display = 'block';
     this.root.style.alignItems = '';
     this.root.style.justifyContent = '';
-    this.root.innerHTML = '<main class="kanban-surface"><div id="kanban-panel"></div></main>';
-    Kanban.mount(document.getElementById('kanban-panel'));
-    this.activeTab = 'kanban';
+    this.root.innerHTML = '<main class="projects-surface"><div id="projects-panel"></div></main>';
+    Projects.mount(document.getElementById('projects-panel'));
+    this.activeTab = 'projects';
   },
 
   showChatSetupRequired() {

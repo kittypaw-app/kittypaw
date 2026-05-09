@@ -25,7 +25,7 @@ func TestWebLoadsI18nBeforeAppModules(t *testing.T) {
 		`<script src="/app.js"></script>`,
 		`<script src="/chat.js"></script>`,
 		`<script src="/skills.js"></script>`,
-		`<script src="/kanban.js"></script>`,
+		`<script src="/projects.js"></script>`,
 		`<script src="/settings.js"></script>`,
 	} {
 		pos := strings.Index(src, module)
@@ -116,7 +116,7 @@ func TestWebI18nAttributeInterpolationsUseAttributeEscaper(t *testing.T) {
 		"web/chat.js":     {`placeholder="${escHTMLAttr(chatT('chat.placeholder'`},
 		"web/settings.js": {`value="${escHTMLAttr(chatID)}"`},
 		"web/skills.js":   {`placeholder="' + escHTMLAttr(skillsT('skills.search'`, `data-pkg-id="' + escHTMLAttr(id) + '"`},
-		"web/kanban.js":   {`placeholder="' + escHTMLAttr(kanbanT('kanban.body'`, `data-task-id="' + escHTMLAttr(task.id) + '"`},
+		"web/projects.js": {`placeholder="' + escHTMLAttr(projectsT('projects.ticketBody'`, `data-ticket-id="' + escHTMLAttr(ticket.id) + '"`},
 	}
 	for path, tokens := range cases {
 		src := readWebAssetForI18nTest(t, path)
@@ -131,9 +131,9 @@ func TestWebI18nAttributeInterpolationsUseAttributeEscaper(t *testing.T) {
 func TestLocalWebModulesUseI18nKeys(t *testing.T) {
 	cases := map[string][]string{
 		"web/chat.js":     {"chat.placeholder", "chat.send", "chat.permissionRequest"},
-		"web/settings.js": {"settings.title", "settings.workspaces", "settings.llmProvider"},
+		"web/settings.js": {"settings.title", "settings.channels", "settings.llmProvider"},
 		"web/skills.js":   {"skills.title", "skills.subtitle", "skills.search"},
-		"web/kanban.js":   {"kanban.title", "kanban.newTask", "kanban.comments", "kanban.runs"},
+		"web/projects.js": {"projects.title", "projects.newTicket", "projects.jobs", "projects.drivers"},
 	}
 	for path, keys := range cases {
 		src := readWebAssetForI18nTest(t, path)

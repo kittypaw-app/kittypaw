@@ -125,7 +125,7 @@ func TestWebAppDoesNotStartBrowserOnboarding(t *testing.T) {
 	}
 }
 
-func TestWebAppShellOmitsKanbanFromSidebar(t *testing.T) {
+func TestWebAppShellOmitsProjectsFromSidebar(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatalf("read web app: %v", err)
@@ -140,11 +140,11 @@ func TestWebAppShellOmitsKanbanFromSidebar(t *testing.T) {
 		t.Fatal("showShell method end not found")
 	}
 	showShell := body[start : start+end]
-	if strings.Contains(showShell, `href="/kanban"`) || strings.Contains(showShell, "Kanban") {
-		t.Fatalf("showShell must not expose Kanban in the sidebar, got:\n%s", showShell)
+	if strings.Contains(showShell, `href="/projects"`) || strings.Contains(showShell, "Projects") {
+		t.Fatalf("showShell must not expose Projects in the sidebar, got:\n%s", showShell)
 	}
-	if strings.Contains(showShell, `data-tab="kanban"`) {
-		t.Fatalf("showShell must not mount Kanban as a settings tab, got:\n%s", showShell)
+	if strings.Contains(showShell, `data-tab="projects"`) {
+		t.Fatalf("showShell must not mount Projects as a settings tab, got:\n%s", showShell)
 	}
 	if strings.Contains(body, "wizardButton") {
 		t.Fatal("showShell must not expose a setup wizard entry")
@@ -218,48 +218,48 @@ func TestWebAppChatSurfaceUsesChatOnlyBootstrap(t *testing.T) {
 	}
 }
 
-func TestWebAppKanbanSurfaceUsesDirectKanbanMount(t *testing.T) {
+func TestWebAppProjectsSurfaceUsesDirectProjectsMount(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatalf("read web app: %v", err)
 	}
 	body := string(src)
-	if !strings.Contains(body, "kanbanOnly: false") || !strings.Contains(body, "isKanbanSurface()") {
-		t.Fatal("web app must detect the /kanban surface explicitly")
+	if !strings.Contains(body, "projectsOnly: false") || !strings.Contains(body, "isProjectsSurface()") {
+		t.Fatal("web app must detect the /projects surface explicitly")
 	}
-	if !strings.Contains(body, "async startKanbanFlow()") || !strings.Contains(body, "showKanbanSurface()") {
-		t.Fatal("kanban surface must use a kanban-only bootstrap path")
+	if !strings.Contains(body, "async startProjectsFlow()") || !strings.Contains(body, "showProjectsSurface()") {
+		t.Fatal("projects surface must use a projects-only bootstrap path")
 	}
-	if !strings.Contains(body, "Kanban.mount") {
-		t.Fatal("kanban surface must mount Kanban directly")
+	if !strings.Contains(body, "Projects.mount") {
+		t.Fatal("projects surface must mount Projects directly")
 	}
-	if strings.Contains(body, `data-tab="kanban"`) || strings.Contains(body, "tab === 'kanban'") {
-		t.Fatal("control shell must not mount Kanban as a settings tab; /kanban is the only Kanban surface")
+	if strings.Contains(body, `data-tab="projects"`) || strings.Contains(body, "tab === 'projects'") {
+		t.Fatal("control shell must not mount Projects as a settings tab; /projects is the only Projects surface")
 	}
-	if !strings.Contains(body, "this.chatOnly || this.kanbanOnly") {
-		t.Fatal("successful direct-surface login must stay on /chat or /kanban")
+	if !strings.Contains(body, "this.chatOnly || this.projectsOnly") {
+		t.Fatal("successful direct-surface login must stay on /chat or /projects")
 	}
 }
 
-func TestWebAppKanbanSurfaceBootstrapsDefaultAuthenticatedAPI(t *testing.T) {
+func TestWebAppProjectsSurfaceBootstrapsDefaultAuthenticatedAPI(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatalf("read web app: %v", err)
 	}
 	body := string(src)
-	start := strings.Index(body, "async startKanbanFlow()")
+	start := strings.Index(body, "async startProjectsFlow()")
 	if start < 0 {
-		t.Fatal("startKanbanFlow method not found")
+		t.Fatal("startProjectsFlow method not found")
 	}
 	end := strings.Index(body[start:], "\n  async checkAuth()")
 	if end < 0 {
-		t.Fatal("startKanbanFlow method end not found")
+		t.Fatal("startProjectsFlow method end not found")
 	}
-	startKanbanFlow := body[start : start+end]
-	if !strings.Contains(startKanbanFlow, "if (!this.authRequired || this.isDefault)") {
-		t.Fatalf("default authenticated /kanban must call /api/bootstrap before mounting, got:\n%s", startKanbanFlow)
+	startProjectsFlow := body[start : start+end]
+	if !strings.Contains(startProjectsFlow, "if (!this.authRequired || this.isDefault)") {
+		t.Fatalf("default authenticated /projects must call /api/bootstrap before mounting, got:\n%s", startProjectsFlow)
 	}
-	if !strings.Contains(startKanbanFlow, "await this.bootstrap()") {
-		t.Fatalf("/kanban bootstrap path missing control API token bootstrap, got:\n%s", startKanbanFlow)
+	if !strings.Contains(startProjectsFlow, "await this.bootstrap()") {
+		t.Fatalf("/projects bootstrap path missing control API token bootstrap, got:\n%s", startProjectsFlow)
 	}
 }
