@@ -37,6 +37,15 @@
 - [x] **T4b-4**: 비어있지 않은 Project Folder 구조 스캔 후 티켓 초안 제안 흐름 연결.
 - [x] **T5**: 회귀, E2E, LLM 호출 포함 전수테스트 경로 정리 및 최종 리뷰 정리 (`8c84f9b`, `5ae4c2f`, `faa1224`, `bbe2669`, `e885523`, `b6ed65a`).
 
+## Follow-up: Projects Job Runtime Phase 1.5
+
+> App: `apps/kittypaw`
+> Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-10-project-job-runtime-design.md`
+
+- [x] **D1**: approved Job 의 `one_shot` 실행, account-managed git worktree, non-git `git init` 승인 흐름, bounded log, success→review/failure→blocked 정책 설계 (`25254b5`).
+- [ ] **D2**: 사용자 spec review.
+- [ ] **T0**: 구현 계획 작성.
+
 ## Follow-up: Product-Wide I18n
 
 > Spec: `docs/superpowers/specs/2026-05-08-product-i18n-design.md`
