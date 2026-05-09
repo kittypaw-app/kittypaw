@@ -1588,7 +1588,7 @@ func (s *Store) ListJobEvents(jobID string) ([]JobEvent, error) {
 		SELECT id, job_id, type, actor_id, message, metadata_json, created_at
 		FROM job_events
 		WHERE job_id = ?
-		ORDER BY created_at, rowid`, strings.TrimSpace(jobID))
+		ORDER BY rowid`, strings.TrimSpace(jobID))
 	if err != nil {
 		return nil, err
 	}

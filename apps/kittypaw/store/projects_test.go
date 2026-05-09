@@ -716,6 +716,56 @@ func TestListJobEventsKeepsInsertionOrderWhenTimestampsTie(t *testing.T) {
 	}
 }
 
+func TestListJobEventsKeepsInsertionOrderWhenTimestampTextSortsDifferently(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectForProjectsTest(t, st, "kitty")
+	ticket, err := st.CreateTicket(CreateTicketRequest{ProjectID: project.ID, Title: "Fraction events"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "codex",
+		Mode:          JobModeOneShot,
+		PromptSummary: "Fraction events",
+		PromptText:    "Fraction events",
+		CreatedBy:     "pm",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM job_events WHERE job_id = ?`, job.ID); err != nil {
+		t.Fatalf("delete job events: %v", err)
+	}
+	rows := []struct {
+		id        string
+		createdAt string
+	}{
+		{"jev_inserted_first", "2026-05-09T00:00:00.1234Z"},
+		{"jev_inserted_second", "2026-05-09T00:00:00.123499Z"},
+	}
+	for _, row := range rows {
+		if _, err := st.db.Exec(`
+			INSERT INTO job_events (id, job_id, type, actor_id, message, metadata_json, created_at)
+			VALUES (?, ?, ?, ?, ?, '{}', ?)`,
+			row.id, job.ID, row.id, "test", row.id, row.createdAt); err != nil {
+			t.Fatalf("insert %s: %v", row.id, err)
+		}
+	}
+
+	events, err := st.ListJobEvents(job.ID)
+	if err != nil {
+		t.Fatalf("ListJobEvents() error = %v", err)
+	}
+	if len(events) != 2 || events[0].ID != "jev_inserted_first" || events[1].ID != "jev_inserted_second" {
+		t.Fatalf("events = %+v, want insertion order despite timestamp text sort", events)
+	}
+}
+
 func TestJobPlanStoresResolvedDriverSnapshot(t *testing.T) {
 	st := openTestStore(t)
 	project := createProjectForProjectsTest(t, st, "kitty")
