@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -115,7 +114,7 @@ func (OSJobCommandRunner) Run(ctx context.Context, spec JobCommandSpec) JobComma
 	if spec.Stdin != "" {
 		cmd.Stdin = strings.NewReader(spec.Stdin)
 	}
-	var combined bytes.Buffer
+	combined := newBoundedString(projectJobErrorExcerptLimit)
 	cmd.Stdout = emitWriter{emit: spec.Emit, mirror: &combined}
 	cmd.Stderr = emitWriter{emit: spec.Emit, mirror: &combined}
 	err := cmd.Run()
@@ -134,7 +133,7 @@ func (OSJobCommandRunner) Run(ctx context.Context, spec JobCommandSpec) JobComma
 
 type emitWriter struct {
 	emit   func([]byte)
-	mirror *bytes.Buffer
+	mirror *boundedString
 }
 
 func (w emitWriter) Write(p []byte) (int, error) {
@@ -146,6 +145,30 @@ func (w emitWriter) Write(p []byte) (int, error) {
 		w.emit(cp)
 	}
 	return len(p), nil
+}
+
+type boundedString struct {
+	limit int
+	value string
+}
+
+func newBoundedString(limit int) boundedString {
+	return boundedString{limit: limit}
+}
+
+func (b *boundedString) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	b.value += string(p)
+	if b.limit > 0 && len(b.value) > b.limit {
+		b.value = b.value[len(b.value)-b.limit:]
+	}
+	return len(p), nil
+}
+
+func (b *boundedString) String() string {
+	return b.value
 }
 
 func (r *ProjectJobRuntime) ProjectGitStatus(ctx context.Context, projectID string) (ProjectGitStatus, error) {

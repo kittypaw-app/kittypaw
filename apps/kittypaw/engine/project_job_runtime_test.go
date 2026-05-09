@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,31 @@ import (
 
 	"github.com/jinto/kittypaw/store"
 )
+
+func TestOSJobCommandRunnerBoundsCombinedErrorText(t *testing.T) {
+	var emitted int
+	result := OSJobCommandRunner{}.Run(context.Background(), JobCommandSpec{
+		Command: "sh",
+		Args: []string{
+			"-c",
+			fmt.Sprintf("head -c %d /dev/zero | tr '\\0' x; exit 7", projectJobErrorExcerptLimit+4096),
+		},
+		Dir: t.TempDir(),
+		Emit: func(chunk []byte) {
+			emitted += len(chunk)
+		},
+	})
+
+	if result.ExitCode != 7 {
+		t.Fatalf("exit code = %d, want 7", result.ExitCode)
+	}
+	if emitted <= projectJobErrorExcerptLimit {
+		t.Fatalf("emitted = %d, want more than bounded error excerpt limit", emitted)
+	}
+	if len(result.ErrorText) > projectJobErrorExcerptLimit {
+		t.Fatalf("error text length = %d, want <= %d", len(result.ErrorText), projectJobErrorExcerptLimit)
+	}
+}
 
 func TestProjectJobRuntimeRequiresGitRepository(t *testing.T) {
 	st := openProjectJobRuntimeStore(t)
