@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 27 {
-		t.Fatalf("expected 27 migrations, got %d", count)
+	if count != 28 {
+		t.Fatalf("expected 28 migrations, got %d", count)
 	}
 }
 
