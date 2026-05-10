@@ -209,6 +209,7 @@ Structured errors:
 - `job_not_running`,
 - `job_input_not_supported`,
 - `job_session_unavailable`,
+- `job_input_invalid`,
 - `job_input_too_large`,
 - `driver_process_failed`.
 
@@ -353,6 +354,7 @@ Required deterministic tests:
 - input to completed Jobs returns `job_not_running`,
 - input to a running PTY Job missing a live session returns
   `job_session_unavailable`,
+- empty input after NUL removal returns `job_input_invalid`,
 - oversized input returns `job_input_too_large`,
 - PTY success moves the Ticket to `review`,
 - PTY failure moves the Ticket to `blocked`,

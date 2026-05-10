@@ -60,8 +60,10 @@
 > Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-10-project-pty-job-runtime-design.md`
 
 - [x] **D1**: `pty` Job mode, 실행 중 입력 전달, transcript event, API/UI/Projects tool 연결, tmux/PR/full-log 보류 범위 설계.
-- [ ] **D2**: 사용자 spec review.
-- [ ] **T0**: 구현 계획 작성.
+- [x] **D2**: 사용자 spec review.
+- [x] **T0**: 구현 계획 작성 (`apps/kittypaw/docs/superpowers/plans/2026-05-10-project-pty-job-runtime-implementation.md`).
+- [ ] **T1**: PTY Job Runtime 구현.
+- [ ] **T2**: focused tests, CI, live PTY smoke 검증 및 review follow-up.
 
 ## Follow-up: Product-Wide I18n
 
