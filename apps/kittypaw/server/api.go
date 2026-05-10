@@ -148,12 +148,16 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	turns, err := s.store.ListConversationTurns(limit)
+	conversationID := strings.TrimSpace(r.URL.Query().Get("conversation_id"))
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	turns, err := s.store.ListConversationTurnsForConversation(conversationID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	summary, err := s.store.ConversationSummary()
+	summary, err := s.store.ConversationSummaryForConversation(conversationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -172,8 +176,20 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/chat/forget
 // ---------------------------------------------------------------------------
 
-func (s *Server) handleChatForget(w http.ResponseWriter, _ *http.Request) {
-	deleted, err := s.store.ForgetConversation()
+func (s *Server) handleChatForget(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeBody(w, r, &body) {
+			return
+		}
+	}
+	conversationID := strings.TrimSpace(body.ConversationID)
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	deleted, err := s.store.ForgetConversationByID(conversationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -190,14 +206,19 @@ func (s *Server) handleChatForget(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleChatCompact(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		KeepRecent int `json:"keep_recent"`
+		KeepRecent     int    `json:"keep_recent"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if r.Body != nil && r.ContentLength != 0 {
 		if !decodeBody(w, r, &body) {
 			return
 		}
 	}
-	compacted, err := s.store.CompactConversation(body.KeepRecent)
+	conversationID := strings.TrimSpace(body.ConversationID)
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	compacted, err := s.store.CompactConversationByID(conversationID, body.KeepRecent)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -206,6 +227,119 @@ func (s *Server) handleChatCompact(w http.ResponseWriter, r *http.Request) {
 		"success":         true,
 		"turns_compacted": compacted,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/conversations
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleConversationsList(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	conversations, err := s.store.ListConversations(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := any(conversations)
+	if conversations == nil {
+		out = []any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversations": out})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/conversations
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleConversationsCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID              string `json:"id"`
+		Title           string `json:"title"`
+		DefaultStaffID  string `json:"default_staff_id"`
+		SourceChannel   string `json:"source_channel"`
+		SourceSessionID string `json:"source_session_id"`
+		ChatID          string `json:"chat_id"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	conversation, err := s.store.CreateConversation(store.CreateConversationRequest{
+		ID:              body.ID,
+		ScopeType:       "general",
+		ScopeID:         strings.TrimSpace(body.ID),
+		Title:           body.Title,
+		DefaultStaffID:  body.DefaultStaffID,
+		SourceChannel:   body.SourceChannel,
+		SourceSessionID: body.SourceSessionID,
+		ChatID:          body.ChatID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"conversation": conversation})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/conversations/{id}
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleConversationInfo(w http.ResponseWriter, r *http.Request) {
+	conversationID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if conversationID == "" {
+		writeError(w, http.StatusBadRequest, "conversation id is required")
+		return
+	}
+	conversation, ok, err := s.store.Conversation(conversationID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conversation})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/conversations/{id}/messages
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleConversationMessages(w http.ResponseWriter, r *http.Request) {
+	conversationID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if conversationID == "" {
+		writeError(w, http.StatusBadRequest, "conversation id is required")
+		return
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	if _, ok, err := s.store.Conversation(conversationID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
+		writeError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	turns, err := s.store.ListConversationTurnsForConversation(conversationID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := any(turns)
+	if turns == nil {
+		out = []any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"turns": out})
 }
 
 // ---------------------------------------------------------------------------
@@ -468,8 +602,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		} else if !ok {
-			writeError(w, http.StatusNotFound, "conversation not found")
-			return
+			if _, ok, err := s.store.Conversation(conversationID); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			} else if !ok {
+				writeError(w, http.StatusNotFound, "conversation not found")
+				return
+			}
 		}
 	}
 	chatID := sessionID
@@ -550,8 +689,12 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 // GET /api/v1/chat/checkpoints
 // ---------------------------------------------------------------------------
 
-func (s *Server) handleCheckpointsList(w http.ResponseWriter, _ *http.Request) {
-	cps, err := s.store.ListCheckpoints()
+func (s *Server) handleCheckpointsList(w http.ResponseWriter, r *http.Request) {
+	conversationID := strings.TrimSpace(r.URL.Query().Get("conversation_id"))
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	cps, err := s.store.ListCheckpointsForConversation(conversationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -569,7 +712,8 @@ func (s *Server) handleCheckpointsList(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleCheckpointsCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Label string `json:"label"`
+		Label          string `json:"label"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -579,7 +723,11 @@ func (s *Server) handleCheckpointsCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cpID, err := s.store.CreateCheckpoint(body.Label)
+	conversationID := strings.TrimSpace(body.ConversationID)
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	cpID, err := s.store.CreateCheckpointForConversation(body.Label, conversationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

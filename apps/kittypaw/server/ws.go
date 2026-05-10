@@ -255,8 +255,13 @@ func (s *Server) handleWebSocketWithAccount(
 					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, err.Error()))
 					continue
 				} else if !ok {
-					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "conversation not found"))
-					continue
+					if _, ok, err := acct.Deps.Store.Conversation(conversationID); err != nil {
+						sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, err.Error()))
+						continue
+					} else if !ok {
+						sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "conversation not found"))
+						continue
+					}
 				}
 			}
 			chatID := sessionID

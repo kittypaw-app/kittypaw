@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -43,6 +44,37 @@ type WorkspaceFTSRow struct {
 // DTO structs
 // ---------------------------------------------------------------------------
 
+const DefaultConversationID = "general:account"
+
+// ConversationRecord describes a first-class conversation/thread.
+type ConversationRecord struct {
+	ID              string `json:"id"`
+	AccountID       string `json:"account_id"`
+	ScopeType       string `json:"scope_type"`
+	ScopeID         string `json:"scope_id"`
+	Title           string `json:"title"`
+	DefaultStaffID  string `json:"default_staff_id,omitempty"`
+	SourceChannel   string `json:"source_channel,omitempty"`
+	SourceSessionID string `json:"source_session_id,omitempty"`
+	ChatID          string `json:"chat_id,omitempty"`
+	ArchivedAt      string `json:"archived_at,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+	MessageCount    int    `json:"message_count,omitempty"`
+	LastMessage     string `json:"last_message,omitempty"`
+}
+
+type CreateConversationRequest struct {
+	ID              string
+	ScopeType       string
+	ScopeID         string
+	Title           string
+	DefaultStaffID  string
+	SourceChannel   string
+	SourceSessionID string
+	ChatID          string
+}
+
 // ConversationSummary describes the account-wide conversation timeline.
 type ConversationSummary struct {
 	TurnCount int    `json:"turn_count"`
@@ -52,17 +84,18 @@ type ConversationSummary struct {
 
 // ConversationTurnRecord is a persisted conversation turn with its row ID.
 type ConversationTurnRecord struct {
-	ID            int64            `json:"id"`
-	Role          core.Role        `json:"role"`
-	Content       string           `json:"content"`
-	Code          string           `json:"code,omitempty"`
-	Result        string           `json:"result,omitempty"`
-	ToolTraces    []core.ToolTrace `json:"tool_traces,omitempty"`
-	Channel       string           `json:"channel,omitempty"`
-	ChannelUserID string           `json:"channel_user_id,omitempty"`
-	ChatID        string           `json:"chat_id,omitempty"`
-	MessageID     string           `json:"message_id,omitempty"`
-	Timestamp     string           `json:"timestamp"`
+	ID             int64            `json:"id"`
+	ConversationID string           `json:"conversation_id,omitempty"`
+	Role           core.Role        `json:"role"`
+	Content        string           `json:"content"`
+	Code           string           `json:"code,omitempty"`
+	Result         string           `json:"result,omitempty"`
+	ToolTraces     []core.ToolTrace `json:"tool_traces,omitempty"`
+	Channel        string           `json:"channel,omitempty"`
+	ChannelUserID  string           `json:"channel_user_id,omitempty"`
+	ChatID         string           `json:"chat_id,omitempty"`
+	MessageID      string           `json:"message_id,omitempty"`
+	Timestamp      string           `json:"timestamp"`
 }
 
 type conversationCompaction struct {
@@ -137,10 +170,11 @@ type KeyValue struct {
 
 // Checkpoint is a named snapshot of conversation progress.
 type Checkpoint struct {
-	ID        int64  `json:"id"`
-	Label     string `json:"label"`
-	TurnID    int64  `json:"turn_id"`
-	CreatedAt string `json:"created_at"`
+	ID             int64  `json:"id"`
+	Label          string `json:"label"`
+	TurnID         int64  `json:"turn_id"`
+	ConversationID string `json:"conversation_id"`
+	CreatedAt      string `json:"created_at"`
 }
 
 // FilePermissionRule controls file access for a workspace.
@@ -334,6 +368,231 @@ type sqlExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
+type conversationIdentity struct {
+	ID        string
+	ScopeType string
+	ScopeID   string
+}
+
+func normalizeConversationID(conversationID string) string {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" || conversationID == "account" {
+		return DefaultConversationID
+	}
+	return conversationID
+}
+
+func normalizeConversationScope(scopeType, scopeID string) (string, string) {
+	scopeType = strings.TrimSpace(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	if scopeType == "" {
+		scopeType = "general"
+	}
+	if scopeID == "" && scopeType == "general" {
+		scopeID = "account"
+	}
+	return scopeType, scopeID
+}
+
+func ensureConversationTx(exec sqlExecer, conversationID, scopeType, scopeID, now string) error {
+	conversationID = normalizeConversationID(conversationID)
+	scopeType, scopeID = normalizeConversationScope(scopeType, scopeID)
+	if now == "" {
+		now = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
+	_, err := exec.Exec(`
+		INSERT INTO conversations (
+			id, scope_type, scope_id, chat_id, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			scope_type = excluded.scope_type,
+			scope_id = excluded.scope_id,
+			updated_at = excluded.updated_at`,
+		conversationID, scopeType, scopeID, conversationID, now, now)
+	return err
+}
+
+func (s *Store) conversationExists(conversationID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM conversations WHERE id = ?",
+		normalizeConversationID(conversationID),
+	).Scan(&count)
+	return count > 0, err
+}
+
+func (s *Store) resolveTurnConversation(turn *core.ConversationTurn) (conversationIdentity, error) {
+	id := DefaultConversationID
+	if turn != nil {
+		id = normalizeConversationID(turn.ConversationID)
+		if turn.ConversationID == "" {
+			chatID := strings.TrimSpace(turn.ChatID)
+			if chatID != "" {
+				if scope, ok, err := s.ConversationScope(chatID); err != nil {
+					return conversationIdentity{}, err
+				} else if ok {
+					return conversationIdentity{ID: scope.ConversationID, ScopeType: scope.ScopeType, ScopeID: scope.ScopeID}, nil
+				}
+				if exists, err := s.conversationExists(chatID); err != nil {
+					return conversationIdentity{}, err
+				} else if exists {
+					id = chatID
+				}
+			}
+		}
+	}
+	if scope, ok, err := s.ConversationScope(id); err != nil {
+		return conversationIdentity{}, err
+	} else if ok {
+		return conversationIdentity{ID: scope.ConversationID, ScopeType: scope.ScopeType, ScopeID: scope.ScopeID}, nil
+	}
+	return conversationIdentity{ID: id, ScopeType: "general", ScopeID: id}, nil
+}
+
+// EnsureConversation creates a conversation row if it does not already exist.
+func (s *Store) EnsureConversation(conversationID, scopeType, scopeID string) error {
+	conversationID = normalizeConversationID(conversationID)
+	scopeType, scopeID = normalizeConversationScope(scopeType, scopeID)
+	if _, err := s.db.Exec(`
+		INSERT INTO conversation_scope (conversation_id, scope_type, scope_id)
+		VALUES (?, ?, ?)
+		ON CONFLICT(conversation_id) DO UPDATE SET
+			scope_type = excluded.scope_type,
+			scope_id = excluded.scope_id,
+			updated_at = datetime('now')`,
+		conversationID, scopeType, scopeID); err != nil {
+		return err
+	}
+	return ensureConversationTx(s.db, conversationID, scopeType, scopeID, projectNow())
+}
+
+// CreateConversation creates a first-class conversation. Empty IDs create a
+// new general conversation.
+func (s *Store) CreateConversation(req CreateConversationRequest) (*ConversationRecord, error) {
+	scopeType, scopeID := normalizeConversationScope(req.ScopeType, req.ScopeID)
+	if scopeType != "general" && strings.TrimSpace(req.ID) == "" {
+		return nil, errors.New("non-general conversations require an id")
+	}
+	conversationID := normalizeConversationID(req.ID)
+	if strings.TrimSpace(req.ID) == "" {
+		conversationID = "general:" + newProjectStoreID("conv_")
+		if scopeID == "account" {
+			scopeID = strings.TrimPrefix(conversationID, "general:")
+		}
+	}
+	now := projectNow()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.Exec(`
+		INSERT INTO conversation_scope (conversation_id, scope_type, scope_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		conversationID, scopeType, scopeID, now, now); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO conversations (
+			id, scope_type, scope_id, title, default_staff_id,
+			source_channel, source_session_id, chat_id, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		conversationID, scopeType, scopeID, strings.TrimSpace(req.Title),
+		strings.TrimSpace(req.DefaultStaffID), strings.TrimSpace(req.SourceChannel),
+		strings.TrimSpace(req.SourceSessionID), strings.TrimSpace(req.ChatID), now, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	rec, _, err := s.Conversation(conversationID)
+	return rec, err
+}
+
+// Conversation returns one conversation record.
+func (s *Store) Conversation(conversationID string) (*ConversationRecord, bool, error) {
+	rec, err := scanConversationRecord(s.db.QueryRow(`
+		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title,
+		       c.default_staff_id, c.source_channel, c.source_session_id,
+		       c.chat_id, c.archived_at, c.created_at, c.updated_at,
+		       COUNT(t.id) AS message_count,
+		       COALESCE((
+		           SELECT content
+		           FROM v2_conversation_turns latest
+		           WHERE latest.conversation_id = c.id
+		           ORDER BY latest.id DESC
+		           LIMIT 1
+		       ), '') AS last_message
+		FROM conversations c
+		LEFT JOIN v2_conversation_turns t ON t.conversation_id = c.id
+		WHERE c.id = ?
+		GROUP BY c.id`, normalizeConversationID(conversationID)))
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return rec, true, nil
+}
+
+// ListConversations returns non-archived conversations ordered by activity.
+func (s *Store) ListConversations(limit int) ([]ConversationRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title,
+		       c.default_staff_id, c.source_channel, c.source_session_id,
+		       c.chat_id, c.archived_at, c.created_at, c.updated_at,
+		       COUNT(t.id) AS message_count,
+		       COALESCE((
+		           SELECT content
+		           FROM v2_conversation_turns latest
+		           WHERE latest.conversation_id = c.id
+		           ORDER BY latest.id DESC
+		           LIMIT 1
+		       ), '') AS last_message
+		FROM conversations c
+		LEFT JOIN v2_conversation_turns t ON t.conversation_id = c.id
+		WHERE c.archived_at = ''
+		GROUP BY c.id
+		ORDER BY c.updated_at DESC, c.created_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ConversationRecord
+	for rows.Next() {
+		rec, err := scanConversationRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *rec)
+	}
+	return out, rows.Err()
+}
+
+func scanConversationRecord(row interface {
+	Scan(dest ...any) error
+}) (*ConversationRecord, error) {
+	var rec ConversationRecord
+	if err := row.Scan(
+		&rec.ID, &rec.AccountID, &rec.ScopeType, &rec.ScopeID, &rec.Title,
+		&rec.DefaultStaffID, &rec.SourceChannel, &rec.SourceSessionID,
+		&rec.ChatID, &rec.ArchivedAt, &rec.CreatedAt, &rec.UpdatedAt,
+		&rec.MessageCount, &rec.LastMessage,
+	); err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
 // SaveConversationState upserts account-level runtime metadata. When the conversation is
 // empty, provided turns seed the account-wide timeline; existing turns are not
 // replaced, because AddConversationTurn owns durable history writes.
@@ -364,13 +623,33 @@ func (s *Store) SaveConversationState(state *core.ConversationState) error {
 		return err
 	}
 
+	identity := conversationIdentity{ID: DefaultConversationID, ScopeType: "general", ScopeID: "account"}
+	var scope ConversationScope
+	err = tx.QueryRow(`
+		SELECT conversation_id, scope_type, scope_id, created_at, updated_at
+		FROM conversation_scope
+		WHERE conversation_id = ?`, normalizeConversationID(state.ConversationID)).
+		Scan(&scope.ConversationID, &scope.ScopeType, &scope.ScopeID, &scope.CreatedAt, &scope.UpdatedAt)
+	if err == nil {
+		identity = conversationIdentity{ID: scope.ConversationID, ScopeType: scope.ScopeType, ScopeID: scope.ScopeID}
+	} else if err != sql.ErrNoRows {
+		return err
+	}
+	if err := ensureConversationTx(tx, identity.ID, identity.ScopeType, identity.ScopeID, projectNow()); err != nil {
+		return err
+	}
+
 	var existing int
 	if err := tx.QueryRow("SELECT COUNT(*) FROM v2_conversation_turns").Scan(&existing); err != nil {
 		return err
 	}
 	if existing == 0 {
 		for i := range state.Turns {
-			if err := insertConversationTurn(tx, &state.Turns[i]); err != nil {
+			turn := state.Turns[i]
+			if turn.ConversationID == "" {
+				turn.ConversationID = identity.ID
+			}
+			if err := insertConversationTurn(tx, &turn, normalizeConversationID(turn.ConversationID)); err != nil {
 				return err
 			}
 		}
@@ -392,7 +671,7 @@ func (s *Store) LoadConversationState() (*core.ConversationState, error) {
 		return nil, err
 	}
 
-	turns, err := s.loadConversationStateTurns(core.MaxHistoryTurns)
+	turns, err := s.loadConversationStateTurnsForConversation(DefaultConversationID, core.MaxHistoryTurns)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +679,7 @@ func (s *Store) LoadConversationState() (*core.ConversationState, error) {
 		return nil, nil
 	}
 	return &core.ConversationState{
-		ConversationID:      "account",
+		ConversationID:      DefaultConversationID,
 		SystemPrompt:        sysPrompt,
 		ConversationStaffID: conversationStaffID,
 		Turns:               turns,
@@ -426,18 +705,25 @@ func (s *Store) LoadConversationStateForChat(chatID string) (*core.ConversationS
 		return nil, err
 	}
 
-	records, err := s.ListConversationTurnsForChat(chatID, core.MaxHistoryTurns)
+	conversationID := normalizeConversationID(chatID)
+	if scope, ok, err := s.ConversationScope(chatID); err != nil {
+		return nil, err
+	} else if ok {
+		conversationID = scope.ConversationID
+	}
+
+	turns, err := s.loadConversationStateTurnsForConversation(conversationID, core.MaxHistoryTurns)
 	if err != nil {
 		return nil, err
 	}
-	if !stateExists && len(records) == 0 {
+	if !stateExists && len(turns) == 0 {
 		return nil, nil
 	}
 	return &core.ConversationState{
-		ConversationID:      chatID,
+		ConversationID:      conversationID,
 		SystemPrompt:        sysPrompt,
 		ConversationStaffID: conversationStaffID,
-		Turns:               conversationRecordsToTurns(records),
+		Turns:               turns,
 	}, nil
 }
 
@@ -476,18 +762,39 @@ func (s *Store) ClearConversationStaff() error {
 	return s.SetConversationStaff("")
 }
 
-// AddConversationTurn appends one turn to the account-wide conversation.
+// AddConversationTurn appends one turn to its scoped conversation.
 func (s *Store) AddConversationTurn(turn *core.ConversationTurn) error {
 	if turn == nil {
 		return nil
 	}
-	if _, err := s.db.Exec(`
+	identity, err := s.resolveTurnConversation(turn)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if err := ensureConversationTx(tx, identity.ID, identity.ScopeType, identity.ScopeID, projectNow()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
 		INSERT INTO conversation_state (id, updated_at)
 		VALUES (1, datetime('now'))
 		ON CONFLICT(id) DO UPDATE SET updated_at = datetime('now')`); err != nil {
 		return err
 	}
-	return insertConversationTurn(s.db, turn)
+	turn.ConversationID = identity.ID
+	if err := insertConversationTurn(tx, turn, identity.ID); err != nil {
+		return err
+	}
+	_, err = tx.Exec("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?", identity.ID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ForgetConversation clears all account conversation turns and checkpoints.
@@ -501,12 +808,36 @@ func (s *Store) ForgetConversation() (int64, error) {
 	return res.RowsAffected()
 }
 
+// ForgetConversationByID clears one conversation's turns, checkpoints, and
+// compactions.
+func (s *Store) ForgetConversationByID(conversationID string) (int64, error) {
+	conversationID = normalizeConversationID(conversationID)
+	res, err := s.db.Exec("DELETE FROM v2_conversation_turns WHERE conversation_id = ?", conversationID)
+	if err != nil {
+		return 0, err
+	}
+	_, _ = s.db.Exec("DELETE FROM conversation_checkpoints WHERE conversation_id = ?", conversationID)
+	_, _ = s.db.Exec("DELETE FROM conversation_compactions WHERE conversation_id = ?", conversationID)
+	return res.RowsAffected()
+}
+
 // ConversationSummary returns aggregate information for the account timeline.
 func (s *Store) ConversationSummary() (ConversationSummary, error) {
 	var out ConversationSummary
 	err := s.db.QueryRow(`
 		SELECT COUNT(*), COALESCE(MIN(timestamp), ''), COALESCE(MAX(timestamp), '')
 		FROM v2_conversation_turns`).Scan(&out.TurnCount, &out.FirstAt, &out.LastAt)
+	return out, err
+}
+
+// ConversationSummaryForConversation returns aggregate information for one
+// conversation.
+func (s *Store) ConversationSummaryForConversation(conversationID string) (ConversationSummary, error) {
+	var out ConversationSummary
+	err := s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(MIN(timestamp), ''), COALESCE(MAX(timestamp), '')
+		FROM v2_conversation_turns
+		WHERE conversation_id = ?`, normalizeConversationID(conversationID)).Scan(&out.TurnCount, &out.FirstAt, &out.LastAt)
 	return out, err
 }
 
@@ -517,7 +848,7 @@ func (s *Store) ListConversationTurns(limit int) ([]ConversationTurnRecord, erro
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		ORDER BY id DESC
 		LIMIT ?`, limit)
@@ -551,7 +882,7 @@ func (s *Store) ListConversationTurnsForChat(chatID string, limit int) ([]Conver
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE chat_id = ?
 		ORDER BY id DESC
@@ -578,13 +909,54 @@ func (s *Store) ListConversationTurnsForChat(chatID string, limit int) ([]Conver
 	return out, nil
 }
 
+// ListConversationTurnsForConversation returns recent turns for one
+// conversation in chronological order.
+func (s *Store) ListConversationTurnsForConversation(conversationID string, limit int) ([]ConversationTurnRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		FROM v2_conversation_turns
+		WHERE conversation_id = ?
+		ORDER BY id DESC
+		LIMIT ?`, normalizeConversationID(conversationID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ConversationTurnRecord
+	for rows.Next() {
+		rec, err := scanConversationTurnRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 // CompactConversation records a summary of older turns for prompt context while
 // preserving every raw turn in v2_conversation_turns.
 func (s *Store) CompactConversation(keepRecent int) (int, error) {
+	return s.CompactConversationByID(DefaultConversationID, keepRecent)
+}
+
+// CompactConversationByID records a summary for one conversation while
+// preserving every raw turn in v2_conversation_turns.
+func (s *Store) CompactConversationByID(conversationID string, keepRecent int) (int, error) {
 	if keepRecent <= 0 {
 		keepRecent = 40
 	}
-	records, err := s.listAllConversationTurns()
+	conversationID = normalizeConversationID(conversationID)
+	records, err := s.listAllConversationTurnsForConversation(conversationID)
 	if err != nil {
 		return 0, err
 	}
@@ -594,7 +966,7 @@ func (s *Store) CompactConversation(keepRecent int) (int, error) {
 
 	old := records[:len(records)-keepRecent]
 	endTurnID := old[len(old)-1].ID
-	latest, ok, err := s.latestConversationCompaction()
+	latest, ok, err := s.latestConversationCompactionForConversation(conversationID)
 	if err != nil {
 		return 0, err
 	}
@@ -604,20 +976,21 @@ func (s *Store) CompactConversation(keepRecent int) (int, error) {
 
 	summary := summarizeCompactedTurns(old)
 	if _, err := s.db.Exec(`
-		INSERT INTO conversation_compactions (start_turn_id, end_turn_id, summary)
-		VALUES (?, ?, ?)`,
-		old[0].ID, endTurnID, summary,
+		INSERT INTO conversation_compactions (conversation_id, start_turn_id, end_turn_id, summary)
+		VALUES (?, ?, ?, ?)`,
+		conversationID, old[0].ID, endTurnID, summary,
 	); err != nil {
 		return 0, err
 	}
 	return len(old), nil
 }
 
-func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn) error {
+func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn, conversationID string) error {
 	_, err := exec.Exec(`
 		INSERT INTO v2_conversation_turns
-			(role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		normalizeConversationID(conversationID),
 		string(turn.Role),
 		turn.Content,
 		nullString(turn.Code),
@@ -632,20 +1005,21 @@ func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn) error {
 	return err
 }
 
-func (s *Store) loadConversationStateTurns(limit int) ([]core.ConversationTurn, error) {
-	compaction, ok, err := s.latestConversationCompaction()
+func (s *Store) loadConversationStateTurnsForConversation(conversationID string, limit int) ([]core.ConversationTurn, error) {
+	conversationID = normalizeConversationID(conversationID)
+	compaction, ok, err := s.latestConversationCompactionForConversation(conversationID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		records, err := s.ListConversationTurns(limit)
+		records, err := s.ListConversationTurnsForConversation(conversationID, limit)
 		if err != nil {
 			return nil, err
 		}
 		return conversationRecordsToTurns(records), nil
 	}
 
-	records, err := s.listConversationTurnsAfter(compaction.EndTurnID, limit)
+	records, err := s.listConversationTurnsAfterForConversation(conversationID, compaction.EndTurnID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -657,16 +1031,16 @@ func (s *Store) loadConversationStateTurns(limit int) ([]core.ConversationTurn, 
 	return append(turns, conversationRecordsToTurns(records)...), nil
 }
 
-func (s *Store) listConversationTurnsAfter(turnID int64, limit int) ([]ConversationTurnRecord, error) {
+func (s *Store) listConversationTurnsAfterForConversation(conversationID string, turnID int64, limit int) ([]ConversationTurnRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
-		WHERE id > ?
+		WHERE conversation_id = ? AND id > ?
 		ORDER BY id DESC
-		LIMIT ?`, turnID, limit)
+		LIMIT ?`, normalizeConversationID(conversationID), turnID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -689,13 +1063,14 @@ func (s *Store) listConversationTurnsAfter(turnID int64, limit int) ([]Conversat
 	return records, nil
 }
 
-func (s *Store) latestConversationCompaction() (conversationCompaction, bool, error) {
+func (s *Store) latestConversationCompactionForConversation(conversationID string) (conversationCompaction, bool, error) {
 	var out conversationCompaction
 	err := s.db.QueryRow(`
 		SELECT start_turn_id, end_turn_id, summary, created_at
 		FROM conversation_compactions
+		WHERE conversation_id = ?
 		ORDER BY id DESC
-		LIMIT 1`).Scan(&out.StartTurnID, &out.EndTurnID, &out.Summary, &out.CreatedAt)
+		LIMIT 1`, normalizeConversationID(conversationID)).Scan(&out.StartTurnID, &out.EndTurnID, &out.Summary, &out.CreatedAt)
 	if err == sql.ErrNoRows {
 		return out, false, nil
 	}
@@ -713,11 +1088,12 @@ func conversationRecordsToTurns(records []ConversationTurnRecord) []core.Convers
 	return turns
 }
 
-func (s *Store) listAllConversationTurns() ([]ConversationTurnRecord, error) {
+func (s *Store) listAllConversationTurnsForConversation(conversationID string) ([]ConversationTurnRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
-		ORDER BY id ASC`)
+		WHERE conversation_id = ?
+		ORDER BY id ASC`, normalizeConversationID(conversationID))
 	if err != nil {
 		return nil, err
 	}
@@ -744,6 +1120,7 @@ func scanConversationTurnRecord(scanner conversationTurnScanner) (ConversationTu
 	var code, result, toolTraceJSON sql.NullString
 	if err := scanner.Scan(
 		&rec.ID,
+		&rec.ConversationID,
 		&role,
 		&rec.Content,
 		&code,
@@ -768,16 +1145,17 @@ func scanConversationTurnRecord(scanner conversationTurnScanner) (ConversationTu
 
 func (r ConversationTurnRecord) Turn() core.ConversationTurn {
 	return core.ConversationTurn{
-		Role:          r.Role,
-		Content:       r.Content,
-		Code:          r.Code,
-		Result:        r.Result,
-		ToolTraces:    r.ToolTraces,
-		Channel:       r.Channel,
-		ChannelUserID: r.ChannelUserID,
-		ChatID:        r.ChatID,
-		MessageID:     r.MessageID,
-		Timestamp:     r.Timestamp,
+		ConversationID: r.ConversationID,
+		Role:           r.Role,
+		Content:        r.Content,
+		Code:           r.Code,
+		Result:         r.Result,
+		ToolTraces:     r.ToolTraces,
+		Channel:        r.Channel,
+		ChannelUserID:  r.ChannelUserID,
+		ChatID:         r.ChatID,
+		MessageID:      r.MessageID,
+		Timestamp:      r.Timestamp,
 	}
 }
 
@@ -1333,51 +1711,102 @@ func (s *Store) DeleteUserContextPrefix(prefix string) (int, error) {
 // Checkpoints
 // ---------------------------------------------------------------------------
 
-// CreateCheckpoint saves a checkpoint at the current latest conversation turn.
+// CreateCheckpoint saves a checkpoint at the current latest default
+// conversation turn.
 func (s *Store) CreateCheckpoint(label string) (int64, error) {
+	return s.CreateCheckpointForConversation(label, DefaultConversationID)
+}
+
+// CreateCheckpointForConversation saves a checkpoint at one conversation's
+// latest turn.
+func (s *Store) CreateCheckpointForConversation(label, conversationID string) (int64, error) {
+	conversationID = normalizeConversationID(conversationID)
 	var maxID int64
 	err := s.db.QueryRow(
-		"SELECT COALESCE(MAX(id), 0) FROM v2_conversation_turns",
-	).Scan(&maxID)
+		"SELECT COALESCE(MAX(id), 0) FROM v2_conversation_turns WHERE conversation_id = ?",
+		conversationID).Scan(&maxID)
 	if err != nil {
 		return 0, err
 	}
 
 	res, err := s.db.Exec(`
-		INSERT INTO conversation_checkpoints (label, turn_id)
-		VALUES (?, ?)`, label, maxID)
+		INSERT INTO conversation_checkpoints (label, turn_id, conversation_id)
+		VALUES (?, ?, ?)`, label, maxID, conversationID)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// RollbackToCheckpoint deletes all conversation rows after the checkpoint's
-// saved row ID. Returns the number of deleted rows.
+// RollbackToCheckpoint deletes rows after the checkpoint's saved row ID, but
+// only inside the checkpoint's conversation. Returns the number of deleted rows.
 func (s *Store) RollbackToCheckpoint(checkpointID int64) (int, error) {
 	var turnID int64
+	var conversationID string
 	err := s.db.QueryRow(
-		"SELECT turn_id FROM conversation_checkpoints WHERE id = ?",
+		"SELECT turn_id, conversation_id FROM conversation_checkpoints WHERE id = ?",
 		checkpointID,
-	).Scan(&turnID)
+	).Scan(&turnID, &conversationID)
 	if err != nil {
 		return 0, err
 	}
 
 	res, err := s.db.Exec(
-		"DELETE FROM v2_conversation_turns WHERE id > ?",
-		turnID)
+		"DELETE FROM v2_conversation_turns WHERE conversation_id = ? AND id > ?",
+		normalizeConversationID(conversationID), turnID)
 	if err != nil {
 		return 0, err
 	}
+	_, _ = s.db.Exec(
+		"DELETE FROM conversation_compactions WHERE conversation_id = ? AND end_turn_id > ?",
+		normalizeConversationID(conversationID), turnID)
 	n, err := res.RowsAffected()
 	return int(n), err
 }
 
-// ListCheckpoints returns all account conversation checkpoints.
+// ListCheckpoints returns all conversation checkpoints.
 func (s *Store) ListCheckpoints() ([]Checkpoint, error) {
+	return s.ListCheckpointsForConversation("")
+}
+
+// ListCheckpointsForConversation returns checkpoints, optionally filtered to a
+// conversation when conversationID is non-empty.
+func (s *Store) ListCheckpointsForConversation(conversationID string) ([]Checkpoint, error) {
+	var rows *sql.Rows
+	var err error
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		rows, err = s.db.Query(`
+			SELECT id, label, turn_id, conversation_id, created_at
+			FROM conversation_checkpoints
+			ORDER BY id DESC`)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT id, label, turn_id, conversation_id, created_at
+			FROM conversation_checkpoints
+			WHERE conversation_id = ?
+			ORDER BY id DESC`, normalizeConversationID(conversationID))
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Checkpoint
+	for rows.Next() {
+		var c Checkpoint
+		if err := rows.Scan(&c.ID, &c.Label, &c.TurnID, &c.ConversationID, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListAllCheckpoints returns every checkpoint regardless of conversation.
+func (s *Store) ListAllCheckpoints() ([]Checkpoint, error) {
 	rows, err := s.db.Query(`
-		SELECT id, label, turn_id, created_at
+		SELECT id, label, turn_id, conversation_id, created_at
 		FROM conversation_checkpoints
 		ORDER BY id DESC`)
 	if err != nil {
@@ -1388,7 +1817,7 @@ func (s *Store) ListCheckpoints() ([]Checkpoint, error) {
 	var out []Checkpoint
 	for rows.Next() {
 		var c Checkpoint
-		if err := rows.Scan(&c.ID, &c.Label, &c.TurnID, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Label, &c.TurnID, &c.ConversationID, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

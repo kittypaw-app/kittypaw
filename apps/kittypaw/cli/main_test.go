@@ -340,6 +340,11 @@ func TestRootCommandRemovesAgentAndAddsChatHistoryControls(t *testing.T) {
 			t.Fatalf("chat command missing %q child; got %#v", name, children)
 		}
 	}
+	for _, name := range []string{"history", "forget", "compact"} {
+		if children[name].Flags().Lookup("conversation-id") == nil {
+			t.Fatalf("chat %s missing --conversation-id flag", name)
+		}
+	}
 }
 
 func TestRunSkillDryRunUsesSelectedAccount(t *testing.T) {

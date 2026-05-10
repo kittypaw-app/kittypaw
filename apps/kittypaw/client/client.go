@@ -72,22 +72,47 @@ func (c *Client) Executions(skill string, limit int) (map[string]any, error) {
 
 // ChatHistory returns recent account-wide conversation turns.
 func (c *Client) ChatHistory(limit int) (map[string]any, error) {
+	return c.ChatHistoryForConversation(limit, "")
+}
+
+// ChatHistoryForConversation returns recent turns for one conversation.
+func (c *Client) ChatHistoryForConversation(limit int, conversationID string) (map[string]any, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	return c.get(fmt.Sprintf("/api/v1/chat/history?limit=%d", limit))
+	path := fmt.Sprintf("/api/v1/chat/history?limit=%d", limit)
+	if conversationID != "" {
+		path += "&conversation_id=" + url.QueryEscape(conversationID)
+	}
+	return c.get(path)
 }
 
 // ChatForget clears account-wide conversation history.
 func (c *Client) ChatForget() (map[string]any, error) {
-	return c.post("/api/v1/chat/forget", nil)
+	return c.ChatForgetForConversation("")
+}
+
+// ChatForgetForConversation clears one conversation history.
+func (c *Client) ChatForgetForConversation(conversationID string) (map[string]any, error) {
+	if conversationID == "" {
+		return c.post("/api/v1/chat/forget", nil)
+	}
+	return c.post("/api/v1/chat/forget", map[string]string{"conversation_id": conversationID})
 }
 
 // ChatCompact compacts older account-wide conversation turns.
 func (c *Client) ChatCompact(keepRecent int) (map[string]any, error) {
-	body := map[string]int{}
+	return c.ChatCompactForConversation(keepRecent, "")
+}
+
+// ChatCompactForConversation compacts older turns for one conversation.
+func (c *Client) ChatCompactForConversation(keepRecent int, conversationID string) (map[string]any, error) {
+	body := map[string]any{}
 	if keepRecent > 0 {
 		body["keep_recent"] = keepRecent
+	}
+	if conversationID != "" {
+		body["conversation_id"] = conversationID
 	}
 	return c.post("/api/v1/chat/compact", body)
 }

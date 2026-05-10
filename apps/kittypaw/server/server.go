@@ -445,6 +445,10 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Post("/chat/compact", s.handleChatCompact)
 				r.Get("/chat/checkpoints", s.handleCheckpointsList)
 				r.Post("/chat/checkpoints", s.handleCheckpointsCreate)
+				r.Get("/conversations", s.handleConversationsList)
+				r.Post("/conversations", s.handleConversationsCreate)
+				r.Get("/conversations/{id}", s.handleConversationInfo)
+				r.Get("/conversations/{id}/messages", s.handleConversationMessages)
 
 				// Config
 				r.Get("/config/check", s.handleConfigCheck)

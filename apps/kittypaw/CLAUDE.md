@@ -10,7 +10,7 @@ core/          Types, config, skill management, staff identities/presets, accoun
 llm/           LLM provider abstraction (Claude, OpenAI, Ollama)
 mcp/           MCP client registry (external tool server connections)
 sandbox/       JavaScript execution sandbox (in-process goja VM, Runner.observe interrupts)
-store/         SQLite persistence with 21 migrations (WAL mode)
+store/         SQLite persistence with 31 migrations (WAL mode)
 engine/        Runner loop (observe + retry), skill executor, HTML-to-Markdown, SearchBackend, compaction, scheduling
 channel/       Messaging channels (Telegram, Slack, Discord, Kakao, WebSocket)
 server/        HTTP API (Chi) + WebSocket streaming + ChannelSpawner (hot-reload)
@@ -147,6 +147,31 @@ Callback responses route through channel-internal `sync.Map` (not `eventCh`) to 
 ## Tool Trace Transcript
 
 Sandbox tool calls receive stable per-turn `skill_call_N` IDs and are persisted on assistant conversation turns as structured `tool_trace_json` (`skill`, `method`, `args`, raw JSON result or error, success flag). Traces accumulate across retry attempts and `Runner.observe` rounds before the final assistant turn is saved, so audit/replay sees every tool call that actually ran in the user turn.
+
+## Conversation Thread Persistence
+
+Durable chat history is turn-based and thread-scoped. `v2_conversation_turns`
+stores user/assistant turns with `conversation_id`; `conversations` is the
+first-class thread index used for list/resume/title/source metadata; and
+`conversation_scope` maps special project/ticket/general scopes to those
+conversation IDs.
+
+`general:account` is the compatibility default for legacy/unscoped history.
+Real account-routed channel events without an explicit conversation derive a
+stable general thread such as `general:slack:<channel>` or
+`general:web_chat:<session>`, so Web/CLI/Telegram/Slack-style conversations do
+not all collapse into one account-wide timeline. Project and ticket chats still
+use their existing scoped IDs and load only their own history.
+
+Thread-scoped operations are load-bearing: chat history, forget, compact,
+checkpoint creation/listing, and checkpoint rollback must operate on a single
+`conversation_id`. Rollback deletes only turns after the checkpoint inside the
+checkpoint's own conversation, and invalidates only that conversation's
+compaction rows. Public surfaces: `/api/v1/conversations`,
+`/api/v1/conversations/{id}/messages`, and `conversation_id` on chat
+history/forget/compact/checkpoint APIs; CLI `chat history|forget|compact`
+exposes the same selector via `--conversation-id`.
+
 Use `File.edit(path, old_text, new_text)` for targeted file changes when possible; it only writes if `old_text` appears exactly once, otherwise it returns a structured failure without changing the file.
 
 ## Config Internals

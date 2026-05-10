@@ -196,6 +196,87 @@ func TestConversationKeyForEventUsesScopedConversationID(t *testing.T) {
 	}
 }
 
+func TestConversationKeyForEventUsesIndexedConversationID(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: "general:indexed",
+		Role:           core.RoleUser,
+		Content:        "indexed thread",
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("AddConversationTurn: %v", err)
+	}
+
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:         "browser-session",
+		SessionID:      "browser-session",
+		ConversationID: "general:indexed",
+		Text:           "이 대화를 이어서 해줘",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := core.Event{Type: core.EventWebChat, Payload: payload}
+	sess := &Session{Store: st, AccountID: "account"}
+
+	if got := conversationKeyForEvent(sess, &event); got != "general:indexed" {
+		t.Fatalf("conversationKeyForEvent = %q, want indexed conversation", got)
+	}
+	state, err := sess.loadConversationStateForRun("general:indexed")
+	if err != nil {
+		t.Fatalf("loadConversationStateForRun: %v", err)
+	}
+	if state == nil || state.ConversationID != "general:indexed" || len(state.Turns) != 1 {
+		t.Fatalf("state = %+v, want indexed conversation history", state)
+	}
+}
+
+func TestConversationKeyForEventDefaultsToGeneralConversation(t *testing.T) {
+	st := openTestStore(t)
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:    "browser-session",
+		SessionID: "browser-session",
+		Text:      "일반 대화",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := core.Event{Type: core.EventWebChat, Payload: payload}
+	sess := &Session{Store: st, AccountID: "account"}
+
+	if got := conversationKeyForEvent(sess, &event); got != store.DefaultConversationID {
+		t.Fatalf("conversationKeyForEvent = %q, want default general conversation %q", got, store.DefaultConversationID)
+	}
+}
+
+func TestConversationKeyForEventDerivesSourceConversationForAccountEvents(t *testing.T) {
+	st := openTestStore(t)
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:    "C123ABC",
+		SessionID: "U123ABC",
+		Text:      "슬랙 채널 대화",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := core.Event{Type: core.EventSlack, AccountID: "account", Payload: payload}
+	sess := &Session{Store: st, AccountID: "account"}
+
+	if got := conversationKeyForEvent(sess, &event); got != "general:slack:c123abc" {
+		t.Fatalf("conversationKeyForEvent = %q, want channel-derived general conversation", got)
+	}
+	state, err := sess.loadConversationStateForRun("general:slack:c123abc")
+	if err != nil {
+		t.Fatalf("loadConversationStateForRun: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("state = %+v, want empty derived conversation before first turn", state)
+	}
+	if _, ok, err := st.Conversation("general:slack:c123abc"); err != nil || !ok {
+		t.Fatalf("derived conversation exists = %v err=%v, want true nil", ok, err)
+	}
+}
+
 func TestProjectChatPromptHistoryIsScoped(t *testing.T) {
 	sess := newTestSession(t)
 	provider := &promptCaptureProvider{response: `return "ok";`}

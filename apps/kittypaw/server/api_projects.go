@@ -105,11 +105,12 @@ func (s *Server) handleProjectsCreate(w http.ResponseWriter, r *http.Request) {
 	kickoff := projectKickoffMessage(class)
 	if kickoff != "" {
 		if err := st.AddConversationTurn(&core.ConversationTurn{
-			Role:      core.RoleAssistant,
-			Content:   kickoff,
-			Channel:   "project",
-			ChatID:    project.ProjectConversationID,
-			Timestamp: core.NowTimestamp(),
+			ConversationID: project.ProjectConversationID,
+			Role:           core.RoleAssistant,
+			Content:        kickoff,
+			Channel:        "project",
+			ChatID:         project.ProjectConversationID,
+			Timestamp:      core.NowTimestamp(),
 		}); err != nil {
 			slog.Warn("record project kickoff message failed", "project", project.ID, "error", err)
 		}

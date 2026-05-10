@@ -70,16 +70,17 @@ type ConversationState struct {
 
 // ConversationTurn is a single message in a conversation.
 type ConversationTurn struct {
-	Role          Role        `json:"role"`
-	Content       string      `json:"content"`
-	Code          string      `json:"code,omitempty"`
-	Result        string      `json:"result,omitempty"`
-	ToolTraces    []ToolTrace `json:"tool_traces,omitempty"`
-	Channel       string      `json:"channel,omitempty"`
-	ChannelUserID string      `json:"channel_user_id,omitempty"`
-	ChatID        string      `json:"chat_id,omitempty"`
-	MessageID     string      `json:"message_id,omitempty"`
-	Timestamp     string      `json:"timestamp"`
+	ConversationID string      `json:"conversation_id,omitempty"`
+	Role           Role        `json:"role"`
+	Content        string      `json:"content"`
+	Code           string      `json:"code,omitempty"`
+	Result         string      `json:"result,omitempty"`
+	ToolTraces     []ToolTrace `json:"tool_traces,omitempty"`
+	Channel        string      `json:"channel,omitempty"`
+	ChannelUserID  string      `json:"channel_user_id,omitempty"`
+	ChatID         string      `json:"chat_id,omitempty"`
+	MessageID      string      `json:"message_id,omitempty"`
+	Timestamp      string      `json:"timestamp"`
 }
 
 // Event is an inbound message from any channel.
@@ -95,7 +96,7 @@ type Event struct {
 // ChatPayload is the common structure inside Event.Payload.
 //
 // SessionID is transport/runtime metadata. ConversationID optionally selects
-// a scoped project or ticket conversation registered in conversation_scope.
+// a first-class conversation/thread.
 type ChatPayload struct {
 	ChatID         string           `json:"chat_id"`
 	Text           string           `json:"text"`

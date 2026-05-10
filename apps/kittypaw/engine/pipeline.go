@@ -65,13 +65,16 @@ type Branch interface {
 // the legacy LLM path just made an offer) AND (b) the reply looks like
 // consent. This keeps a bare "네" off the consent branch when there's
 // no offer to consent to.
-func classifyIntent(text string, state *PipelineState, sess *Session) Intent {
+func classifyIntent(text string, state *PipelineState, sess *Session, conversationID ...string) Intent {
 	t := strings.TrimSpace(text)
 	if t == "" {
 		return Intent{Kind: IntentLegacyFallback}
 	}
 	if sess != nil && sess.Store != nil {
 		convKey := conversationKey(sess)
+		if len(conversationID) > 0 && strings.TrimSpace(conversationID[0]) != "" {
+			convKey = strings.TrimSpace(conversationID[0])
+		}
 		if staffID, ok, _ := loadPendingStaffSwitch(sess.Store, convKey); ok && staffID != "" && (isStaffAffirmative(t) || isBareNegative(t) || isStaffDraftCancel(t)) {
 			return Intent{
 				Kind: IntentStaffPostCreateSwitch,
@@ -726,7 +729,7 @@ func runeCount(s string) int {
 // Returning a bool instead of a sentinel error keeps the legacy path
 // untouched — callers can wire this in with a single if-statement.
 func dispatchPipeline(ctx context.Context, sess *Session, event core.Event, eventText string) (string, bool) {
-	intent := classifyIntent(eventText, sess.Pipeline, sess)
+	intent := classifyIntent(eventText, sess.Pipeline, sess, conversationKeyForEvent(sess, &event))
 	branch := getBranch(intent.Kind)
 	if branch == nil {
 		return "", false
@@ -792,7 +795,8 @@ func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, e
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
-	if existing, ok, err := loadPendingStaffDraft(sess.BaseDir, conversationKey(sess)); err != nil {
+	convKey := conversationKeyForEvent(sess, &event)
+	if existing, ok, err := loadPendingStaffDraft(sess.BaseDir, convKey); err != nil {
 		return "staff 초안을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	} else if ok {
 		return formatPendingStaffDraftNotice(existing), nil
@@ -805,7 +809,7 @@ func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, e
 	if request == "" {
 		request = role
 	}
-	if err := savePendingStaffOffer(sess.Store, conversationKey(sess), request); err != nil {
+	if err := savePendingStaffOffer(sess.Store, convKey, request); err != nil {
 		return "staff 생성 제안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
 	return "Staff 기능으로 새 역할을 만들까요?", nil
@@ -817,11 +821,12 @@ func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, eve
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
+	convKey := conversationKeyForEvent(sess, &event)
 	role := strings.TrimSpace(fmt.Sprint(intent.Params["role"]))
 	if role == "" {
 		var ok bool
 		var err error
-		role, ok, err = loadPendingStaffOffer(sess.Store, conversationKey(sess))
+		role, ok, err = loadPendingStaffOffer(sess.Store, convKey)
 		if err != nil || !ok {
 			return "진행할 staff 생성 요청을 찾지 못했어요.", nil
 		}
@@ -838,13 +843,13 @@ func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, eve
 		return "staff 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
 	if core.StaffHasSoul(base, draft.ID) {
-		_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
+		_ = clearPendingStaffOffer(sess.Store, convKey)
 		return fmt.Sprintf("staff %q는 이미 존재합니다.", draft.ID), nil
 	}
-	if err := savePendingStaffDraft(sess.BaseDir, conversationKey(sess), draft); err != nil {
+	if err := savePendingStaffDraft(sess.BaseDir, convKey, draft); err != nil {
 		return "staff 초안을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
-	_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
+	_ = clearPendingStaffOffer(sess.Store, convKey)
 	return formatStaffDraftPreview(draft), nil
 }
 
@@ -854,7 +859,8 @@ func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *Session, ev
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
-	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, conversationKey(sess))
+	convKey := conversationKeyForEvent(sess, &event)
+	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, convKey)
 	if err != nil {
 		return "staff 초안을 읽지 못했어요. 잠시 후 다시 시도해 주세요.", nil
 	}
@@ -864,8 +870,8 @@ func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *Session, ev
 	if err := commitStaffDraft(sess.BaseDir, draft); err != nil {
 		return fmt.Sprintf("staff 생성 실패: %s", err), nil
 	}
-	_ = clearPendingStaffDraft(sess.BaseDir, conversationKey(sess))
-	if err := savePendingStaffSwitch(sess.Store, conversationKey(sess), draft.ID); err != nil {
+	_ = clearPendingStaffDraft(sess.BaseDir, convKey)
+	if err := savePendingStaffSwitch(sess.Store, convKey, draft.ID); err != nil {
 		return fmt.Sprintf("%s staff를 만들었어요.\n\n시스템 이름은 %s 입니다.", draft.DisplayName, draft.ID), nil
 	}
 	return fmt.Sprintf("%s staff를 만들었어요.\n\n시스템 이름은 %s 입니다.\n지금 이 대화에서 사용할까요?", draft.DisplayName, draft.ID), nil
@@ -877,9 +883,10 @@ func (b *StaffDraftCancelBranch) Execute(ctx context.Context, sess *Session, eve
 	if sess == nil || sess.Store == nil {
 		return "staff 초안을 위한 저장소가 준비되지 않았어요.", nil
 	}
-	_ = clearPendingStaffDraft(sess.BaseDir, conversationKey(sess))
-	_ = clearPendingStaffOffer(sess.Store, conversationKey(sess))
-	_ = clearPendingStaffSwitch(sess.Store, conversationKey(sess))
+	convKey := conversationKeyForEvent(sess, &event)
+	_ = clearPendingStaffDraft(sess.BaseDir, convKey)
+	_ = clearPendingStaffOffer(sess.Store, convKey)
+	_ = clearPendingStaffSwitch(sess.Store, convKey)
 	return "staff 초안을 취소했습니다.", nil
 }
 
@@ -894,7 +901,8 @@ func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *Session
 	if staffID == "" {
 		return "전환할 staff를 찾지 못했어요.", nil
 	}
-	_ = clearPendingStaffSwitch(sess.Store, conversationKey(sess))
+	convKey := conversationKeyForEvent(sess, &event)
+	_ = clearPendingStaffSwitch(sess.Store, convKey)
 	if !accept {
 		return "알겠습니다. 현재 staff를 유지합니다.", nil
 	}

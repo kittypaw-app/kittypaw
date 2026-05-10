@@ -84,9 +84,14 @@
 > Input: Hermes / OpenClaw comparison thread. Treat as product-direction
 > inspiration only; verify claims against upstream docs/repos before designing.
 
-- [ ] **Session search / recall**: Persist searchable conversation history and
-  retrieve relevant past sessions with summarization for current-turn context.
-  Useful for "지난번 설정", "전에 만든 스킬", 반복 workflow recall.
+- [x] **Conversation/thread persistence foundation**: Add a first-class
+  `conversations` index, persist `conversation_id` on turns/checkpoints/
+  compactions, and scope history/forget/compact/checkpoint rollback to one
+  thread instead of the whole account timeline.
+- [ ] **Session search / recall**: Build on the persisted conversation/thread
+  index to search past sessions and retrieve relevant summaries for
+  current-turn context. Useful for "지난번 설정", "전에 만든 스킬", 반복
+  workflow recall.
 - [ ] **Skill promote loop**: Reflection 후보를 곧바로 자동 실행 코드로
   만들기보다, 사용자 승인 후 inspect 가능한 skill draft 로 승격한다.
   Output should include `package.toml`, required config, trigger proposal, and

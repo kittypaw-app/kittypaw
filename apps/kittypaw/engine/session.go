@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -599,7 +601,7 @@ func stripBranchControlMarker(response string) string {
 func (s *Session) recordPipelineTurn(event core.Event, eventText, response string) error {
 	convKey := conversationKeyForEvent(s, &event)
 	meta := conversationTurnSource(&event)
-	state, err := s.Store.LoadConversationState()
+	state, err := s.loadConversationStateForRun(convKey)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
@@ -617,25 +619,27 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 	}
 	now := core.NowTimestamp()
 	userTurn := core.ConversationTurn{
-		Role:          core.RoleUser,
-		Content:       eventText,
-		Channel:       meta.Channel,
-		ChannelUserID: meta.ChannelUserID,
-		ChatID:        meta.ChatID,
-		MessageID:     meta.MessageID,
-		Timestamp:     now,
+		ConversationID: convKey,
+		Role:           core.RoleUser,
+		Content:        eventText,
+		Channel:        meta.Channel,
+		ChannelUserID:  meta.ChannelUserID,
+		ChatID:         meta.ChatID,
+		MessageID:      meta.MessageID,
+		Timestamp:      now,
 	}
 	state.Turns = append(state.Turns, userTurn)
 	if err := s.Store.AddConversationTurn(&userTurn); err != nil {
 		return fmt.Errorf("add user turn: %w", err)
 	}
 	assistantTurn := core.ConversationTurn{
-		Role:          core.RoleAssistant,
-		Content:       stripBranchControlMarker(response),
-		Channel:       meta.Channel,
-		ChannelUserID: meta.ChannelUserID,
-		ChatID:        meta.ChatID,
-		Timestamp:     now,
+		ConversationID: convKey,
+		Role:           core.RoleAssistant,
+		Content:        stripBranchControlMarker(response),
+		Channel:        meta.Channel,
+		ChannelUserID:  meta.ChannelUserID,
+		ChatID:         meta.ChatID,
+		Timestamp:      now,
 	}
 	state.Turns = append(state.Turns, assistantTurn)
 	if err := s.Store.AddConversationTurn(&assistantTurn); err != nil {
@@ -705,13 +709,14 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 
 	// Add user turn
 	userTurn := core.ConversationTurn{
-		Role:          core.RoleUser,
-		Content:       eventText,
-		Channel:       meta.Channel,
-		ChannelUserID: meta.ChannelUserID,
-		ChatID:        meta.ChatID,
-		MessageID:     meta.MessageID,
-		Timestamp:     core.NowTimestamp(),
+		ConversationID: convKey,
+		Role:           core.RoleUser,
+		Content:        eventText,
+		Channel:        meta.Channel,
+		ChannelUserID:  meta.ChannelUserID,
+		ChatID:         meta.ChatID,
+		MessageID:      meta.MessageID,
+		Timestamp:      core.NowTimestamp(),
 	}
 	state.Turns = append(state.Turns, userTurn)
 	if err := s.Store.AddConversationTurn(&userTurn); err != nil {
@@ -734,12 +739,13 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 		slog.Warn("orchestration error, falling through", "error", orchErr)
 	} else if handled {
 		assistantTurn := core.ConversationTurn{
-			Role:          core.RoleAssistant,
-			Content:       response,
-			Channel:       meta.Channel,
-			ChannelUserID: meta.ChannelUserID,
-			ChatID:        meta.ChatID,
-			Timestamp:     core.NowTimestamp(),
+			ConversationID: convKey,
+			Role:           core.RoleAssistant,
+			Content:        response,
+			Channel:        meta.Channel,
+			ChannelUserID:  meta.ChannelUserID,
+			ChatID:         meta.ChatID,
+			Timestamp:      core.NowTimestamp(),
 		}
 		state.Turns = append(state.Turns, assistantTurn)
 		_ = s.Store.AddConversationTurn(&assistantTurn)
@@ -930,14 +936,15 @@ observeLoop:
 					output = "(max observation rounds reached)"
 				}
 				assistantTurn := core.ConversationTurn{
-					Role:          core.RoleAssistant,
-					Content:       output,
-					Code:          code,
-					ToolTraces:    turnToolTraces,
-					Channel:       meta.Channel,
-					ChannelUserID: meta.ChannelUserID,
-					ChatID:        meta.ChatID,
-					Timestamp:     core.NowTimestamp(),
+					ConversationID: convKey,
+					Role:           core.RoleAssistant,
+					Content:        output,
+					Code:           code,
+					ToolTraces:     turnToolTraces,
+					Channel:        meta.Channel,
+					ChannelUserID:  meta.ChannelUserID,
+					ChatID:         meta.ChatID,
+					Timestamp:      core.NowTimestamp(),
 				}
 				state.Turns = append(state.Turns, assistantTurn)
 				_ = s.Store.AddConversationTurn(&assistantTurn)
@@ -965,15 +972,16 @@ observeLoop:
 
 				// Save assistant turn
 				assistantTurn := core.ConversationTurn{
-					Role:          core.RoleAssistant,
-					Content:       output,
-					Code:          code,
-					Result:        FormatExecResult(execResult),
-					ToolTraces:    turnToolTraces,
-					Channel:       meta.Channel,
-					ChannelUserID: meta.ChannelUserID,
-					ChatID:        meta.ChatID,
-					Timestamp:     core.NowTimestamp(),
+					ConversationID: convKey,
+					Role:           core.RoleAssistant,
+					Content:        output,
+					Code:           code,
+					Result:         FormatExecResult(execResult),
+					ToolTraces:     turnToolTraces,
+					Channel:        meta.Channel,
+					ChannelUserID:  meta.ChannelUserID,
+					ChatID:         meta.ChatID,
+					Timestamp:      core.NowTimestamp(),
 				}
 				state.Turns = append(state.Turns, assistantTurn)
 				if err := s.Store.AddConversationTurn(&assistantTurn); err != nil {
@@ -1034,13 +1042,14 @@ observeLoop:
 	)
 
 	assistantTurn := core.ConversationTurn{
-		Role:          core.RoleAssistant,
-		Content:       fmt.Sprintf("Error after %d retries: %s", maxRetries, errMsg),
-		ToolTraces:    turnToolTraces,
-		Channel:       meta.Channel,
-		ChannelUserID: meta.ChannelUserID,
-		ChatID:        meta.ChatID,
-		Timestamp:     core.NowTimestamp(),
+		ConversationID: convKey,
+		Role:           core.RoleAssistant,
+		Content:        fmt.Sprintf("Error after %d retries: %s", maxRetries, errMsg),
+		ToolTraces:     turnToolTraces,
+		Channel:        meta.Channel,
+		ChannelUserID:  meta.ChannelUserID,
+		ChatID:         meta.ChatID,
+		Timestamp:      core.NowTimestamp(),
 	}
 	state.Turns = append(state.Turns, assistantTurn)
 	if err := s.Store.AddConversationTurn(&assistantTurn); err != nil {
@@ -1217,32 +1226,125 @@ func (s *Session) loadConversationStateForRun(convKey string) (*core.Conversatio
 	if s == nil || s.Store == nil {
 		return nil, nil
 	}
-	if scope, ok, err := s.Store.ConversationScope(convKey); err != nil {
+	if _, ok, err := s.Store.ConversationScope(convKey); err != nil {
 		return nil, err
-	} else if ok && (scope.ScopeType == "project" || scope.ScopeType == "ticket") {
+	} else if ok {
 		return s.Store.LoadConversationStateForChat(convKey)
 	}
-	return s.Store.LoadConversationState()
+	if _, ok, err := s.Store.Conversation(convKey); err != nil {
+		return nil, err
+	} else if ok {
+		return s.Store.LoadConversationStateForChat(convKey)
+	}
+	if strings.HasPrefix(convKey, "general:") {
+		scopeID := strings.TrimPrefix(convKey, "general:")
+		if err := s.Store.EnsureConversation(convKey, "general", scopeID); err != nil {
+			return nil, err
+		}
+		return s.Store.LoadConversationStateForChat(convKey)
+	}
+	return s.Store.LoadConversationStateForChat(store.DefaultConversationID)
 }
 
 func conversationKeyForEvent(s *Session, event *core.Event) string {
-	if s == nil || s.Store == nil || event == nil {
+	if s == nil || s.Store == nil {
 		return conversationKey(s)
+	}
+	if event == nil {
+		return store.DefaultConversationID
 	}
 	payload, err := event.ParsePayload()
 	if err != nil {
-		return conversationKey(s)
+		return store.DefaultConversationID
 	}
 	for _, candidate := range []string{payload.ConversationID, payload.SessionID, payload.ChatID} {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue
 		}
-		if _, ok, err := s.Store.ConversationScope(candidate); err == nil && ok {
+		ok, err := conversationKeyExists(s, candidate)
+		if err == nil && ok {
 			return candidate
 		}
 	}
-	return conversationKey(s)
+	if event.AccountID != "" {
+		if derived := sourceConversationKey(event.Type, payload); derived != "" {
+			return derived
+		}
+	}
+	return store.DefaultConversationID
+}
+
+func conversationKeyExists(s *Session, conversationID string) (bool, error) {
+	if _, ok, err := s.Store.ConversationScope(conversationID); err != nil {
+		return false, err
+	} else if ok {
+		return true, nil
+	}
+	_, ok, err := s.Store.Conversation(conversationID)
+	return ok, err
+}
+
+func sourceConversationKey(eventType core.EventType, payload core.ChatPayload) string {
+	source := conversationKeyPart(string(eventType))
+	if source == "" {
+		return ""
+	}
+	stableID := strings.TrimSpace(payload.ChatID)
+	switch eventType {
+	case core.EventKakaoTalk, core.EventWebChat, core.EventDesktop:
+		stableID = firstNonEmptyConversationValue(payload.SessionID, payload.ChatID)
+	default:
+		stableID = firstNonEmptyConversationValue(payload.ChatID, payload.SessionID)
+	}
+	if stableID == "" || stableID == "api" || stableID == "scheduler" {
+		return ""
+	}
+	part := conversationKeyPart(stableID)
+	if part == "" {
+		return ""
+	}
+	return "general:" + source + ":" + part
+}
+
+func firstNonEmptyConversationValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func conversationKeyPart(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		sum := sha1.Sum([]byte(value))
+		return hex.EncodeToString(sum[:])[:12]
+	}
+	if len(out) > 72 {
+		sum := sha1.Sum([]byte(value))
+		out = out[:56] + "-" + hex.EncodeToString(sum[:])[:12]
+	}
+	return out
 }
 
 func conversationTurnSource(event *core.Event) conversationTurnMetadata {

@@ -683,24 +683,26 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 func newChatHistoryCmd() *cobra.Command {
 	var limit int
+	var conversationID string
 	cmd := &cobra.Command{
 		Use:   "history",
 		Short: "Show account conversation history",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runChatHistory(limit)
+			return runChatHistory(limit, conversationID)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 50, "number of turns to show")
+	cmd.Flags().StringVar(&conversationID, "conversation-id", "", "conversation/thread ID to show")
 	return cmd
 }
 
-func runChatHistory(limit int) error {
+func runChatHistory(limit int, conversationID string) error {
 	if flagRemote != "" {
 		cl, err := connectServerForCLIAccount()
 		if err != nil {
 			return err
 		}
-		res, err := cl.ChatHistory(limit)
+		res, err := cl.ChatHistoryForConversation(limit, conversationID)
 		if err != nil {
 			return fmt.Errorf("chat history: %w", err)
 		}
@@ -713,7 +715,12 @@ func runChatHistory(limit int) error {
 	}
 	defer st.Close() //nolint:errcheck
 
-	turns, err := st.ListConversationTurns(limit)
+	var turns []store.ConversationTurnRecord
+	if conversationID != "" {
+		turns, err = st.ListConversationTurnsForConversation(conversationID, limit)
+	} else {
+		turns, err = st.ListConversationTurnsForConversation(store.DefaultConversationID, limit)
+	}
 	if err != nil {
 		return fmt.Errorf("chat history: %w", err)
 	}
@@ -722,18 +729,20 @@ func runChatHistory(limit int) error {
 
 func newChatForgetCmd() *cobra.Command {
 	var yes bool
+	var conversationID string
 	cmd := &cobra.Command{
 		Use:   "forget",
 		Short: "Forget account conversation history",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runChatForget(yes)
+			return runChatForget(yes, conversationID)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip confirmation")
+	cmd.Flags().StringVar(&conversationID, "conversation-id", "", "conversation/thread ID to forget")
 	return cmd
 }
 
-func runChatForget(yes bool) error {
+func runChatForget(yes bool, conversationID string) error {
 	if !yes {
 		if !isTTY() {
 			return errors.New("refusing to forget conversation history without --yes in non-interactive mode")
@@ -750,7 +759,7 @@ func runChatForget(yes bool) error {
 		if err != nil {
 			return err
 		}
-		res, err := cl.ChatForget()
+		res, err := cl.ChatForgetForConversation(conversationID)
 		if err != nil {
 			return fmt.Errorf("chat forget: %w", err)
 		}
@@ -763,7 +772,10 @@ func runChatForget(yes bool) error {
 		return err
 	}
 	defer st.Close() //nolint:errcheck
-	deleted, err := st.ForgetConversation()
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	deleted, err := st.ForgetConversationByID(conversationID)
 	if err != nil {
 		return fmt.Errorf("chat forget: %w", err)
 	}
@@ -773,24 +785,26 @@ func runChatForget(yes bool) error {
 
 func newChatCompactCmd() *cobra.Command {
 	var keepRecent int
+	var conversationID string
 	cmd := &cobra.Command{
 		Use:   "compact",
 		Short: "Compact older account conversation history",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runChatCompact(keepRecent)
+			return runChatCompact(keepRecent, conversationID)
 		},
 	}
 	cmd.Flags().IntVar(&keepRecent, "keep-recent", 40, "recent turns to keep verbatim")
+	cmd.Flags().StringVar(&conversationID, "conversation-id", "", "conversation/thread ID to compact")
 	return cmd
 }
 
-func runChatCompact(keepRecent int) error {
+func runChatCompact(keepRecent int, conversationID string) error {
 	if flagRemote != "" {
 		cl, err := connectServerForCLIAccount()
 		if err != nil {
 			return err
 		}
-		res, err := cl.ChatCompact(keepRecent)
+		res, err := cl.ChatCompactForConversation(keepRecent, conversationID)
 		if err != nil {
 			return fmt.Errorf("chat compact: %w", err)
 		}
@@ -803,7 +817,10 @@ func runChatCompact(keepRecent int) error {
 		return err
 	}
 	defer st.Close() //nolint:errcheck
-	compacted, err := st.CompactConversation(keepRecent)
+	if conversationID == "" {
+		conversationID = store.DefaultConversationID
+	}
+	compacted, err := st.CompactConversationByID(conversationID, keepRecent)
 	if err != nil {
 		return fmt.Errorf("chat compact: %w", err)
 	}

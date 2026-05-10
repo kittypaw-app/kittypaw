@@ -532,7 +532,10 @@ func setConversationScopeTx(exec interface {
 			scope_id = excluded.scope_id,
 			updated_at = excluded.updated_at`,
 		conversationID, scopeType, scopeID, now, now)
-	return err
+	if err != nil {
+		return err
+	}
+	return ensureConversationTx(exec, conversationID, scopeType, scopeID, now)
 }
 
 func (s *Store) ConversationScope(conversationID string) (*ConversationScope, bool, error) {

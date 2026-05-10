@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 30 {
-		t.Fatalf("expected 30 migrations, got %d", count)
+	if count != 31 {
+		t.Fatalf("expected 31 migrations, got %d", count)
 	}
 }
 
@@ -243,7 +243,7 @@ func TestConversationSchemaUsesV2Turns(t *testing.T) {
 			t.Fatalf("table %s count = %d, want 1", table, count)
 		}
 	}
-	for _, table := range []string{"agents", "conversations", "user_identities"} {
+	for _, table := range []string{"agents", "user_identities"} {
 		var count int
 		if err := st.db.QueryRow(
 			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
@@ -382,6 +382,67 @@ func TestCompactConversationPreservesRawTurns(t *testing.T) {
 	if state.Turns[1].Content != "msg-4" || state.Turns[2].Content != "msg-5" {
 		t.Fatalf("recent turns after summary = %+v", state.Turns)
 	}
+}
+
+func TestCompactConversationByIDOnlySummarizesThatConversation(t *testing.T) {
+	st := openTestStore(t)
+
+	if err := st.SetConversationScope("project:alpha", "project", "alpha"); err != nil {
+		t.Fatalf("set project scope: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			ConversationID: DefaultConversationID,
+			Role:           core.RoleUser,
+			Content:        fmt.Sprintf("general-%d", i),
+			Timestamp:      fmt.Sprintf("%d", i+1),
+		}); err != nil {
+			t.Fatalf("add general turn %d: %v", i, err)
+		}
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			ConversationID: "project:alpha",
+			Role:           core.RoleUser,
+			Content:        fmt.Sprintf("project-%d", i),
+			Timestamp:      fmt.Sprintf("%d", i+10),
+		}); err != nil {
+			t.Fatalf("add project turn %d: %v", i, err)
+		}
+	}
+
+	compacted, err := st.CompactConversationByID("project:alpha", 2)
+	if err != nil {
+		t.Fatalf("compact project conversation: %v", err)
+	}
+	if compacted != 3 {
+		t.Fatalf("compacted = %d, want 3", compacted)
+	}
+
+	projectState, err := st.LoadConversationStateForChat("project:alpha")
+	if err != nil {
+		t.Fatalf("load project state: %v", err)
+	}
+	if len(projectState.Turns) != 3 {
+		t.Fatalf("project turns = %d, want summary + 2 recent", len(projectState.Turns))
+	}
+	if !strings.Contains(projectState.Turns[0].Content, "오래된 대화 3개") {
+		t.Fatalf("project summary = %q, want scoped compaction summary", projectState.Turns[0].Content)
+	}
+
+	generalState, err := st.LoadConversationState()
+	if err != nil {
+		t.Fatalf("load general state: %v", err)
+	}
+	if got := conversationTurnContents(generalState.Turns); strings.Join(got, ",") != "general-0,general-1,general-2,general-3,general-4" {
+		t.Fatalf("general state turns = %v, want un-compacted general turns", got)
+	}
+}
+
+func conversationTurnContents(turns []core.ConversationTurn) []string {
+	out := make([]string, 0, len(turns))
+	for _, turn := range turns {
+		out = append(out, turn.Content)
+	}
+	return out
 }
 
 func TestStorageKV(t *testing.T) {
@@ -941,6 +1002,85 @@ func TestCheckpoints(t *testing.T) {
 	if len(state.Turns) != 3 {
 		t.Errorf("turns after rollback: got %d, want 3", len(state.Turns))
 	}
+}
+
+func TestCheckpointRollbackOnlyDeletesCheckpointConversation(t *testing.T) {
+	st := openTestStore(t)
+
+	if err := st.SetConversationScope("project:alpha", "project", "alpha"); err != nil {
+		t.Fatalf("set project scope: %v", err)
+	}
+
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: DefaultConversationID,
+		Role:           core.RoleUser,
+		Content:        "general-before",
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("add general before: %v", err)
+	}
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: "project:alpha",
+		Role:           core.RoleUser,
+		Content:        "project-before",
+		Timestamp:      "2",
+	}); err != nil {
+		t.Fatalf("add project before: %v", err)
+	}
+
+	cpID, err := st.CreateCheckpointForConversation("before-project-experiment", "project:alpha")
+	if err != nil {
+		t.Fatalf("create scoped checkpoint: %v", err)
+	}
+
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: DefaultConversationID,
+		Role:           core.RoleAssistant,
+		Content:        "general-after",
+		Timestamp:      "3",
+	}); err != nil {
+		t.Fatalf("add general after: %v", err)
+	}
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: "project:alpha",
+		Role:           core.RoleAssistant,
+		Content:        "project-after",
+		Timestamp:      "4",
+	}); err != nil {
+		t.Fatalf("add project after: %v", err)
+	}
+
+	deleted, err := st.RollbackToCheckpoint(cpID)
+	if err != nil {
+		t.Fatalf("rollback scoped checkpoint: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want only project-after", deleted)
+	}
+
+	generalTurns, err := st.ListConversationTurnsForConversation(DefaultConversationID, 10)
+	if err != nil {
+		t.Fatalf("list general turns: %v", err)
+	}
+	if got := conversationContents(generalTurns); strings.Join(got, ",") != "general-before,general-after" {
+		t.Fatalf("general turns = %v, want both turns preserved", got)
+	}
+
+	projectTurns, err := st.ListConversationTurnsForConversation("project:alpha", 10)
+	if err != nil {
+		t.Fatalf("list project turns: %v", err)
+	}
+	if got := conversationContents(projectTurns); strings.Join(got, ",") != "project-before" {
+		t.Fatalf("project turns = %v, want rollback to remove project-after only", got)
+	}
+}
+
+func conversationContents(records []ConversationTurnRecord) []string {
+	out := make([]string, 0, len(records))
+	for _, rec := range records {
+		out = append(out, rec.Content)
+	}
+	return out
 }
 
 func TestWorkspaceCRUD(t *testing.T) {

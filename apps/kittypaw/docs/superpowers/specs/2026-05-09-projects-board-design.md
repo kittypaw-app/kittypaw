@@ -192,8 +192,24 @@ ticket_staff_assignments
 ## Conversation Model
 
 Project chat and ticket chat are normal conversations with scope metadata.
+`conversation_scope` is the scope lookup table; first-class thread metadata
+and list/resume state live in the `conversations` index.
 
 ```text
+conversations
+- id
+- account_id
+- scope_type: general | project | ticket
+- scope_id
+- title
+- default_staff_id
+- source_channel
+- source_session_id
+- chat_id
+- archived_at
+- created_at
+- updated_at
+
 conversation_scope
 - conversation_id
 - scope_type: general | project | ticket
