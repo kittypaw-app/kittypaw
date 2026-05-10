@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -291,6 +292,45 @@ func TestProjectsAPIJobStartAndLogsUseRuntime(t *testing.T) {
 	}
 }
 
+func TestProjectsAPIJobInputUsesRuntime(t *testing.T) {
+	session := &fakeServerPTYSession{InputCh: make(chan string, 1), ResultCh: make(chan engine.JobPTYResult, 1)}
+	srv := newProjectsAPITestServerWithPTYRunner(t, fakeServerPTYRunner{Session: session})
+	project := projectsAPICreateGitProject(t, srv, "kitty")
+	ticket := projectsAPICreateTicket(t, srv, project.ID, "Run pty job")
+	planned := projectsAPIPlanJobWithMode(t, srv, ticket.ID, "shell", store.JobModePTY, "cat")
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/approve", map[string]any{"actor_id": "alice"}, http.StatusOK, nil)
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/start", map[string]any{"actor_id": "alice"}, http.StatusAccepted, nil)
+	defer func() {
+		session.ResultCh <- engine.JobPTYResult{ExitCode: 0, Summary: "done"}
+	}()
+
+	var input struct {
+		Accepted bool `json:"accepted"`
+		Job      struct {
+			ID string `json:"id"`
+		} `json:"job"`
+		Event struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"event"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/jobs/"+planned.ID+"/input", map[string]any{
+		"actor_id": "web",
+		"text":     "hello\n",
+	}, http.StatusOK, &input)
+	if !input.Accepted || input.Job.ID != planned.ID || input.Event.Type != "input" || input.Event.Message != "hello\n" {
+		t.Fatalf("input response = %+v", input)
+	}
+	select {
+	case got := <-session.InputCh:
+		if got != "hello\n" {
+			t.Fatalf("input text = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("PTY input was not forwarded")
+	}
+}
+
 func TestProjectsAPIStartNonGitReturnsStructuredCodeAndGitInitDoesNotStage(t *testing.T) {
 	srv := newProjectsAPITestServerWithRunner(t, fakeServerJobRunner{ExitCode: 0})
 	project := projectsAPICreateProject(t, srv, "kitty")
@@ -366,6 +406,63 @@ func newProjectsAPITestServerWithRunner(t *testing.T, runner engine.JobCommandRu
 	return srv
 }
 
+func newProjectsAPITestServerWithPTYRunner(t *testing.T, runner engine.JobPTYRunner) *Server {
+	t.Helper()
+	cfg := core.DefaultConfig()
+	cfg.Server.APIKey = "api-key"
+	cfg.Workspace.LiveIndex = false
+	deps := buildAccountDeps(t, filepath.Join(t.TempDir(), "accounts"), "alice", &cfg)
+	deps.JobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+		Store:     deps.Store,
+		AccountID: deps.Account.ID,
+		BaseDir:   deps.Account.BaseDir,
+		PTYRunner: runner,
+	})
+	srv := New([]*AccountDeps{deps}, "test")
+	if srv.session != nil {
+		srv.session.Indexer = nil
+	}
+	deps.LiveIndexer = nil
+	return srv
+}
+
+type fakeServerPTYRunner struct {
+	Session *fakeServerPTYSession
+}
+
+func (r fakeServerPTYRunner) Start(ctx context.Context, spec engine.JobPTYSpec) (engine.JobPTYSession, error) {
+	if r.Session == nil {
+		return nil, fmt.Errorf("missing fake PTY session")
+	}
+	if spec.Emit != nil {
+		spec.Emit([]byte("server pty output\n"))
+	}
+	return r.Session, nil
+}
+
+type fakeServerPTYSession struct {
+	InputCh  chan string
+	ResultCh chan engine.JobPTYResult
+}
+
+func (s *fakeServerPTYSession) Input(text string) error {
+	s.InputCh <- text
+	return nil
+}
+
+func (s *fakeServerPTYSession) Wait(ctx context.Context) engine.JobPTYResult {
+	select {
+	case result := <-s.ResultCh:
+		return result
+	case <-ctx.Done():
+		return engine.JobPTYResult{ExitCode: -1, ErrorText: ctx.Err().Error()}
+	}
+}
+
+func (s *fakeServerPTYSession) Close() error {
+	return nil
+}
+
 func projectsAPICreateProject(t *testing.T, srv *Server, key string) struct {
 	ID  string
 	Key string
@@ -436,6 +533,11 @@ func projectsAPICreateTicket(t *testing.T, srv *Server, projectID, title string)
 
 func projectsAPIPlanJob(t *testing.T, srv *Server, ticketID, driverID, prompt string) struct{ ID string } {
 	t.Helper()
+	return projectsAPIPlanJobWithMode(t, srv, ticketID, driverID, store.JobModeOneShot, prompt)
+}
+
+func projectsAPIPlanJobWithMode(t *testing.T, srv *Server, ticketID, driverID, mode, prompt string) struct{ ID string } {
+	t.Helper()
 	var planned struct {
 		Job struct {
 			ID string `json:"id"`
@@ -443,7 +545,7 @@ func projectsAPIPlanJob(t *testing.T, srv *Server, ticketID, driverID, prompt st
 	}
 	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/tickets/"+ticketID+"/jobs/plan", map[string]any{
 		"driver_id":      driverID,
-		"mode":           "one_shot",
+		"mode":           mode,
 		"prompt_summary": "Run job",
 		"prompt_text":    prompt,
 	}, http.StatusCreated, &planned)

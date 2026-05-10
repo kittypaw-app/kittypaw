@@ -1570,7 +1570,7 @@ func insertJobEventTx(exec interface {
 		INSERT INTO job_events (id, job_id, type, actor_id, message, metadata_json, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		newProjectStoreID("jev_"), strings.TrimSpace(req.JobID), strings.TrimSpace(req.Type), strings.TrimSpace(req.ActorID),
-		strings.TrimSpace(req.Message), metadataJSON, now)
+		req.Message, metadataJSON, now)
 	return err
 }
 
@@ -1582,7 +1582,7 @@ func (s *Store) AddJobEvent(req AddJobEventRequest) (*JobEvent, error) {
 		INSERT INTO job_events (id, job_id, type, actor_id, message, metadata_json, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		id, strings.TrimSpace(req.JobID), strings.TrimSpace(req.Type), strings.TrimSpace(req.ActorID),
-		strings.TrimSpace(req.Message), metadataJSON, now); err != nil {
+		req.Message, metadataJSON, now); err != nil {
 		return nil, err
 	}
 	return s.getJobEvent(id)

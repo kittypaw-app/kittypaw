@@ -514,6 +514,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Post("/jobs/{job}/approve", s.handleJobApprove)
 				r.Post("/jobs/{job}/start", s.handleJobStart)
 				r.Post("/jobs/{job}/cancel", s.handleJobCancel)
+				r.Post("/jobs/{job}/input", s.handleJobInput)
 				r.Get("/jobs/{job}/logs", s.handleJobLogs)
 
 				// Drivers

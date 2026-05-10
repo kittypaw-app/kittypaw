@@ -479,6 +479,27 @@ func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"job": job})
 }
 
+func (s *Server) handleJobInput(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ActorID string `json:"actor_id"`
+		Text    string `json:"text"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	runtime := s.projectsSession(r).ProjectJobRuntime
+	if runtime == nil {
+		writeError(w, http.StatusInternalServerError, "project job runtime unavailable")
+		return
+	}
+	result, err := runtime.AppendJobInput(r.Context(), chi.URLParam(r, "job"), body.ActorID, body.Text)
+	if err != nil {
+		writeProjectJobAPIError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "job": result.Job, "event": result.Event})
+}
+
 func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
 	runtime := s.projectsSession(r).ProjectJobRuntime
 	if runtime != nil {
