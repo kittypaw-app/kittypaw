@@ -462,8 +462,34 @@ func TestEnsureDefaultDriversAndListDrivers(t *testing.T) {
 	if byID["codex"].DisplayName != "Codex" || byID["codex"].Command != "codex" || !byID["codex"].Enabled {
 		t.Fatalf("codex driver = %+v", byID["codex"])
 	}
-	if byID["codex"].SupportedModesJSON != `["one_shot"]` {
+	if byID["codex"].SupportedModesJSON != `["one_shot","pty"]` {
 		t.Fatalf("codex modes = %s", byID["codex"].SupportedModesJSON)
+	}
+}
+
+func TestEnsureDefaultDriversIncludePTYMode(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	drivers, err := st.ListDrivers()
+	if err != nil {
+		t.Fatalf("ListDrivers() error = %v", err)
+	}
+	for _, id := range []string{"codex", "claude", "shell"} {
+		var found *DriverDefinition
+		for i := range drivers {
+			if drivers[i].ID == id {
+				found = &drivers[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("driver %q not found in %+v", id, drivers)
+		}
+		if !driverSupportsMode(found, JobModeOneShot) || !driverSupportsMode(found, JobModePTY) {
+			t.Fatalf("driver %q modes = %s, want one_shot and pty", id, found.SupportedModesJSON)
+		}
 	}
 }
 

@@ -51,6 +51,11 @@ const (
 	ProjectJobErrDriverNotFound          = "driver_not_found"
 	ProjectJobErrDriverModeUnsupported   = "driver_mode_unsupported"
 	ProjectJobErrDriverProcessFailed     = "driver_process_failed"
+	ProjectJobErrJobNotRunning           = "job_not_running"
+	ProjectJobErrJobInputNotSupported    = "job_input_not_supported"
+	ProjectJobErrJobSessionUnavailable   = "job_session_unavailable"
+	ProjectJobErrJobInputInvalid         = "job_input_invalid"
+	ProjectJobErrJobInputTooLarge        = "job_input_too_large"
 )
 
 type ProjectFolderClass string
@@ -1150,9 +1155,9 @@ func normalizeJSONDocument(input, fallback string) string {
 
 func (s *Store) EnsureDefaultDrivers() error {
 	defaults := []UpsertDriverRequest{
-		{ID: "codex", DisplayName: "Codex", Command: "codex", SupportedModesJSON: `["one_shot"]`, DefaultArgsJSON: `[]`, Enabled: true},
-		{ID: "claude", DisplayName: "Claude", Command: "claude", SupportedModesJSON: `["one_shot"]`, DefaultArgsJSON: `[]`, Enabled: true},
-		{ID: "shell", DisplayName: "Shell", Command: "sh", SupportedModesJSON: `["one_shot"]`, DefaultArgsJSON: `[]`, Enabled: true},
+		{ID: "codex", DisplayName: "Codex", Command: "codex", SupportedModesJSON: `["one_shot","pty"]`, DefaultArgsJSON: `[]`, Enabled: true},
+		{ID: "claude", DisplayName: "Claude", Command: "claude", SupportedModesJSON: `["one_shot","pty"]`, DefaultArgsJSON: `[]`, Enabled: true},
+		{ID: "shell", DisplayName: "Shell", Command: "sh", SupportedModesJSON: `["one_shot","pty"]`, DefaultArgsJSON: `[]`, Enabled: true},
 	}
 	for _, driver := range defaults {
 		if _, err := s.UpsertDriver(driver); err != nil {
