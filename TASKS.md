@@ -62,8 +62,8 @@
 - [x] **D1**: `pty` Job mode, 실행 중 입력 전달, transcript event, API/UI/Projects tool 연결, tmux/PR/full-log 보류 범위 설계.
 - [x] **D2**: 사용자 spec review.
 - [x] **T0**: 구현 계획 작성 (`apps/kittypaw/docs/superpowers/plans/2026-05-10-project-pty-job-runtime-implementation.md`).
-- [ ] **T1**: PTY Job Runtime 구현.
-- [ ] **T2**: focused tests, CI, live PTY smoke 검증 및 review follow-up.
+- [x] **T1**: PTY Job Runtime 구현 (`784e7e4`, `757efc2`, `e6300d7`, `255bac0`, `16fe615`, `0c158e8`).
+- [x] **T2**: focused tests, CI, live PTY smoke 검증 (`c4d1dab`).
 
 ## Follow-up: Product-Wide I18n
 
