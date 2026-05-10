@@ -154,12 +154,12 @@ KittyPaw 의 weather-now skill 이 KR 좌표에서 KittyAPI KMA primary 호출�
 
 ## 📋 Next Up
 
-### Projects Phase 2: Job Runtime / Driver Execution
-> Spec: `docs/superpowers/specs/2026-05-10-project-job-runtime-design.md`
+### Projects Phase 2: PTY Job Runtime / Interactive Driver Sessions
+> Spec: `docs/superpowers/specs/2026-05-10-project-pty-job-runtime-design.md`
 
-- [x] **D1: 설계 초안 작성** — approved Job 의 `one_shot` 실행, account-managed git worktree, non-git `git init` 승인 흐름, bounded log, success→review/failure→blocked 정책을 spec 으로 고정 (`25254b5`).
+- [x] **D1: 설계 초안 작성** — `pty` Job mode, 실행 중 입력 전달, transcript event, API/UI/Projects tool 연결, tmux/PR/full-log 보류 범위를 spec 으로 고정.
 - [ ] **D2: 사용자 spec review** — 구현 계획 작성 전 사용자 검토/수정 요청 반영.
-- [ ] **T0: 구현 계획 작성** — DB/API/UI/engine/job lifecycle 영향 범위와 기존 `jobs` 스키마 보강 필요 여부를 확인한다.
+- [ ] **T0: 구현 계획 작성** — runtime PTY adapter, `/api/v1/jobs/{job}/input`, web input control, Projects.appendJobInput tool, deterministic/live smoke 테스트 범위를 작업 단위로 나눈다.
 
 ### Plan 9: Real-use scenario test expansion
 - [ ] **Weather/location skill E2E** — `강남역 날씨`, `강남역에 비오나?`, `서울 날씨` 를 Chat BFF → Kittypaw dispatcher → fake registry → fake KittyAPI geo/weather 경로로 검증. 현재 engine 단위 테스트는 있으나 Chat relay E2E는 보강 필요. Current WIP: `강남역 날씨` + fake geo + installed weather reuse 일부.

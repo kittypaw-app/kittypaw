@@ -54,6 +54,15 @@
 - [x] **T2a-fix4**: Projects tool `cancelJob` 이 실행 중인 runtime job 을 실제 취소하고, default account config reload 가 runtime/browser/token manager 포인터를 누락하지 않도록 보강 (`9392a45`).
 - [x] **T2b**: Review Project Job Runtime Phase 1.5 implementation and fix follow-up issues (`9392a45`, `3cba9fe`).
 
+## Follow-up: Projects PTY Job Runtime Phase 2
+
+> App: `apps/kittypaw`
+> Spec: `apps/kittypaw/docs/superpowers/specs/2026-05-10-project-pty-job-runtime-design.md`
+
+- [x] **D1**: `pty` Job mode, 실행 중 입력 전달, transcript event, API/UI/Projects tool 연결, tmux/PR/full-log 보류 범위 설계.
+- [ ] **D2**: 사용자 spec review.
+- [ ] **T0**: 구현 계획 작성.
+
 ## Follow-up: Product-Wide I18n
 
 > Spec: `docs/superpowers/specs/2026-05-08-product-i18n-design.md`
