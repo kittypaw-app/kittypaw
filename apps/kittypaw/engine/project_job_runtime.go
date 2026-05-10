@@ -25,6 +25,7 @@ type ProjectJobRuntimeOptions struct {
 	AccountID string
 	BaseDir   string
 	Runner    JobCommandRunner
+	PTYRunner JobPTYRunner
 }
 
 type ProjectJobRuntime struct {
@@ -32,6 +33,7 @@ type ProjectJobRuntime struct {
 	accountID string
 	baseDir   string
 	runner    JobCommandRunner
+	ptyRunner JobPTYRunner
 
 	mu      sync.Mutex
 	running map[string]*runningProjectJob
@@ -39,7 +41,10 @@ type ProjectJobRuntime struct {
 }
 
 type runningProjectJob struct {
+	mode   string
 	cancel context.CancelFunc
+	input  func(string) error
+	close  func() error
 }
 
 type StartProjectJobOptions struct {
@@ -97,11 +102,16 @@ func NewProjectJobRuntime(opts ProjectJobRuntimeOptions) *ProjectJobRuntime {
 	if runner == nil {
 		runner = OSJobCommandRunner{}
 	}
+	ptyRunner := opts.PTYRunner
+	if ptyRunner == nil {
+		ptyRunner = OSJobPTYRunner{}
+	}
 	return &ProjectJobRuntime{
 		store:     opts.Store,
 		accountID: strings.TrimSpace(opts.AccountID),
 		baseDir:   strings.TrimSpace(opts.BaseDir),
 		runner:    runner,
+		ptyRunner: ptyRunner,
 		running:   map[string]*runningProjectJob{},
 		done:      map[string]chan struct{}{},
 	}
@@ -234,9 +244,21 @@ func (r *ProjectJobRuntime) StartJob(ctx context.Context, jobID string, opts Sta
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	r.mu.Lock()
-	r.running[job.ID] = &runningProjectJob{cancel: cancel}
+	r.running[job.ID] = &runningProjectJob{mode: started.Mode, cancel: cancel}
 	r.done[job.ID] = done
 	r.mu.Unlock()
+
+	if prepared.Job.Mode == store.JobModePTY {
+		if err := r.startPreparedPTYJob(runCtx, prepared, done); err != nil {
+			cancel()
+			r.mu.Lock()
+			delete(r.running, job.ID)
+			r.mu.Unlock()
+			close(done)
+			return nil, err
+		}
+		return started, nil
+	}
 
 	go r.runPreparedJob(runCtx, prepared, done)
 	return started, nil
@@ -244,11 +266,62 @@ func (r *ProjectJobRuntime) StartJob(ctx context.Context, jobID string, opts Sta
 
 func (r *ProjectJobRuntime) CancelJob(_ context.Context, jobID, actorID, reason string) (*store.Job, error) {
 	r.mu.Lock()
-	if running := r.running[strings.TrimSpace(jobID)]; running != nil && running.cancel != nil {
-		running.cancel()
-	}
+	running := r.running[strings.TrimSpace(jobID)]
 	r.mu.Unlock()
+	if running != nil {
+		if running.cancel != nil {
+			running.cancel()
+		}
+		if running.close != nil {
+			_ = running.close()
+		}
+	}
 	return r.store.CancelJob(jobID, actorID, reason)
+}
+
+type AppendProjectJobInputResult struct {
+	Job   *store.Job      `json:"job"`
+	Event *store.JobEvent `json:"event"`
+}
+
+func (r *ProjectJobRuntime) AppendJobInput(_ context.Context, jobID, actorID, text string) (*AppendProjectJobInputResult, error) {
+	text = strings.ReplaceAll(text, "\x00", "")
+	if text == "" {
+		return nil, &store.ProjectJobError{Code: store.ProjectJobErrJobInputInvalid, Message: "job input is empty"}
+	}
+	if len(text) > projectJobInputLimit {
+		return nil, &store.ProjectJobError{Code: store.ProjectJobErrJobInputTooLarge, Message: "job input is too large"}
+	}
+	job, err := r.store.GetJob(jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.Status != store.JobStatusRunning {
+		return nil, &store.ProjectJobError{Code: store.ProjectJobErrJobNotRunning, Message: fmt.Sprintf("job %q is not running", job.ID)}
+	}
+	if job.Mode != store.JobModePTY {
+		return nil, &store.ProjectJobError{Code: store.ProjectJobErrJobInputNotSupported, Message: fmt.Sprintf("job mode %q does not accept input", job.Mode)}
+	}
+	r.mu.Lock()
+	running := r.running[job.ID]
+	r.mu.Unlock()
+	if running == nil || running.input == nil {
+		return nil, &store.ProjectJobError{Code: store.ProjectJobErrJobSessionUnavailable, Message: "job session is not available in this daemon"}
+	}
+	if err := running.input(text); err != nil {
+		return nil, &store.ProjectJobError{Code: store.ProjectJobErrDriverProcessFailed, Message: err.Error()}
+	}
+	event, err := r.store.AddJobEvent(store.AddJobEventRequest{
+		JobID:        job.ID,
+		Type:         "input",
+		ActorID:      strings.TrimSpace(actorID),
+		Message:      truncateString(text, projectJobInputLimit),
+		MetadataJSON: projectJobInputMetadata(job, len(text)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &AppendProjectJobInputResult{Job: job, Event: event}, nil
 }
 
 func (r *ProjectJobRuntime) JobLogs(jobID string) (*ProjectJobLogs, error) {
@@ -287,6 +360,9 @@ func (r *ProjectJobRuntime) Close() {
 		if running.cancel != nil {
 			running.cancel()
 		}
+		if running.close != nil {
+			_ = running.close()
+		}
 	}
 }
 
@@ -300,7 +376,7 @@ func (r *ProjectJobRuntime) prepareApprovedJob(ctx context.Context, job *store.J
 		}
 		return nil, &store.ProjectJobError{Code: store.ProjectJobErrJobAlreadyStarted, Message: fmt.Sprintf("job %q cannot start from status %q", job.ID, job.Status)}
 	}
-	if job.Mode != store.JobModeOneShot {
+	if job.Mode != store.JobModeOneShot && job.Mode != store.JobModePTY {
 		return nil, &store.ProjectJobError{Code: store.ProjectJobErrDriverModeUnsupported, Message: fmt.Sprintf("driver mode %q is not supported yet", job.Mode)}
 	}
 	project, err := r.store.GetProject(job.ProjectID)
@@ -451,6 +527,140 @@ func (r *ProjectJobRuntime) runPreparedJob(ctx context.Context, prepared *prepar
 	})
 }
 
+func (r *ProjectJobRuntime) startPreparedPTYJob(ctx context.Context, prepared *preparedProjectJob, done chan struct{}) error {
+	var tail boundedJobLog
+	var tailMu sync.Mutex
+	spec, err := buildProjectPTYJobSpec(prepared)
+	if err != nil {
+		_, _ = r.store.FailJob(prepared.Job.ID, store.FinishJobRequest{
+			ActorID:       "runtime",
+			ResultSummary: "driver command failed",
+			ErrorExcerpt:  truncateString(err.Error(), projectJobErrorExcerptLimit),
+			ExitCode:      1,
+			MetadataJSON:  projectJobMetadata(prepared, 1, 0),
+		})
+		return err
+	}
+	startedAt := time.Now()
+	spec.Emit = func(chunk []byte) {
+		text := sanitizeProjectPTYTranscript(chunk)
+		if text == "" {
+			return
+		}
+		tailMu.Lock()
+		truncated := tail.Append(text)
+		logTail := tail.String()
+		tailMu.Unlock()
+		_, _ = r.store.UpdateJobLog(prepared.Job.ID, store.UpdateJobLogRequest{LogTail: logTail, LogTruncated: truncated})
+		_, _ = r.store.AddJobEvent(store.AddJobEventRequest{
+			JobID:        prepared.Job.ID,
+			Type:         "transcript",
+			Message:      truncateString(text, projectJobEventLogLimit),
+			MetadataJSON: projectJobIOMetadata(prepared, len(chunk), time.Since(startedAt).Milliseconds()),
+		})
+	}
+	session, err := r.ptyRunner.Start(ctx, spec)
+	if err != nil {
+		_, _ = r.store.FailJob(prepared.Job.ID, store.FinishJobRequest{
+			ActorID:       "runtime",
+			ResultSummary: "pty start failed",
+			ErrorExcerpt:  truncateString(err.Error(), projectJobErrorExcerptLimit),
+			ExitCode:      1,
+			MetadataJSON:  projectJobMetadata(prepared, 1, 0),
+		})
+		return err
+	}
+	r.mu.Lock()
+	if running := r.running[prepared.Job.ID]; running != nil {
+		running.input = session.Input
+		running.close = session.Close
+		running.mode = store.JobModePTY
+	}
+	r.mu.Unlock()
+	_, _ = r.store.AddJobEvent(store.AddJobEventRequest{
+		JobID:        prepared.Job.ID,
+		Type:         "pty_started",
+		Message:      "pty started",
+		MetadataJSON: projectJobMetadata(prepared, 0, 0),
+	})
+	if spec.InitialInput != "" {
+		_, _ = r.store.AddJobEvent(store.AddJobEventRequest{
+			JobID:        prepared.Job.ID,
+			Type:         "input",
+			ActorID:      "runtime",
+			Message:      truncateString(spec.InitialInput, projectJobInputLimit),
+			MetadataJSON: projectJobIOMetadata(prepared, len(spec.InitialInput), 0),
+		})
+	}
+	go r.waitPreparedPTYJob(ctx, prepared, done, session, &tail, &tailMu, startedAt)
+	return nil
+}
+
+func (r *ProjectJobRuntime) waitPreparedPTYJob(ctx context.Context, prepared *preparedProjectJob, done chan struct{}, session JobPTYSession, tail *boundedJobLog, tailMu *sync.Mutex, startedAt time.Time) {
+	defer func() {
+		r.mu.Lock()
+		delete(r.running, prepared.Job.ID)
+		r.mu.Unlock()
+		_, _ = r.store.AddJobEvent(store.AddJobEventRequest{
+			JobID:        prepared.Job.ID,
+			Type:         "cleanup",
+			Message:      "runtime cleanup",
+			MetadataJSON: projectJobMetadata(prepared, 0, 0),
+		})
+		close(done)
+	}()
+
+	result := session.Wait(ctx)
+	_ = session.Close()
+	durationMS := time.Since(startedAt).Milliseconds()
+	metadata := projectJobMetadata(prepared, result.ExitCode, durationMS)
+	_, _ = r.store.AddJobEvent(store.AddJobEventRequest{
+		JobID:        prepared.Job.ID,
+		Type:         "pty_closed",
+		Message:      "pty closed",
+		MetadataJSON: metadata,
+	})
+	current, err := r.store.GetJob(prepared.Job.ID)
+	if err == nil && current.Status == store.JobStatusCanceled {
+		return
+	}
+	summary := strings.TrimSpace(result.Summary)
+	if summary == "" && result.ExitCode == 0 {
+		summary = "job completed"
+	}
+	if summary == "" {
+		summary = "job failed"
+	}
+	tailMu.Lock()
+	logTail := tail.String()
+	logTruncated := tail.Truncated()
+	tailMu.Unlock()
+	if result.ExitCode == 0 {
+		_, _ = r.store.SucceedJob(prepared.Job.ID, store.FinishJobRequest{
+			ActorID:       "runtime",
+			ResultSummary: summary,
+			LogTail:       logTail,
+			LogTruncated:  logTruncated,
+			ExitCode:      result.ExitCode,
+			MetadataJSON:  metadata,
+		})
+		return
+	}
+	errorText := strings.TrimSpace(result.ErrorText)
+	if errorText == "" {
+		errorText = logTail
+	}
+	_, _ = r.store.FailJob(prepared.Job.ID, store.FinishJobRequest{
+		ActorID:       "runtime",
+		ResultSummary: summary,
+		LogTail:       logTail,
+		ErrorExcerpt:  truncateString(errorText, projectJobErrorExcerptLimit),
+		LogTruncated:  logTruncated,
+		ExitCode:      result.ExitCode,
+		MetadataJSON:  metadata,
+	})
+}
+
 func buildProjectJobPrompt(p *preparedProjectJob) string {
 	return fmt.Sprintf(`Project: %s - %s
 Project root: %s
@@ -532,6 +742,54 @@ func buildProjectJobCommand(p *preparedProjectJob) (JobCommandSpec, error) {
 	}
 }
 
+func buildProjectPTYJobSpec(p *preparedProjectJob) (JobPTYSpec, error) {
+	command := strings.TrimSpace(p.Driver.Command)
+	if command == "" {
+		return JobPTYSpec{}, &store.ProjectJobError{Code: store.ProjectJobErrDriverNotFound, Message: "driver command is empty"}
+	}
+	switch p.Driver.ID {
+	case "codex":
+		return JobPTYSpec{
+			Command: command,
+			Args:    []string{"-C", p.WorktreePath, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "--no-alt-screen", p.Prompt},
+			Dir:     p.WorktreePath,
+		}, nil
+	case "claude":
+		return JobPTYSpec{
+			Command: command,
+			Args:    []string{"--permission-mode", "default", p.Prompt},
+			Dir:     p.WorktreePath,
+		}, nil
+	case "shell":
+		args, err := driverDefaultArgs(p.Driver.DefaultArgsJSON)
+		if err != nil {
+			return JobPTYSpec{}, err
+		}
+		return JobPTYSpec{
+			Command:      command,
+			Args:         args,
+			Dir:          p.WorktreePath,
+			InitialInput: ensureTrailingNewline(p.Job.PromptText),
+			Env: []string{
+				"KITTYPAW_JOB_PROMPT=" + p.Job.PromptText,
+				"KITTYPAW_JOB_CONTEXT=" + p.Prompt,
+			},
+		}, nil
+	default:
+		args, err := driverDefaultArgs(p.Driver.DefaultArgsJSON)
+		if err != nil {
+			return JobPTYSpec{}, err
+		}
+		return JobPTYSpec{
+			Command:      command,
+			Args:         args,
+			Dir:          p.WorktreePath,
+			InitialInput: ensureTrailingNewline(p.Prompt),
+			Env:          []string{"KITTYPAW_JOB_PROMPT=" + p.Prompt},
+		}, nil
+	}
+}
+
 func decodeJobDriver(job *store.Job) (store.DriverDefinition, error) {
 	var driver store.DriverDefinition
 	if err := json.Unmarshal([]byte(job.DriverSnapshotJSON), &driver); err != nil {
@@ -584,6 +842,32 @@ func projectJobMetadata(p *preparedProjectJob, exitCode int, durationMS int64) s
 		"branch_name":   p.BranchName,
 	})
 	return string(data)
+}
+
+func projectJobIOMetadata(p *preparedProjectJob, byteCount int, durationMS int64) string {
+	data, _ := json.Marshal(map[string]any{
+		"bytes":       byteCount,
+		"duration_ms": durationMS,
+		"driver_id":   p.Driver.ID,
+		"mode":        p.Job.Mode,
+	})
+	return string(data)
+}
+
+func projectJobInputMetadata(job *store.Job, byteCount int) string {
+	data, _ := json.Marshal(map[string]any{
+		"bytes":     byteCount,
+		"driver_id": job.DriverID,
+		"mode":      job.Mode,
+	})
+	return string(data)
+}
+
+func ensureTrailingNewline(s string) string {
+	if s == "" || strings.HasSuffix(s, "\n") {
+		return s
+	}
+	return s + "\n"
 }
 
 type boundedJobLog struct {

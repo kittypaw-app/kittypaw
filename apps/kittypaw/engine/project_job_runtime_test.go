@@ -258,6 +258,97 @@ func TestProjectJobRuntimeCancelBestEffort(t *testing.T) {
 	}
 }
 
+func TestProjectJobRuntimeStartsPTYAndAcceptsInput(t *testing.T) {
+	st := openProjectJobRuntimeStore(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	gitCommitFile(t, root, "README.md", "clean\n")
+	project := createRuntimeProject(t, st, root)
+	job := planApprovedRuntimeJobWithMode(t, st, project.ID, store.JobModePTY, "hello pty")
+	session := &fakeJobPTYSession{InputCh: make(chan string, 1), ResultCh: make(chan JobPTYResult, 1)}
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{
+		Store:     st,
+		AccountID: "alice",
+		BaseDir:   t.TempDir(),
+		PTYRunner: fakeJobPTYRunner{Started: make(chan JobPTYSpec, 1), Session: session},
+	})
+
+	started, err := rt.StartJob(context.Background(), job.ID, StartProjectJobOptions{ActorID: "pm"})
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	if started.Status != store.JobStatusRunning {
+		t.Fatalf("started = %+v, want running", started)
+	}
+	input, err := rt.AppendJobInput(context.Background(), job.ID, "alice", "continue\n")
+	if err != nil {
+		t.Fatalf("AppendJobInput() error = %v", err)
+	}
+	if input.Event.Type != "input" || input.Job.ID != job.ID {
+		t.Fatalf("input result = %+v", input)
+	}
+	select {
+	case got := <-session.InputCh:
+		if got != "continue\n" {
+			t.Fatalf("input text = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("PTY input was not written")
+	}
+	session.ResultCh <- JobPTYResult{ExitCode: 0, Summary: "pty done"}
+	if !rt.WaitForJob(job.ID, 2*time.Second) {
+		t.Fatal("pty job did not finish")
+	}
+	got, err := st.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if got.Status != store.JobStatusSucceeded || got.ResultSummary != "pty done" {
+		t.Fatalf("job after pty success = %+v", got)
+	}
+	events, err := st.ListJobEvents(job.ID)
+	if err != nil {
+		t.Fatalf("ListJobEvents() error = %v", err)
+	}
+	if !hasJobEvent(events, "pty_started") || !hasJobEvent(events, "input") || !hasJobEvent(events, "transcript") || !hasJobEvent(events, "pty_closed") {
+		t.Fatalf("events = %+v, want pty_started/input/transcript/pty_closed", events)
+	}
+	if strings.Contains(got.LogTail, "\x1b") || !strings.Contains(got.LogTail, "pty output") {
+		t.Fatalf("log tail = %q, want sanitized PTY output", got.LogTail)
+	}
+}
+
+func TestProjectJobRuntimePTYInputErrors(t *testing.T) {
+	st := openProjectJobRuntimeStore(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	gitCommitFile(t, root, "README.md", "clean\n")
+	project := createRuntimeProject(t, st, root)
+	oneShot := planApprovedRuntimeJobWithMode(t, st, project.ID, store.JobModeOneShot, "echo ok")
+	block := make(chan struct{})
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{Store: st, AccountID: "alice", BaseDir: t.TempDir(), Runner: fakeBlockingJobCommandRunner{Block: block}})
+	defer func() {
+		close(block)
+		_ = rt.WaitForJob(oneShot.ID, 2*time.Second)
+	}()
+
+	if _, err := rt.AppendJobInput(context.Background(), oneShot.ID, "alice", "x"); !store.IsProjectJobError(err, store.ProjectJobErrJobNotRunning) {
+		t.Fatalf("AppendJobInput(not running) error = %v, want %s", err, store.ProjectJobErrJobNotRunning)
+	}
+	if _, err := rt.StartJob(context.Background(), oneShot.ID, StartProjectJobOptions{ActorID: "pm"}); err != nil {
+		t.Fatalf("StartJob(oneShot) error = %v", err)
+	}
+	if _, err := rt.AppendJobInput(context.Background(), oneShot.ID, "alice", "x"); !store.IsProjectJobError(err, store.ProjectJobErrJobInputNotSupported) {
+		t.Fatalf("AppendJobInput(one-shot) error = %v, want %s", err, store.ProjectJobErrJobInputNotSupported)
+	}
+	if _, err := rt.AppendJobInput(context.Background(), oneShot.ID, "alice", "\x00"); !store.IsProjectJobError(err, store.ProjectJobErrJobInputInvalid) {
+		t.Fatalf("AppendJobInput(empty) error = %v, want %s", err, store.ProjectJobErrJobInputInvalid)
+	}
+	if _, err := rt.AppendJobInput(context.Background(), oneShot.ID, "alice", strings.Repeat("x", projectJobInputLimit+1)); !store.IsProjectJobError(err, store.ProjectJobErrJobInputTooLarge) {
+		t.Fatalf("AppendJobInput(large) error = %v, want %s", err, store.ProjectJobErrJobInputTooLarge)
+	}
+}
+
 func TestProjectJobRuntimeCleansWorktreeWhenStoreStartRejectsConcurrentJob(t *testing.T) {
 	st := openProjectJobRuntimeStore(t)
 	root := t.TempDir()
@@ -327,6 +418,11 @@ func planApprovedRuntimeJob(t *testing.T, st *store.Store, projectID string) *st
 
 func planApprovedRuntimeJobWithPrompt(t *testing.T, st *store.Store, projectID, prompt string) *store.Job {
 	t.Helper()
+	return planApprovedRuntimeJobWithMode(t, st, projectID, store.JobModeOneShot, prompt)
+}
+
+func planApprovedRuntimeJobWithMode(t *testing.T, st *store.Store, projectID, mode, prompt string) *store.Job {
+	t.Helper()
 	if err := st.EnsureDefaultDrivers(); err != nil {
 		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
 	}
@@ -338,7 +434,7 @@ func planApprovedRuntimeJobWithPrompt(t *testing.T, st *store.Store, projectID, 
 		ProjectID:     projectID,
 		TicketID:      ticket.ID,
 		DriverID:      "shell",
-		Mode:          store.JobModeOneShot,
+		Mode:          mode,
 		PromptSummary: "Run driver",
 		PromptText:    prompt,
 		CreatedBy:     "pm",
@@ -351,6 +447,15 @@ func planApprovedRuntimeJobWithPrompt(t *testing.T, st *store.Store, projectID, 
 		t.Fatalf("ApproveJob() error = %v", err)
 	}
 	return approved
+}
+
+func hasJobEvent(events []store.JobEvent, typ string) bool {
+	for _, event := range events {
+		if event.Type == typ {
+			return true
+		}
+	}
+	return false
 }
 
 func planApprovedRuntimeJobForTicket(t *testing.T, st *store.Store, projectID, ticketID, summary string) *store.Job {
@@ -440,4 +545,47 @@ func (r fakeBlockingJobCommandRunner) Run(ctx context.Context, spec JobCommandSp
 	case <-r.Block:
 		return JobCommandResult{ExitCode: 0, Summary: "released"}
 	}
+}
+
+type fakeJobPTYRunner struct {
+	Started chan JobPTYSpec
+	Session *fakeJobPTYSession
+}
+
+func (r fakeJobPTYRunner) Start(ctx context.Context, spec JobPTYSpec) (JobPTYSession, error) {
+	if r.Started != nil {
+		r.Started <- spec
+	}
+	if r.Session == nil {
+		return nil, fmt.Errorf("missing fake PTY session")
+	}
+	if spec.Emit != nil {
+		spec.Emit([]byte("\x1b[32mpty output\x1b[0m\n"))
+	}
+	return r.Session, nil
+}
+
+type fakeJobPTYSession struct {
+	InputCh  chan string
+	ResultCh chan JobPTYResult
+	Closed   bool
+}
+
+func (s *fakeJobPTYSession) Input(text string) error {
+	s.InputCh <- text
+	return nil
+}
+
+func (s *fakeJobPTYSession) Wait(ctx context.Context) JobPTYResult {
+	select {
+	case result := <-s.ResultCh:
+		return result
+	case <-ctx.Done():
+		return JobPTYResult{ExitCode: -1, ErrorText: ctx.Err().Error()}
+	}
+}
+
+func (s *fakeJobPTYSession) Close() error {
+	s.Closed = true
+	return nil
 }
