@@ -349,6 +349,35 @@ func TestProjectJobRuntimePTYInputErrors(t *testing.T) {
 	}
 }
 
+func TestProjectJobRuntimeLiveShellPTYEcho(t *testing.T) {
+	if os.Getenv("KITTYPAW_LIVE_PTY") != "1" {
+		t.Skip("set KITTYPAW_LIVE_PTY=1 to run live PTY smoke")
+	}
+	st := openProjectJobRuntimeStore(t)
+	root := t.TempDir()
+	gitInit(t, root)
+	gitCommitFile(t, root, "README.md", "clean\n")
+	project := createRuntimeProject(t, st, root)
+	job := planApprovedRuntimeJobWithMode(t, st, project.ID, store.JobModePTY, "while read line; do echo got:$line; break; done; exit\n")
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{Store: st, AccountID: "alice", BaseDir: t.TempDir()})
+	if _, err := rt.StartJob(context.Background(), job.ID, StartProjectJobOptions{ActorID: "pm"}); err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+	if _, err := rt.AppendJobInput(context.Background(), job.ID, "alice", "hello\n"); err != nil {
+		t.Fatalf("AppendJobInput() error = %v", err)
+	}
+	if !rt.WaitForJob(job.ID, 5*time.Second) {
+		t.Fatal("live PTY job did not finish")
+	}
+	got, err := st.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if got.Status != store.JobStatusSucceeded || !strings.Contains(got.LogTail, "got:hello") {
+		t.Fatalf("live PTY job = %+v log=%q", got, got.LogTail)
+	}
+}
+
 func TestProjectJobRuntimeCleansWorktreeWhenStoreStartRejectsConcurrentJob(t *testing.T) {
 	st := openProjectJobRuntimeStore(t)
 	root := t.TempDir()
