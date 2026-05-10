@@ -138,10 +138,16 @@ File.summary("src/main.go", {
 
 ## Permission System
 
-Destructive operations (Shell.exec, Git.push, etc.) require user approval in `supervised` autonomy mode.
+Mutating or high-risk operations (`Shell.exec`, mutating `Git.*`, `File.write`/`append`/`edit`/`mkdir`/`delete`, Browser mutations, etc.) require user approval in `supervised` autonomy mode.
 Chat channels that implement `channel.Confirmer` (currently Telegram) show an inline keyboard for approve/deny.
 Config: `[permissions]` section in `config.toml` — `require_approval` (operation list) + `timeout_seconds`.
 Callback responses route through channel-internal `sync.Map` (not `eventCh`) to prevent dispatchLoop deadlock.
+`Skill.run` propagates the current run's permission callback into nested user skill/package execution, so a file write inside a skill prompts instead of failing with a no-callback approval error.
+
+## Tool Trace Transcript
+
+Sandbox tool calls receive stable per-turn `skill_call_N` IDs and are persisted on assistant conversation turns as structured `tool_trace_json` (`skill`, `method`, `args`, raw JSON result or error, success flag). Traces accumulate across retry attempts and `Runner.observe` rounds before the final assistant turn is saved, so audit/replay sees every tool call that actually ran in the user turn.
+Use `File.edit(path, old_text, new_text)` for targeted file changes when possible; it only writes if `old_text` appears exactly once, otherwise it returns a structured failure without changing the file.
 
 ## Config Internals
 

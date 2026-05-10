@@ -655,6 +655,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	if opts != nil {
 		onPermission = opts.OnPermission
 	}
+	ctx = ContextWithPermissionCallback(ctx, onPermission)
 
 	// Store the account conversation key and event in context for downstream handlers.
 	ctx = ContextWithConversationID(ctx, convKey)
@@ -770,6 +771,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	}
 
 	var observations []core.Observation
+	var turnToolTraces []core.ToolTrace
 	var lastError string
 	modelOverridden := opts != nil && opts.ModelOverride != ""
 	activeProvider := s.Provider
@@ -913,6 +915,7 @@ observeLoop:
 			if err != nil {
 				return "", fmt.Errorf("sandbox execute: %w", err)
 			}
+			turnToolTraces = appendTurnToolTraces(turnToolTraces, execResult.ToolTraces)
 
 			// Runner.observe() — re-invoke LLM with observations
 			if execResult.Observe {
@@ -930,6 +933,7 @@ observeLoop:
 					Role:          core.RoleAssistant,
 					Content:       output,
 					Code:          code,
+					ToolTraces:    turnToolTraces,
 					Channel:       meta.Channel,
 					ChannelUserID: meta.ChannelUserID,
 					ChatID:        meta.ChatID,
@@ -965,6 +969,7 @@ observeLoop:
 					Content:       output,
 					Code:          code,
 					Result:        FormatExecResult(execResult),
+					ToolTraces:    turnToolTraces,
 					Channel:       meta.Channel,
 					ChannelUserID: meta.ChannelUserID,
 					ChatID:        meta.ChatID,
@@ -1031,6 +1036,7 @@ observeLoop:
 	assistantTurn := core.ConversationTurn{
 		Role:          core.RoleAssistant,
 		Content:       fmt.Sprintf("Error after %d retries: %s", maxRetries, errMsg),
+		ToolTraces:    turnToolTraces,
 		Channel:       meta.Channel,
 		ChannelUserID: meta.ChannelUserID,
 		ChatID:        meta.ChatID,
@@ -1051,6 +1057,25 @@ observeLoop:
 	// the technical detail; the chat surface stays in the assistant's
 	// voice.
 	return "", fmt.Errorf("지금 답변을 만들지 못했어요. 잠시 후 다시 한 번 말씀해 주시겠어요?")
+}
+
+func appendTurnToolTraces(dst []core.ToolTrace, src []core.ToolTrace) []core.ToolTrace {
+	for _, trace := range src {
+		if trace.ID == "" || toolTraceIDExists(dst, trace.ID) {
+			trace.ID = fmt.Sprintf("skill_call_%d", len(dst)+1)
+		}
+		dst = append(dst, trace)
+	}
+	return dst
+}
+
+func toolTraceIDExists(traces []core.ToolTrace, id string) bool {
+	for _, trace := range traces {
+		if trace.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) recordExecution(input, output string, resp *llm.Response, start time.Time, retries int, success bool) {

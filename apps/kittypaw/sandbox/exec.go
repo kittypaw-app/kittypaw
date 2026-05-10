@@ -107,17 +107,29 @@ func run(ctx context.Context, cfg core.SandboxConfig, code string, jsContext map
 					}
 				}
 				sc := core.SkillCall{
+					ID:        fmt.Sprintf("skill_call_%d", len(result.SkillCalls)+1),
 					SkillName: skillName,
 					Method:    methodName,
 					Args:      rawArgs,
 				}
 				result.SkillCalls = append(result.SkillCalls, sc)
+				trace := core.ToolTrace{
+					ID:        sc.ID,
+					SkillName: sc.SkillName,
+					Method:    sc.Method,
+					Args:      rawArgs,
+				}
 
 				if resolver != nil {
 					resp, err := resolver(ctx, sc)
 					if err != nil {
+						trace.Error = err.Error()
+						result.ToolTraces = append(result.ToolTraces, trace)
 						panic(vm.NewGoError(err))
 					}
+					trace.Success = true
+					trace.Result = rawToolResult(resp)
+					result.ToolTraces = append(result.ToolTraces, trace)
 					if resp != "" {
 						if opts.rawResolverResults {
 							// Package mode: return raw JSON string so
@@ -129,6 +141,10 @@ func run(ctx context.Context, cfg core.SandboxConfig, code string, jsContext map
 							return vm.ToValue(parsed)
 						}
 					}
+				} else {
+					trace.Success = true
+					trace.Result = json.RawMessage("null")
+					result.ToolTraces = append(result.ToolTraces, trace)
 				}
 				return goja.Null()
 			})
@@ -242,4 +258,18 @@ func run(ctx context.Context, cfg core.SandboxConfig, code string, jsContext map
 	}
 
 	return result, nil
+}
+
+func rawToolResult(resp string) json.RawMessage {
+	if resp == "" {
+		return json.RawMessage("null")
+	}
+	if json.Valid([]byte(resp)) {
+		return json.RawMessage(resp)
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return data
 }

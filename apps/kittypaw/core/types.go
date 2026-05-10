@@ -70,15 +70,16 @@ type ConversationState struct {
 
 // ConversationTurn is a single message in a conversation.
 type ConversationTurn struct {
-	Role          Role   `json:"role"`
-	Content       string `json:"content"`
-	Code          string `json:"code,omitempty"`
-	Result        string `json:"result,omitempty"`
-	Channel       string `json:"channel,omitempty"`
-	ChannelUserID string `json:"channel_user_id,omitempty"`
-	ChatID        string `json:"chat_id,omitempty"`
-	MessageID     string `json:"message_id,omitempty"`
-	Timestamp     string `json:"timestamp"`
+	Role          Role        `json:"role"`
+	Content       string      `json:"content"`
+	Code          string      `json:"code,omitempty"`
+	Result        string      `json:"result,omitempty"`
+	ToolTraces    []ToolTrace `json:"tool_traces,omitempty"`
+	Channel       string      `json:"channel,omitempty"`
+	ChannelUserID string      `json:"channel_user_id,omitempty"`
+	ChatID        string      `json:"chat_id,omitempty"`
+	MessageID     string      `json:"message_id,omitempty"`
+	Timestamp     string      `json:"timestamp"`
 }
 
 // Event is an inbound message from any channel.
@@ -215,9 +216,23 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 
 // SkillCall represents a skill invocation captured from sandbox execution.
 type SkillCall struct {
+	ID        string            `json:"id,omitempty"`
 	SkillName string            `json:"skill_name"`
 	Method    string            `json:"method"`
 	Args      []json.RawMessage `json:"args"`
+}
+
+// ToolTrace is the structured transcript entry for one sandbox tool call.
+// Result is the raw JSON string returned by the resolver so callers can replay
+// or inspect the exact tool output without parsing assistant prose.
+type ToolTrace struct {
+	ID        string            `json:"id"`
+	SkillName string            `json:"skill_name"`
+	Method    string            `json:"method"`
+	Args      []json.RawMessage `json:"args,omitempty"`
+	Result    json.RawMessage   `json:"result,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	Success   bool              `json:"success"`
 }
 
 // Observation holds data from a Runner.observe() call in the sandbox.
@@ -231,6 +246,7 @@ type ExecutionResult struct {
 	Success      bool          `json:"success"`
 	Output       string        `json:"output"`
 	SkillCalls   []SkillCall   `json:"skill_calls"`
+	ToolTraces   []ToolTrace   `json:"tool_traces,omitempty"`
 	Error        string        `json:"error,omitempty"`
 	Observe      bool          `json:"observe,omitempty"`
 	Observations []Observation `json:"observations,omitempty"`

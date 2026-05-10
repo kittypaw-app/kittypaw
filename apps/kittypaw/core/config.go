@@ -192,7 +192,8 @@ type PermissionPolicy struct {
 // integrity. Operators wanting a hard system gate can re-add the entry in
 // their config.toml [permissions] require_approval list.
 var DefaultRequireApproval = []string{
-	"Shell.exec", "Git.add", "Git.commit", "Git.push", "Git.pull", "File.delete",
+	"Shell.exec", "Git.add", "Git.commit", "Git.push", "Git.pull",
+	"File.write", "File.append", "File.edit", "File.mkdir", "File.delete",
 	"Skill.uninstall",
 	"Browser.open", "Browser.navigate", "Browser.click", "Browser.type", "Browser.evaluate", "Browser.close",
 }

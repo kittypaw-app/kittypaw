@@ -158,6 +158,21 @@ func TestExecuteWithResolver(t *testing.T) {
 	if resolved[1].SkillName != "Shell" || resolved[1].Method != "exec" {
 		t.Errorf("resolved[1]: expected Shell.exec, got %s.%s", resolved[1].SkillName, resolved[1].Method)
 	}
+	if len(result.ToolTraces) != 2 {
+		t.Fatalf("expected 2 tool traces, got %d", len(result.ToolTraces))
+	}
+	if result.ToolTraces[0].ID == "" || result.ToolTraces[0].ID != resolved[0].ID {
+		t.Fatalf("trace id %q does not match resolved call id %q", result.ToolTraces[0].ID, resolved[0].ID)
+	}
+	if result.ToolTraces[0].SkillName != "Telegram" || result.ToolTraces[0].Method != "send" {
+		t.Fatalf("trace[0] = %+v, want Telegram.send", result.ToolTraces[0])
+	}
+	if got := string(result.ToolTraces[0].Result); got != `{"ok":true}` {
+		t.Fatalf("trace result = %s, want raw resolver JSON", got)
+	}
+	if !result.ToolTraces[0].Success {
+		t.Fatal("successful resolver call should record Success=true")
+	}
 }
 
 func TestSynchronousResolver(t *testing.T) {
@@ -212,6 +227,12 @@ func TestResolverErrorThrows(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "caught:") || !strings.Contains(result.Output, "path not allowed") {
 		t.Errorf("expected caught error, got %q", result.Output)
+	}
+	if len(result.ToolTraces) != 1 {
+		t.Fatalf("expected one failed tool trace, got %d", len(result.ToolTraces))
+	}
+	if result.ToolTraces[0].Success || result.ToolTraces[0].Error != "path not allowed" {
+		t.Fatalf("failed trace = %+v, want captured resolver error", result.ToolTraces[0])
 	}
 }
 

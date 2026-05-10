@@ -466,6 +466,7 @@ func buildSkillsSection(baseDir string) string {
 		lines = append(lines, "- "+strings.Join(sigs, ", "))
 	}
 	lines = append(lines, "- Relative File paths are inside the configured workspace. Use `File.write(\"memo.txt\", content)` to write `<workspace>/memo.txt`; use absolute paths only when the user gives one.")
+	lines = append(lines, "- Prefer `File.edit(path, old_text, new_text)` for targeted file changes. It fails without changing the file unless `old_text` appears exactly once.")
 	lines = append(lines, "- For user image-generation requests, call Image.generate(prompt) first. Do not claim image generation is unavailable, missing, or unconfigured unless Image.generate returns an error.")
 	lines = append(lines, "- Image.generate guard: `const img = Image.generate(prompt); if (img.error || !img.url) return \"이미지 생성 실패: \"+(img.error || \"결과 URL이 비어 있어요\"); return \"이미지를 생성했어요.\\n\\n![generated image](\"+img.url+\")\";` Use `img.url`; `img.imageUrl` is only a compatibility alias.")
 	lines = append(lines, "- For user-attached images listed in the event as `Attachments`, call `Vision.analyzeAttachment(attachmentId, prompt)`; never invent or expose a channel file URL.")

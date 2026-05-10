@@ -385,6 +385,168 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	}
 }
 
+func TestRunStoresToolTraceOnAssistantTurn(t *testing.T) {
+	skipWithoutRuntime(t)
+	t.Setenv("KITTYPAW_TRACE_TEST", "trace-ok")
+
+	cfg := core.DefaultConfig()
+	st := openTestStore(t)
+	provider := &promptCaptureProvider{response: `
+		const env = Env.get("KITTYPAW_TRACE_TEST");
+		return env.value;
+	`}
+	sess := &Session{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   t.TempDir(),
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("session-trace"), nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if out != "trace-ok" {
+		t.Fatalf("out = %q, want trace-ok", out)
+	}
+
+	turns, err := st.ListConversationTurns(10)
+	if err != nil {
+		t.Fatalf("list turns: %v", err)
+	}
+	if len(turns) < 2 {
+		t.Fatalf("turns = %d, want user and assistant turns", len(turns))
+	}
+	assistant := turns[len(turns)-1]
+	if assistant.Role != core.RoleAssistant {
+		t.Fatalf("last turn role = %s, want assistant", assistant.Role)
+	}
+	if len(assistant.ToolTraces) != 1 {
+		t.Fatalf("assistant tool traces = %+v, want one trace", assistant.ToolTraces)
+	}
+	trace := assistant.ToolTraces[0]
+	if trace.ID == "" || trace.SkillName != "Env" || trace.Method != "get" || !trace.Success {
+		t.Fatalf("assistant trace = %+v, want successful Env.get trace", trace)
+	}
+	if string(trace.Result) != `{"value":"trace-ok"}` {
+		t.Fatalf("trace result = %s", trace.Result)
+	}
+}
+
+func TestRunPropagatesPermissionCallbackIntoSkillRunFileWrite(t *testing.T) {
+	base := t.TempDir()
+	workspaceRoot := resolveForValidation(t.TempDir())
+	if err := core.SaveSkillTo(base, &core.Skill{
+		Name:        "writer",
+		Version:     1,
+		Description: "writes a workspace file",
+		Enabled:     true,
+		Format:      core.SkillFormatNative,
+		Trigger:     core.SkillTrigger{Type: "manual"},
+	}, `
+		const result = File.write("nested.txt", "nested ok");
+		if (result.error) return result.error;
+		return "wrote";
+	`); err != nil {
+		t.Fatalf("save skill: %v", err)
+	}
+
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomySupervised
+	provider := &promptCaptureProvider{response: `
+		const result = Skill.run("writer");
+		return result.output;
+	`}
+	sess := &Session{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   base,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+	paths := []string{workspaceRoot}
+	sess.allowedPaths.Store(&paths)
+
+	var approvals []string
+	out, err := sess.Run(context.Background(), webChatEvent("run writer"), &RunOptions{
+		OnPermission: func(_ context.Context, description, resource string) (bool, error) {
+			approvals = append(approvals, resource+":"+description)
+			return true, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if out != "wrote" {
+		t.Fatalf("out = %q, want nested skill output", out)
+	}
+	if len(approvals) != 1 || !strings.Contains(approvals[0], "File:File.write") {
+		t.Fatalf("approvals = %+v, want nested File.write approval", approvals)
+	}
+	got, err := os.ReadFile(filepath.Join(workspaceRoot, "nested.txt"))
+	if err != nil {
+		t.Fatalf("read nested write: %v", err)
+	}
+	if string(got) != "nested ok" {
+		t.Fatalf("nested file content = %q", string(got))
+	}
+}
+
+func TestRunAccumulatesToolTracesAcrossRetry(t *testing.T) {
+	t.Setenv("KITTYPAW_TRACE_FIRST", "first")
+	t.Setenv("KITTYPAW_TRACE_SECOND", "second")
+
+	cfg := core.DefaultConfig()
+	st := openTestStore(t)
+	provider := &mockProvider{responses: []*llm.Response{
+		{Content: `
+			Env.get("KITTYPAW_TRACE_FIRST");
+			throw new Error("retry me");
+		`, Usage: &llm.TokenUsage{Model: "mock"}},
+		{Content: `
+			const second = Env.get("KITTYPAW_TRACE_SECOND");
+			return second.value;
+		`, Usage: &llm.TokenUsage{Model: "mock"}},
+	}}
+	sess := &Session{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   t.TempDir(),
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("retry trace"), nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if out != "second" {
+		t.Fatalf("out = %q, want second", out)
+	}
+	turns, err := st.ListConversationTurns(10)
+	if err != nil {
+		t.Fatalf("list turns: %v", err)
+	}
+	assistant := turns[len(turns)-1]
+	if len(assistant.ToolTraces) != 2 {
+		t.Fatalf("tool traces = %+v, want traces from failed attempt and retry", assistant.ToolTraces)
+	}
+	if string(assistant.ToolTraces[0].Args[0]) != `"KITTYPAW_TRACE_FIRST"` {
+		t.Fatalf("first trace args = %s", assistant.ToolTraces[0].Args[0])
+	}
+	if string(assistant.ToolTraces[1].Args[0]) != `"KITTYPAW_TRACE_SECOND"` {
+		t.Fatalf("second trace args = %s", assistant.ToolTraces[1].Args[0])
+	}
+}
+
 func TestRunCanCreateStaffFromConversationRequest(t *testing.T) {
 	skipWithoutRuntime(t)
 

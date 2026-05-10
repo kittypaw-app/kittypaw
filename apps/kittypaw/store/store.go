@@ -52,16 +52,17 @@ type ConversationSummary struct {
 
 // ConversationTurnRecord is a persisted conversation turn with its row ID.
 type ConversationTurnRecord struct {
-	ID            int64     `json:"id"`
-	Role          core.Role `json:"role"`
-	Content       string    `json:"content"`
-	Code          string    `json:"code,omitempty"`
-	Result        string    `json:"result,omitempty"`
-	Channel       string    `json:"channel,omitempty"`
-	ChannelUserID string    `json:"channel_user_id,omitempty"`
-	ChatID        string    `json:"chat_id,omitempty"`
-	MessageID     string    `json:"message_id,omitempty"`
-	Timestamp     string    `json:"timestamp"`
+	ID            int64            `json:"id"`
+	Role          core.Role        `json:"role"`
+	Content       string           `json:"content"`
+	Code          string           `json:"code,omitempty"`
+	Result        string           `json:"result,omitempty"`
+	ToolTraces    []core.ToolTrace `json:"tool_traces,omitempty"`
+	Channel       string           `json:"channel,omitempty"`
+	ChannelUserID string           `json:"channel_user_id,omitempty"`
+	ChatID        string           `json:"chat_id,omitempty"`
+	MessageID     string           `json:"message_id,omitempty"`
+	Timestamp     string           `json:"timestamp"`
 }
 
 type conversationCompaction struct {
@@ -516,7 +517,7 @@ func (s *Store) ListConversationTurns(limit int) ([]ConversationTurnRecord, erro
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		ORDER BY id DESC
 		LIMIT ?`, limit)
@@ -550,7 +551,7 @@ func (s *Store) ListConversationTurnsForChat(chatID string, limit int) ([]Conver
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE chat_id = ?
 		ORDER BY id DESC
@@ -615,12 +616,13 @@ func (s *Store) CompactConversation(keepRecent int) (int, error) {
 func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn) error {
 	_, err := exec.Exec(`
 		INSERT INTO v2_conversation_turns
-			(role, content, code, result, channel, channel_user_id, chat_id, message_id, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(turn.Role),
 		turn.Content,
 		nullString(turn.Code),
 		nullString(turn.Result),
+		nullString(toolTraceJSON(turn.ToolTraces)),
 		turn.Channel,
 		turn.ChannelUserID,
 		turn.ChatID,
@@ -660,7 +662,7 @@ func (s *Store) listConversationTurnsAfter(turnID int64, limit int) ([]Conversat
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE id > ?
 		ORDER BY id DESC
@@ -713,7 +715,7 @@ func conversationRecordsToTurns(records []ConversationTurnRecord) []core.Convers
 
 func (s *Store) listAllConversationTurns() ([]ConversationTurnRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, role, content, code, result, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		ORDER BY id ASC`)
 	if err != nil {
@@ -739,13 +741,14 @@ type conversationTurnScanner interface {
 func scanConversationTurnRecord(scanner conversationTurnScanner) (ConversationTurnRecord, error) {
 	var rec ConversationTurnRecord
 	var role string
-	var code, result sql.NullString
+	var code, result, toolTraceJSON sql.NullString
 	if err := scanner.Scan(
 		&rec.ID,
 		&role,
 		&rec.Content,
 		&code,
 		&result,
+		&toolTraceJSON,
 		&rec.Channel,
 		&rec.ChannelUserID,
 		&rec.ChatID,
@@ -757,6 +760,9 @@ func scanConversationTurnRecord(scanner conversationTurnScanner) (ConversationTu
 	rec.Role = core.Role(role)
 	rec.Code = code.String
 	rec.Result = result.String
+	if toolTraceJSON.Valid && toolTraceJSON.String != "" {
+		_ = json.Unmarshal([]byte(toolTraceJSON.String), &rec.ToolTraces)
+	}
 	return rec, nil
 }
 
@@ -766,6 +772,7 @@ func (r ConversationTurnRecord) Turn() core.ConversationTurn {
 		Content:       r.Content,
 		Code:          r.Code,
 		Result:        r.Result,
+		ToolTraces:    r.ToolTraces,
 		Channel:       r.Channel,
 		ChannelUserID: r.ChannelUserID,
 		ChatID:        r.ChatID,
@@ -2139,6 +2146,17 @@ func (s *Store) CleanupExpiredResponses(hours int) (int, error) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+func toolTraceJSON(traces []core.ToolTrace) string {
+	if len(traces) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(traces)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
 
 func nullString(s string) sql.NullString {
 	if s == "" {

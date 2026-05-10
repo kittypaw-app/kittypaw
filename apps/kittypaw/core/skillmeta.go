@@ -2,8 +2,27 @@ package core
 
 // SkillMethodMeta describes one method on a skill global.
 type SkillMethodMeta struct {
-	Name      string // method name used in JS stubs: e.g. "get"
-	Signature string // human-readable for LLM prompt: e.g. "Http.get(url)"
+	Name             string         // method name used in JS stubs: e.g. "get"
+	Signature        string         // human-readable for LLM prompt: e.g. "Http.get(url)"
+	ParametersSchema map[string]any // JSON Schema for named/native tool arguments.
+	ResultSchema     map[string]any // JSON Schema for structured tool results.
+	Capabilities     []string       // product/audit flags such as filesystem_write.
+}
+
+const (
+	CapabilityFilesystemRead  = "filesystem_read"
+	CapabilityFilesystemWrite = "filesystem_write"
+	CapabilityDestructive     = "destructive"
+	CapabilityGuardedEdit     = "guarded_edit"
+)
+
+func (m SkillMethodMeta) HasCapability(capability string) bool {
+	for _, got := range m.Capabilities {
+		if got == capability {
+			return true
+		}
+	}
+	return false
 }
 
 // SkillMeta describes a skill global available in the sandbox.
@@ -11,6 +30,38 @@ type SkillMeta struct {
 	Name    string
 	Methods []SkillMethodMeta
 }
+
+var stringSchema = map[string]any{"type": "string"}
+var boolSchema = map[string]any{"type": "boolean"}
+var integerSchema = map[string]any{"type": "integer"}
+
+func objectSchema(required []string, properties map[string]any) map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"required":             required,
+		"properties":           properties,
+		"additionalProperties": false,
+	}
+}
+
+var fileEditParametersSchema = objectSchema(
+	[]string{"path", "old_text", "new_text"},
+	map[string]any{
+		"path":     stringSchema,
+		"old_text": stringSchema,
+		"new_text": stringSchema,
+	},
+)
+
+var fileEditResultSchema = objectSchema(
+	[]string{"success"},
+	map[string]any{
+		"success":      boolSchema,
+		"replacements": integerSchema,
+		"path":         stringSchema,
+		"error":        stringSchema,
+	},
+)
 
 // SkillRegistry is the canonical list of all skill globals.
 // Both the sandbox JS wrapper and the LLM system prompt are generated from
@@ -26,13 +77,14 @@ var SkillRegistry = []SkillMeta{
 		{Name: "head", Signature: "Http.head(url, options?) — options: {headers: {key: value}}"},
 	}},
 	{Name: "File", Methods: []SkillMethodMeta{
-		{Name: "read", Signature: "File.read(path)"},
-		{Name: "write", Signature: "File.write(path, content)"},
-		{Name: "append", Signature: "File.append(path, content)"},
-		{Name: "delete", Signature: "File.delete(path)"},
+		{Name: "read", Signature: "File.read(path)", Capabilities: []string{CapabilityFilesystemRead}},
+		{Name: "write", Signature: "File.write(path, content)", Capabilities: []string{CapabilityFilesystemWrite}},
+		{Name: "append", Signature: "File.append(path, content)", Capabilities: []string{CapabilityFilesystemWrite}},
+		{Name: "edit", Signature: "File.edit(path, old_text, new_text) — guarded single replacement. Fails without changing the file unless old_text appears exactly once. Returns {success, replacements?, path?, error?}", ParametersSchema: fileEditParametersSchema, ResultSchema: fileEditResultSchema, Capabilities: []string{CapabilityFilesystemWrite, CapabilityGuardedEdit}},
+		{Name: "delete", Signature: "File.delete(path)", Capabilities: []string{CapabilityFilesystemWrite, CapabilityDestructive}},
 		{Name: "list", Signature: "File.list(dir)"},
 		{Name: "exists", Signature: "File.exists(path)"},
-		{Name: "mkdir", Signature: "File.mkdir(path)"},
+		{Name: "mkdir", Signature: "File.mkdir(path)", Capabilities: []string{CapabilityFilesystemWrite}},
 		{Name: "search", Signature: "File.search(query, options?) — search workspace files by keyword. options: {path, ext, limit, offset}"},
 		{Name: "stats", Signature: "File.stats(path?) — workspace file statistics"},
 		{Name: "reindex", Signature: "File.reindex(path?) — rebuild workspace file index"},

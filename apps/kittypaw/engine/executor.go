@@ -29,6 +29,7 @@ type contextKey string
 const ctxKeyConversationID contextKey = "conversationID"
 const ctxKeyEvent contextKey = "event"
 const ctxKeyPackageParams contextKey = "packageParams"
+const ctxKeyPermissionCallback contextKey = "permissionCallback"
 
 // ContextWithConversationID stores the conversation ID in context for use by skill handlers.
 func ContextWithConversationID(ctx context.Context, conversationID string) context.Context {
@@ -66,6 +67,20 @@ func ContextWithPackageParams(ctx context.Context, params map[string]any) contex
 
 func PackageParamsFromContext(ctx context.Context) map[string]any {
 	if v, ok := ctx.Value(ctxKeyPackageParams).(map[string]any); ok {
+		return v
+	}
+	return nil
+}
+
+func ContextWithPermissionCallback(ctx context.Context, cb PermissionCallback) context.Context {
+	if cb == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxKeyPermissionCallback, cb)
+}
+
+func PermissionCallbackFromContext(ctx context.Context) PermissionCallback {
+	if v, ok := ctx.Value(ctxKeyPermissionCallback).(PermissionCallback); ok {
 		return v
 	}
 	return nil
@@ -114,6 +129,9 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 				}
 				desc += ": " + arg
 			}
+		}
+		if permFn == nil {
+			permFn = PermissionCallbackFromContext(ctx)
 		}
 		if permFn != nil {
 			ok, err := permFn(ctx, desc, call.SkillName)
@@ -659,6 +677,19 @@ func executeFile(ctx context.Context, call core.SkillCall, s *Session) (string, 
 		}
 		return jsonResult(map[string]any{"success": true})
 
+	case "edit":
+		if len(call.Args) < 3 {
+			return "", fmt.Errorf("old_text and new_text arguments required")
+		}
+		var oldText, newText string
+		if err := json.Unmarshal(call.Args[1], &oldText); err != nil {
+			return "", fmt.Errorf("invalid old_text argument")
+		}
+		if err := json.Unmarshal(call.Args[2], &newText); err != nil {
+			return "", fmt.Errorf("invalid new_text argument")
+		}
+		return executeFileEdit(resolvedPath, oldText, newText)
+
 	case "append":
 		if len(call.Args) < 2 {
 			return "", fmt.Errorf("content argument required")
@@ -707,6 +738,48 @@ func executeFile(ctx context.Context, call core.SkillCall, s *Session) (string, 
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown File method: %s", call.Method)})
 	}
+}
+
+func executeFileEdit(resolvedPath, oldText, newText string) (string, error) {
+	if oldText == "" {
+		return jsonResult(map[string]any{"success": false, "error": "old_text must not be empty"})
+	}
+
+	f, err := os.Open(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("file edit read: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("file edit read: %w", err)
+	}
+	if info.Size() > maxFileReadSize {
+		return "", fmt.Errorf("file too large: %d bytes (max %d)", info.Size(), maxFileReadSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxFileReadSize+1))
+	if err != nil {
+		return "", fmt.Errorf("file edit read: %w", err)
+	}
+	content := string(data)
+	matches := strings.Count(content, oldText)
+	switch matches {
+	case 0:
+		return jsonResult(map[string]any{"success": false, "error": "old_text not found", "replacements": 0})
+	case 1:
+	default:
+		return jsonResult(map[string]any{"success": false, "error": fmt.Sprintf("old_text matched %d times", matches), "replacements": matches})
+	}
+
+	updated := strings.Replace(content, oldText, newText, 1)
+	perm := info.Mode().Perm()
+	if perm == 0 {
+		perm = 0o644
+	}
+	if err := os.WriteFile(resolvedPath, []byte(updated), perm); err != nil {
+		return "", fmt.Errorf("file edit write: %w", err)
+	}
+	return jsonResult(map[string]any{"success": true, "replacements": 1, "path": resolvedPath})
 }
 
 // --- File index methods ---

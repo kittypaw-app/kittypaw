@@ -412,6 +412,49 @@ func TestSkillRegistryCompleteness(t *testing.T) {
 	}
 }
 
+func TestFileEditMetadataHasSchemaAndCapabilities(t *testing.T) {
+	var edit *SkillMethodMeta
+	for _, skill := range SkillRegistry {
+		if skill.Name != "File" {
+			continue
+		}
+		for i := range skill.Methods {
+			if skill.Methods[i].Name == "edit" {
+				edit = &skill.Methods[i]
+			}
+		}
+	}
+	if edit == nil {
+		t.Fatal("File.edit metadata missing")
+	}
+	if edit.ParametersSchema == nil {
+		t.Fatal("File.edit ParametersSchema missing")
+	}
+	if edit.ResultSchema == nil {
+		t.Fatal("File.edit ResultSchema missing")
+	}
+	for _, want := range []string{"filesystem_write", "guarded_edit"} {
+		if !edit.HasCapability(want) {
+			t.Fatalf("File.edit missing capability %q in %+v", want, edit.Capabilities)
+		}
+	}
+	required, ok := edit.ParametersSchema["required"].([]string)
+	if !ok {
+		t.Fatalf("File.edit schema required = %#v, want []string", edit.ParametersSchema["required"])
+	}
+	for _, want := range []string{"path", "old_text", "new_text"} {
+		found := false
+		for _, got := range required {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("File.edit required fields = %v, missing %q", required, want)
+		}
+	}
+}
+
 func TestSkillRegistryUsesProjectsInsteadOfLegacyKanban(t *testing.T) {
 	var foundProjects bool
 	for _, skill := range SkillRegistry {

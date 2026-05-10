@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 29 {
-		t.Fatalf("expected 29 migrations, got %d", count)
+	if count != 30 {
+		t.Fatalf("expected 30 migrations, got %d", count)
 	}
 }
 
@@ -288,6 +288,54 @@ func TestAddConversationTurnAndSummary(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("user message count: got %d, want 2", count)
+	}
+}
+
+func TestConversationTurnPersistsToolTraces(t *testing.T) {
+	st := openTestStore(t)
+
+	trace := core.ToolTrace{
+		ID:        "skill_call_1",
+		SkillName: "File",
+		Method:    "edit",
+		Args: []json.RawMessage{
+			json.RawMessage(`"memo.txt"`),
+			json.RawMessage(`"old"`),
+			json.RawMessage(`"new"`),
+		},
+		Result:  json.RawMessage(`{"success":true,"replacements":1}`),
+		Success: true,
+	}
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		Role:       core.RoleAssistant,
+		Content:    "edited",
+		ToolTraces: []core.ToolTrace{trace},
+		Timestamp:  "2026-05-11 10:00:00",
+	}); err != nil {
+		t.Fatalf("add turn: %v", err)
+	}
+
+	records, err := st.ListConversationTurns(10)
+	if err != nil {
+		t.Fatalf("list turns: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if len(records[0].ToolTraces) != 1 {
+		t.Fatalf("tool traces = %+v, want one trace", records[0].ToolTraces)
+	}
+	got := records[0].ToolTraces[0]
+	if got.ID != trace.ID || got.SkillName != "File" || got.Method != "edit" || !got.Success {
+		t.Fatalf("persisted trace = %+v, want File.edit success trace", got)
+	}
+	if string(got.Result) != `{"success":true,"replacements":1}` {
+		t.Fatalf("trace result = %s", got.Result)
+	}
+
+	turn := records[0].Turn()
+	if len(turn.ToolTraces) != 1 || turn.ToolTraces[0].ID != trace.ID {
+		t.Fatalf("Turn() lost tool traces: %+v", turn.ToolTraces)
 	}
 }
 

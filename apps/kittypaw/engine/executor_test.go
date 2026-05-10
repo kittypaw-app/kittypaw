@@ -425,6 +425,89 @@ func TestExecuteFileWrite_RelativePathUsesWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestExecuteFileEdit_ReplacesExactlyOneOccurrence(t *testing.T) {
+	workspaceRoot := resolveForValidation(t.TempDir())
+	path := filepath.Join(workspaceRoot, "memo.txt")
+	if err := os.WriteFile(path, []byte("alpha old omega\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Session{}
+	paths := []string{workspaceRoot}
+	s.allowedPaths.Store(&paths)
+
+	result, err := executeFile(context.Background(), core.SkillCall{
+		SkillName: "File",
+		Method:    "edit",
+		Args: []json.RawMessage{
+			json.RawMessage(`"memo.txt"`),
+			json.RawMessage(`"old"`),
+			json.RawMessage(`"new"`),
+		},
+	}, s)
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if !strings.Contains(result, `"success":true`) || !strings.Contains(result, `"replacements":1`) {
+		t.Fatalf("unexpected edit result: %s", result)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "alpha new omega\n" {
+		t.Fatalf("file content = %q, want guarded replacement", string(got))
+	}
+}
+
+func TestExecuteFileEdit_FailsWithoutChangingMissingOrAmbiguousOldText(t *testing.T) {
+	workspaceRoot := resolveForValidation(t.TempDir())
+	path := filepath.Join(workspaceRoot, "memo.txt")
+	original := "alpha old beta old gamma\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Session{}
+	paths := []string{workspaceRoot}
+	s.allowedPaths.Store(&paths)
+
+	for _, tt := range []struct {
+		name    string
+		oldText string
+		wantErr string
+	}{
+		{name: "missing", oldText: "absent", wantErr: "old_text not found"},
+		{name: "ambiguous", oldText: "old", wantErr: "old_text matched 2 times"},
+		{name: "empty", oldText: "", wantErr: "old_text must not be empty"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := executeFile(context.Background(), core.SkillCall{
+				SkillName: "File",
+				Method:    "edit",
+				Args: []json.RawMessage{
+					json.RawMessage(`"memo.txt"`),
+					json.RawMessage(`"` + tt.oldText + `"`),
+					json.RawMessage(`"new"`),
+				},
+			}, s)
+			if err != nil {
+				t.Fatalf("edit: %v", err)
+			}
+			if !strings.Contains(result, `"success":false`) || !strings.Contains(result, tt.wantErr) {
+				t.Fatalf("result = %s, want error containing %q", result, tt.wantErr)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != original {
+				t.Fatalf("file changed on failed edit: %q", string(got))
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // needsPermission tests
 // ---------------------------------------------------------------------------
@@ -451,6 +534,10 @@ func TestNeedsPermission(t *testing.T) {
 		{"supervised_git_push", "Git", "push", core.AutonomySupervised, nil, true},
 		{"supervised_git_pull", "Git", "pull", core.AutonomySupervised, nil, true},
 		{"supervised_file_delete", "File", "delete", core.AutonomySupervised, nil, true},
+		{"supervised_file_write", "File", "write", core.AutonomySupervised, nil, true},
+		{"supervised_file_append", "File", "append", core.AutonomySupervised, nil, true},
+		{"supervised_file_mkdir", "File", "mkdir", core.AutonomySupervised, nil, true},
+		{"supervised_file_edit", "File", "edit", core.AutonomySupervised, nil, true},
 		{"supervised_browser_open", "Browser", "open", core.AutonomySupervised, nil, true},
 		{"supervised_browser_evaluate", "Browser", "evaluate", core.AutonomySupervised, nil, true},
 		{"supervised_skill_uninstall", "Skill", "uninstall", core.AutonomySupervised, nil, true},
