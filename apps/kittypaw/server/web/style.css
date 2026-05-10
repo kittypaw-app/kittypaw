@@ -1496,6 +1496,18 @@ th {
 
 .projects-jobs { margin-top: 14px; }
 
+.projects-job-input {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.projects-job-input-text {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
 .projects-dir-picker {
   border: 1px solid var(--card-border);
   border-radius: 8px;

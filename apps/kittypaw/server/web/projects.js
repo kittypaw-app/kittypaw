@@ -335,6 +335,12 @@ const Projects = {
     html += '</dl>';
     if (current.status === 'approved') html += '<button class="btn btn--primary btn--sm" id="projects-job-start" type="button">Start</button>';
     if (current.status === 'running') html += '<button class="btn btn--secondary btn--sm" id="projects-job-cancel" type="button">Cancel</button>';
+    if (current.status === 'running' && current.mode === 'pty') {
+      html += '<form class="projects-job-input" id="projects-job-input-form">' +
+        '<textarea class="input projects-job-input-text" id="projects-job-input" rows="2" spellcheck="false" placeholder="Input is recorded in Job events"></textarea>' +
+        '<button class="btn btn--primary btn--sm" id="projects-job-input-send" type="submit">Send</button>' +
+      '</form>';
+    }
     if (current.worktree_path) html += '<button class="btn btn--secondary btn--sm" id="projects-job-open-worktree" type="button">Open Worktree</button>';
     const logTail = (logs && logs.log_tail) || current.log_tail || '';
     if (logTail) html += '<pre class="projects-job-log">' + esc(logTail) + '</pre>';
@@ -434,6 +440,13 @@ const Projects = {
     if (startJob) startJob.onclick = () => this._startJob();
     const cancelJob = document.getElementById('projects-job-cancel');
     if (cancelJob) cancelJob.onclick = () => this._cancelJob();
+    const jobInputForm = document.getElementById('projects-job-input-form');
+    if (jobInputForm) {
+      jobInputForm.onsubmit = event => {
+        event.preventDefault();
+        this._sendJobInput();
+      };
+    }
     const openWorktree = document.getElementById('projects-job-open-worktree');
     if (openWorktree) openWorktree.onclick = () => this._openSelectedJobWorktree();
     const project = this._selectedProjectObject();
@@ -617,6 +630,27 @@ const Projects = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor_id: 'web', reason: 'canceled from Projects UI' }),
       });
+      await this._loadJobLogs(this._selectedJob);
+      await this._loadProjectBoard();
+    } catch (e) {
+      this._setError(e);
+    }
+    this._render();
+  },
+
+  async _sendJobInput() {
+    if (!this._selectedJob) return;
+    const input = document.getElementById('projects-job-input');
+    if (!input) return;
+    const text = input.value || '';
+    if (text.length === 0) return;
+    try {
+      await api('/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor_id: 'web', text }),
+      });
+      input.value = '';
       await this._loadJobLogs(this._selectedJob);
       await this._loadProjectBoard();
     } catch (e) {

@@ -90,6 +90,11 @@ func TestProjectsWebIncludesJobRuntimeControls(t *testing.T) {
 		"/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/start",
 		"/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/cancel",
 		"/api/v1/jobs/' + encodeURIComponent(jobID) + '/logs",
+		"_sendJobInput",
+		"projects-job-input",
+		"projects-job-input-send",
+		"/api/v1/jobs/' + encodeURIComponent(this._selectedJob) + '/input",
+		"current.status === 'running' && current.mode === 'pty'",
 		"Open Worktree",
 	} {
 		if !strings.Contains(src, token) {
