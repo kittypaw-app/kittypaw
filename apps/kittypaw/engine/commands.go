@@ -10,67 +10,350 @@ import (
 	"github.com/jinto/kittypaw/store"
 )
 
+type slashCommand struct {
+	Name    string
+	Usage   string
+	Summary string
+	Aliases []string
+	Risk    string
+	History bool
+	Details []string
+	Handler slashCommandHandler
+}
+
+type slashCommandResult struct {
+	Text          string
+	RecordHistory bool
+}
+
+type slashCommandHandler func(context.Context, []string, *Session) slashCommandResult
+
+var slashCommandRegistry = []slashCommand{
+	{
+		Name:    "/help",
+		Usage:   "/help",
+		Summary: "도움말 표시",
+		Aliases: []string{"/?"},
+		Risk:    "safe",
+	},
+	{
+		Name:    "/status",
+		Usage:   "/status",
+		Summary: "오늘 실행 통계 확인",
+		Risk:    "read",
+		Handler: func(_ context.Context, _ []string, s *Session) slashCommandResult {
+			return slashCommandText(handleStatus(s))
+		},
+	},
+	{
+		Name:    "/skills",
+		Usage:   "/skills",
+		Summary: "스킬 목록 표시",
+		Risk:    "read",
+		Handler: func(_ context.Context, _ []string, s *Session) slashCommandResult {
+			return slashCommandText(handleSkills(s))
+		},
+	},
+	{
+		Name:    "/run",
+		Usage:   "/run <name>",
+		Summary: "스킬 또는 패키지 실행",
+		Risk:    "execute",
+		History: true,
+		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+			if len(args) == 0 {
+				return slashCommandText("사용법: /run <skill-name>")
+			}
+			return slashCommandResult{Text: handleRun(ctx, args[0], s), RecordHistory: true}
+		},
+	},
+	{
+		Name:    "/teach",
+		Usage:   "/teach <설명>",
+		Summary: "새 스킬 생성",
+		Risk:    "write",
+		History: true,
+		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+			if len(args) == 0 {
+				return slashCommandText("사용법: /teach <설명>")
+			}
+			return slashCommandResult{Text: handleTeach(ctx, strings.Join(args, " "), s), RecordHistory: true}
+		},
+	},
+	{
+		Name:    "/staff",
+		Usage:   "/staff <current|list|show|use|hire|cancel>",
+		Summary: "staff 상태 조회 및 전환",
+		Risk:    "mixed",
+		History: true,
+		Details: []string{
+			"/staff current",
+			"/staff list",
+			"/staff show <staff-id>",
+			"/staff use <staff-id>",
+			"/staff hire <역할>",
+			"/staff cancel",
+		},
+		Handler: func(_ context.Context, args []string, s *Session) slashCommandResult {
+			return slashCommandResult{Text: handleStaffCommand(args, s), RecordHistory: staffCommandRecordsHistory(args)}
+		},
+	},
+	{
+		Name:    "/model",
+		Usage:   "/model [id]",
+		Summary: "현재 LLM 정보 표시 또는 이번 채팅 모델 변경",
+		Risk:    "session",
+		History: true,
+		Handler: func(_ context.Context, args []string, s *Session) slashCommandResult {
+			record := modelCommandRecordsHistory(args, s)
+			return slashCommandResult{Text: handleModel(args, s), RecordHistory: record}
+		},
+	},
+	{
+		Name:    "/session",
+		Usage:   "/session",
+		Summary: "현재 conversation/session 진단 정보",
+		Risk:    "read",
+		Handler: func(ctx context.Context, _ []string, s *Session) slashCommandResult {
+			return slashCommandText(handleSession(ctx, s))
+		},
+	},
+	{
+		Name:    "/context",
+		Usage:   "/context",
+		Summary: "현재 prompt/context 크기 진단",
+		Risk:    "read",
+		Handler: func(ctx context.Context, _ []string, s *Session) slashCommandResult {
+			return slashCommandText(handleContext(ctx, s))
+		},
+	},
+	{
+		Name:    "/projects",
+		Usage:   "/projects",
+		Summary: "프로젝트 목록",
+		Risk:    "read",
+		Handler: func(_ context.Context, _ []string, s *Session) slashCommandResult {
+			return slashCommandText(handleProjectsCommand(s))
+		},
+	},
+	{
+		Name:    "/project",
+		Usage:   "/project <current|show|use|new|settings>",
+		Summary: "프로젝트 조회 및 현재 프로젝트 선택",
+		Risk:    "mixed",
+		History: true,
+		Details: []string{
+			"/project current",
+			"/project show <key>",
+			"/project use <key>",
+			"/project new",
+			"/project settings",
+		},
+		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+			return slashCommandResult{Text: handleProjectCommand(ctx, args, s), RecordHistory: projectCommandRecordsHistory(args)}
+		},
+	},
+	{
+		Name:    "/tickets",
+		Usage:   "/tickets [project-key]",
+		Summary: "현재 또는 지정 project의 ticket 목록",
+		Risk:    "read",
+		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+			return slashCommandText(handleTicketsCommand(ctx, args, s))
+		},
+	},
+	{
+		Name:    "/ticket",
+		Usage:   "/ticket <show|chat|job|move|block|done>",
+		Summary: "ticket 조회 및 상태 변경",
+		Risk:    "mixed",
+		History: true,
+		Details: []string{
+			"/ticket show <key>",
+			"/ticket chat <key>",
+			"/ticket job <key>",
+			"/ticket move <key> <status>",
+			"/ticket block <key> <reason>",
+			"/ticket done <key>",
+		},
+		Handler: func(_ context.Context, args []string, s *Session) slashCommandResult {
+			return slashCommandResult{Text: handleTicketCommand(args, s), RecordHistory: ticketCommandRecordsHistory(args)}
+		},
+	},
+}
+
+func registeredSlashCommands() []slashCommand {
+	out := make([]slashCommand, len(slashCommandRegistry))
+	copy(out, slashCommandRegistry)
+	return out
+}
+
+func slashCommandText(text string) slashCommandResult {
+	return slashCommandResult{Text: text}
+}
+
 // tryHandleCommand checks if the event text is a slash command.
 // Returns (response, true) if handled, ("", false) otherwise.
 func tryHandleCommand(ctx context.Context, text string, s *Session) (string, bool) {
+	result, handled := tryHandleCommandResult(ctx, text, s)
+	return result.Text, handled
+}
+
+func tryHandleCommandResult(ctx context.Context, text string, s *Session) (slashCommandResult, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
-		return "", false
+		return slashCommandResult{}, false
 	}
 
 	parts := strings.Fields(text)
-	cmd := strings.ToLower(parts[0])
-
-	switch cmd {
-	case "/help":
-		return handleHelp(), true
-	case "/status":
-		return handleStatus(s), true
-	case "/skills":
-		return handleSkills(s), true
-	case "/run":
-		if len(parts) > 1 {
-			return handleRun(ctx, parts[1], s), true
-		}
-		return "사용법: /run <skill-name>", true
-	case "/teach":
-		if len(parts) > 1 {
-			return handleTeach(ctx, strings.Join(parts[1:], " "), s), true
-		}
-		return "사용법: /teach <설명>", true
-	case "/staff":
-		return handleStaffCommand(parts[1:], s), true
-	case "/model":
-		return handleModel(parts[1:], s), true
-	case "/projects":
-		return handleProjectsCommand(s), true
-	case "/project":
-		return handleProjectCommand(parts[1:], s), true
-	case "/tickets":
-		return handleTicketsCommand(parts[1:], s), true
-	case "/ticket":
-		return handleTicketCommand(parts[1:], s), true
-	default:
-		return "", false
+	if len(parts) == 0 {
+		return slashCommandText(unknownSlashCommandMessage("/")), true
 	}
+	cmd := strings.ToLower(parts[0])
+	if spec, ok := lookupSlashCommand(cmd); ok {
+		if spec.Name == "/help" {
+			return slashCommandText(handleHelp()), true
+		}
+		if spec.Handler == nil {
+			return slashCommandText(fmt.Sprintf("%s 명령은 아직 사용할 수 없습니다.", spec.Name)), true
+		}
+		return spec.Handler(ctx, parts[1:], s), true
+	}
+	return slashCommandText(unknownSlashCommandMessage(cmd)), true
 }
 
 func handleHelp() string {
-	return `KittyPaw 명령어:
-/help — 도움말 표시
-/status — 실행 통계 확인
-/skills — 스킬 목록
-/run <name> — 스킬 실행
-/teach <설명> — 새 스킬 학습
-/staff — staff 상태와 명령어 표시
-/staff use <staff-id> — 기본 staff 변경
-/model — 현재 LLM 정보 표시
-/model <id> — 채팅 중에 모델 변경 (재시작 시 기본값 복귀)
-/projects — 프로젝트 목록
-/project show <key> — 프로젝트 보기
-/tickets — 현재 프로젝트 티켓 목록
-/ticket show <key> — 티켓 보기
-/ticket move <key> <status> — 티켓 상태 변경`
+	var sb strings.Builder
+	sb.WriteString("KittyPaw 명령어:\n")
+	for _, cmd := range slashCommandRegistry {
+		history := "기록: no"
+		if cmd.History {
+			history = "기록: 조건부"
+		}
+		fmt.Fprintf(&sb, "%s — %s (risk: %s, %s)\n", cmd.Usage, cmd.Summary, cmd.Risk, history)
+		if len(cmd.Aliases) > 0 {
+			fmt.Fprintf(&sb, "  aliases: %s\n", strings.Join(cmd.Aliases, ", "))
+		}
+		for _, detail := range cmd.Details {
+			fmt.Fprintf(&sb, "  - %s\n", detail)
+		}
+	}
+	sb.WriteString("\n알 수 없는 /명령은 실행하지 않고 이 도움말을 안내합니다.")
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func lookupSlashCommand(name string) (slashCommand, bool) {
+	for _, cmd := range slashCommandRegistry {
+		if cmd.Name == name {
+			return cmd, true
+		}
+		for _, alias := range cmd.Aliases {
+			if alias == name {
+				return cmd, true
+			}
+		}
+	}
+	return slashCommand{}, false
+}
+
+func unknownSlashCommandMessage(name string) string {
+	msg := fmt.Sprintf("알 수 없는 명령입니다: %s", name)
+	if suggestion := suggestSlashCommand(name); suggestion != "" {
+		msg += fmt.Sprintf("\n혹시 %s 명령을 찾으셨나요?", suggestion)
+	}
+	return msg + "\n/help로 사용 가능한 명령을 확인하세요."
+}
+
+func suggestSlashCommand(name string) string {
+	best := ""
+	bestDistance := 99
+	for _, cmd := range slashCommandRegistry {
+		for _, candidate := range append([]string{cmd.Name}, cmd.Aliases...) {
+			d := slashCommandDistance(name, candidate)
+			if strings.HasPrefix(candidate, name) || strings.HasPrefix(name, candidate) {
+				d--
+			}
+			if d < bestDistance {
+				bestDistance = d
+				best = cmd.Name
+			}
+		}
+	}
+	if bestDistance <= 2 {
+		return best
+	}
+	return ""
+}
+
+func slashCommandDistance(a, b string) int {
+	ar := []rune(a)
+	br := []rune(b)
+	prev := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i, ra := range ar {
+		cur := make([]int, len(br)+1)
+		cur[0] = i + 1
+		for j, rb := range br {
+			cost := 0
+			if ra != rb {
+				cost = 1
+			}
+			cur[j+1] = minInt(cur[j]+1, prev[j+1]+1, prev[j]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(br)]
+}
+
+func minInt(values ...int) int {
+	min := values[0]
+	for _, value := range values[1:] {
+		if value < min {
+			min = value
+		}
+	}
+	return min
+}
+
+func staffCommandRecordsHistory(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "current", "list", "show":
+		return false
+	default:
+		return true
+	}
+}
+
+func projectCommandRecordsHistory(args []string) bool {
+	return len(args) > 0 && strings.EqualFold(args[0], "use") && len(args) >= 2
+}
+
+func modelCommandRecordsHistory(args []string, s *Session) bool {
+	if len(args) != 1 || s == nil || s.Config == nil {
+		return false
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" || id == currentModelID(s) {
+		return false
+	}
+	return modelIDExists(id, s.Config.LLM.Models)
+}
+
+func ticketCommandRecordsHistory(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "job", "move", "block", "done":
+		return true
+	default:
+		return false
+	}
 }
 
 func handleStatus(s *Session) string {
@@ -102,6 +385,133 @@ func handleSkills(s *Session) string {
 		sb.WriteString(fmt.Sprintf("  %s %s — %s\n", status, s.Skill.Name, s.Skill.Description))
 	}
 	return sb.String()
+}
+
+func handleSession(ctx context.Context, s *Session) string {
+	conversationID := commandConversationID(ctx, s)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "conversation: %s\n", conversationID)
+
+	accountID := ""
+	if s != nil {
+		accountID = s.AccountID
+	}
+	if event := EventFromContext(ctx); event != nil {
+		if event.AccountID != "" {
+			accountID = event.AccountID
+		}
+		fmt.Fprintf(&sb, "source: %s\n", event.Type)
+		if payload, err := event.ParsePayload(); err == nil {
+			if payload.ChatID != "" {
+				fmt.Fprintf(&sb, "chat_id: %s\n", payload.ChatID)
+			}
+			if payload.SessionID != "" {
+				fmt.Fprintf(&sb, "session_id: %s\n", payload.SessionID)
+			}
+		}
+	}
+	if accountID == "" {
+		accountID = "(none)"
+	}
+	fmt.Fprintf(&sb, "account: %s\n", accountID)
+
+	if s == nil || s.Store == nil {
+		sb.WriteString("store: unavailable")
+		return strings.TrimRight(sb.String(), "\n")
+	}
+
+	sb.WriteString("staff: ")
+	sb.WriteString(handleStaffCurrent(s))
+	sb.WriteByte('\n')
+
+	summary, err := s.Store.ConversationSummaryForConversation(conversationID)
+	if err != nil {
+		fmt.Fprintf(&sb, "turns: error: %s\n", err)
+	} else {
+		fmt.Fprintf(&sb, "turns: %d\n", summary.TurnCount)
+		if summary.FirstAt != "" {
+			fmt.Fprintf(&sb, "first_at: %s\n", summary.FirstAt)
+		}
+		if summary.LastAt != "" {
+			fmt.Fprintf(&sb, "last_at: %s\n", summary.LastAt)
+		}
+	}
+
+	checkpoints, err := s.Store.ListCheckpointsForConversation(conversationID)
+	if err != nil {
+		fmt.Fprintf(&sb, "checkpoint: error: %s", err)
+		return strings.TrimRight(sb.String(), "\n")
+	}
+	if len(checkpoints) == 0 {
+		sb.WriteString("checkpoint: none")
+		return strings.TrimRight(sb.String(), "\n")
+	}
+	latest := checkpoints[0]
+	fmt.Fprintf(&sb, "checkpoint: #%d %s (turn: %d)", latest.ID, latest.Label, latest.TurnID)
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleContext(ctx context.Context, s *Session) string {
+	conversationID := commandConversationID(ctx, s)
+	compaction := DefaultCompaction()
+	if s != nil && s.Config != nil {
+		compaction = s.compactionForAttempt(0)
+	}
+	contextWindow, maxTokens := currentModelLimits(s)
+
+	promptTokens := 0
+	historyTokens := 0
+	turnCount := 0
+	if s != nil && s.Store != nil {
+		state, err := s.Store.LoadConversationStateForChat(conversationID)
+		if err != nil {
+			return fmt.Sprintf("context 조회 실패: %s", err)
+		}
+		if state != nil {
+			promptTokens = EstimateTokens(state.SystemPrompt)
+			turnCount = len(state.Turns)
+			for _, turn := range state.Turns {
+				historyTokens += EstimateTokens(turn.Content)
+				historyTokens += EstimateTokens(turn.Code)
+				historyTokens += EstimateTokens(turn.Result)
+			}
+		}
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "conversation: %s\n", conversationID)
+	fmt.Fprintf(&sb, "prompt_tokens: %d\n", promptTokens)
+	fmt.Fprintf(&sb, "history_tokens: %d\n", historyTokens)
+	fmt.Fprintf(&sb, "total_tokens: %d\n", promptTokens+historyTokens)
+	fmt.Fprintf(&sb, "turns: %d\n", turnCount)
+	fmt.Fprintf(&sb, "recent_window: %d\n", compaction.RecentWindow)
+	fmt.Fprintf(&sb, "middle_window: %d\n", compaction.MiddleWindow)
+	fmt.Fprintf(&sb, "truncate_len: %d\n", compaction.TruncateLen)
+	fmt.Fprintf(&sb, "context_window: %d\n", contextWindow)
+	fmt.Fprintf(&sb, "max_tokens: %d", maxTokens)
+	return sb.String()
+}
+
+func currentModelLimits(s *Session) (int, int) {
+	contextWindow := 0
+	maxTokens := 0
+	if s != nil && s.Config != nil {
+		if id := currentModelID(s); id != "" {
+			if model := s.Config.FindModel(id); model != nil {
+				contextWindow = int(model.ContextWindow)
+				maxTokens = int(model.MaxTokens)
+			}
+		}
+	}
+	if s != nil && s.Provider != nil {
+		if contextWindow == 0 {
+			contextWindow = s.Provider.ContextWindow()
+		}
+		if maxTokens == 0 {
+			maxTokens = s.Provider.MaxTokens()
+		}
+	}
+	return contextWindow, maxTokens
 }
 
 func handleRun(ctx context.Context, name string, s *Session) string {
@@ -179,7 +589,9 @@ func handleProjectsCommand(s *Session) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func handleProjectCommand(args []string, s *Session) string {
+const currentProjectContextPrefix = "current_project:"
+
+func handleProjectCommand(ctx context.Context, args []string, s *Session) string {
 	if s == nil || s.Store == nil {
 		return "project 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -188,7 +600,7 @@ func handleProjectCommand(args []string, s *Session) string {
 	}
 	switch strings.ToLower(args[0]) {
 	case "current":
-		project, ok, err := firstProject(s)
+		project, ok, err := currentProject(ctx, s)
 		if err != nil {
 			return fmt.Sprintf("current project 조회 실패: %s", err)
 		}
@@ -213,7 +625,10 @@ func handleProjectCommand(args []string, s *Session) string {
 		if err != nil {
 			return fmt.Sprintf("project %q를 찾지 못했습니다.", args[1])
 		}
-		return fmt.Sprintf("%s project를 선택했습니다.", project.Key)
+		if err := saveCurrentProject(ctx, s, project); err != nil {
+			return fmt.Sprintf("current project 저장 실패: %s", err)
+		}
+		return fmt.Sprintf("%s project를 현재 conversation의 project로 선택했습니다.", project.Key)
 	case "new":
 		return "Projects 화면에서 새 project folder를 선택하세요."
 	case "settings":
@@ -223,11 +638,11 @@ func handleProjectCommand(args []string, s *Session) string {
 	}
 }
 
-func handleTicketsCommand(args []string, s *Session) string {
+func handleTicketsCommand(ctx context.Context, args []string, s *Session) string {
 	if s == nil || s.Store == nil {
 		return "ticket 정보를 위한 세션이 준비되지 않았습니다."
 	}
-	project, ok, err := firstProject(s)
+	project, ok, err := currentProject(ctx, s)
 	if err != nil {
 		return fmt.Sprintf("ticket 목록 조회 실패: %s", err)
 	}
@@ -279,7 +694,7 @@ func handleTicketCommand(args []string, s *Session) string {
 		if err != nil {
 			return fmt.Sprintf("ticket %q를 찾지 못했습니다.", args[1])
 		}
-		return fmt.Sprintf("%s ticket chat을 여세요.", ticket.Key)
+		return fmt.Sprintf("안내: %s ticket chat은 이 slash command가 현재 대화를 자동 전환하지 않습니다.\nconversation_id: %s\nWeb/CLI에서 해당 ticket chat을 여세요.", ticket.Key, ticket.TicketConversationID)
 	case "job":
 		if len(args) < 2 {
 			return "사용법: /ticket job <key>"
@@ -346,6 +761,50 @@ func firstProject(s *Session) (*store.Project, bool, error) {
 		return nil, false, nil
 	}
 	return &projects[0], true, nil
+}
+
+func currentProject(ctx context.Context, s *Session) (*store.Project, bool, error) {
+	if s == nil || s.Store == nil {
+		return nil, false, nil
+	}
+	key := currentProjectContextKey(ctx, s)
+	projectID, ok, err := s.Store.GetUserContext(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if ok && strings.TrimSpace(projectID) != "" {
+		project, err := s.Store.GetProject(projectID)
+		if err == nil {
+			return project, true, nil
+		}
+		if _, deleteErr := s.Store.DeleteUserContext(key); deleteErr != nil {
+			return nil, false, deleteErr
+		}
+	}
+	return firstProject(s)
+}
+
+func saveCurrentProject(ctx context.Context, s *Session, project *store.Project) error {
+	if s == nil || s.Store == nil || project == nil {
+		return nil
+	}
+	return s.Store.SetUserContext(currentProjectContextKey(ctx, s), project.ID, "slash_command")
+}
+
+func currentProjectContextKey(ctx context.Context, s *Session) string {
+	return currentProjectContextPrefix + commandConversationID(ctx, s)
+}
+
+func commandConversationID(ctx context.Context, s *Session) string {
+	if id := strings.TrimSpace(ConversationIDFromContext(ctx)); id != "" {
+		return id
+	}
+	if event := EventFromContext(ctx); event != nil {
+		if id := strings.TrimSpace(conversationKeyForEvent(s, event)); id != "" {
+			return id
+		}
+	}
+	return store.DefaultConversationID
 }
 
 func formatProjectSummary(project *store.Project) string {

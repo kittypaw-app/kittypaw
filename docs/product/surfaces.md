@@ -17,6 +17,14 @@ in-chat commands, natural-language chat, or hosted Space.
 | Natural-language chat | User asks normally; assistant may call tools. | High-level intents, discovery, creation drafts, "install/run this" flows. | Silent irreversible state changes. |
 | Hosted Space | Remote web app, currently through authenticated hosted relay where supported. | Remote access to local chat/control surfaces. | Assuming every local API is hosted automatically. |
 
+Slash command help is generated from the command registry. Unknown slash
+commands return a deterministic error with `/help` guidance and never fall
+through to the LLM. Read-only diagnostics such as `/help`, `/status`,
+`/model` without an ID, `/session`, and `/context` should not write
+conversation history; auditable command results such as `/run`, `/model <id>`,
+`/project use`, and ticket state changes may be recorded in the active
+conversation.
+
 ## Exposure Matrix
 
 Legend:
@@ -38,13 +46,13 @@ Legend:
 | Tool global | No direct | No | No | Indirect | Indirect | No | Primary | Supported via relay |
 | Staff | Future CLI/admin | No | Future | Indirect | No | Primary (`/staff`) | Primary draft flow | Supported via relay |
 | Channel | Primary | Primary | Supported | Indirect | No | No | Limited | Indirect |
-| Conversation/history | Primary | No | No | Primary | No | Supported (`/status`) | Primary | Supported via relay |
+| Conversation/history | Primary | No | No | Primary | No | Supported (`/status`, `/session`, `/context`) | Primary | Supported via relay |
 | Memory | Primary search | No | Future | Indirect | No | No | Primary through `Memory` | Supported via relay |
-| Project | Primary | No | No | Indirect | Primary | No | Supported via `Kanban` | Local unless hosted route exists |
+| Project | Primary | No | No | Indirect | Primary | Supported (`/projects`, `/project`) | Supported via `Kanban` | Local unless hosted route exists |
 | Board | Supported | No | No | Indirect | Primary | No | Supported via `Kanban` | Local unless hosted route exists |
 | Milestone | Primary | No | No | Indirect | Primary | No | Supported via `Kanban` | Local unless hosted route exists |
-| Kanban task | Primary | No | No | Indirect | Primary | No | Primary through `Kanban` | Local unless hosted route exists |
-| Run | Primary | No | No | Indirect | Primary | No | Supported through `Kanban` | Local unless hosted route exists |
+| Kanban task | Primary | No | No | Indirect | Primary | Supported (`/tickets`, `/ticket`) | Primary through `Kanban` | Local unless hosted route exists |
+| Run | Primary | No | No | Indirect | Primary | Supported (`/ticket job`) | Supported through `Kanban` | Local unless hosted route exists |
 | Team Space | Config/admin | No | Future | Indirect | No | No | Supported through `Share`/`Fanout` | Future |
 | Gmail connection | Primary | Supported | Future | Indirect | No | No | Primary read-only tool | Supported via relay |
 | X connection | Primary | Supported | Future | Indirect | No | No | Primary read-only tool | Supported via relay |
@@ -139,6 +147,30 @@ Assistant: asks whether to use this staff in current conversation
 Rule: the assistant may only say a staff was created after durable metadata and
 `SOUL.md` exist.
 
+### Project And Kanban
+
+Web Kanban remains the primary visual surface. Slash commands provide compact
+chat controls:
+
+```text
+/projects
+/project current
+/project show <key>
+/project use <key>
+/tickets [project-key]
+/ticket show <key>
+/ticket chat <key>
+/ticket job <key>
+/ticket move <key> <status>
+/ticket block <key> <reason>
+/ticket done <key>
+```
+
+`/project use <key>` stores the selected project for the current conversation,
+so subsequent `/tickets` uses that project unless a project key is supplied.
+`/ticket chat <key>` is advisory: it returns the ticket conversation ID but does
+not switch the current chat by itself.
+
 ### Channel
 
 CLI and setup own channel configuration. Chat may use channels according to
@@ -197,4 +229,3 @@ Before adding a new in-chat feature, decide which path it belongs to:
 
 If a feature creates durable state, it must have at least one deterministic
 path, a documented confirmation policy, and tests covering false success.
-

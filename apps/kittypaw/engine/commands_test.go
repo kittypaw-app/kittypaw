@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +10,58 @@ import (
 	"github.com/jinto/kittypaw/sandbox"
 	"github.com/jinto/kittypaw/store"
 )
+
+func slashCommandEvent(t *testing.T, text string) core.Event {
+	t.Helper()
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:    "test-chat",
+		SessionID: "test-session",
+		Text:      text,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return core.Event{Type: core.EventWebChat, Payload: payload}
+}
+
+func TestUnknownSlashCommandIsHandledDeterministically(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	provider := &promptCaptureProvider{response: "llm fallback should not run"}
+	sess := &Session{Store: st, Config: &cfg, Provider: provider}
+
+	out, err := sess.Run(context.Background(), slashCommandEvent(t, "/stats"), nil)
+	if err != nil {
+		t.Fatalf("Run unknown slash: %v", err)
+	}
+	if !strings.Contains(out, "알 수 없는 명령") || !strings.Contains(out, "/help") {
+		t.Fatalf("unknown slash output = %q, want deterministic help", out)
+	}
+	if strings.Contains(out, "llm fallback") || len(provider.messages) != 0 {
+		t.Fatalf("unknown slash fell through to provider: output=%q messages=%d", out, len(provider.messages))
+	}
+}
+
+func TestHelpIsGeneratedFromRegisteredCommands(t *testing.T) {
+	cfg := core.DefaultConfig()
+	sess := &Session{Config: &cfg}
+
+	out, handled := tryHandleCommand(context.Background(), "/help", sess)
+	if !handled {
+		t.Fatal("/help was not handled")
+	}
+	for _, cmd := range registeredSlashCommands() {
+		if !strings.Contains(out, cmd.Usage) {
+			t.Fatalf("/help missing registered command usage %q:\n%s", cmd.Usage, out)
+		}
+		if cmd.Risk == "" {
+			t.Fatalf("registered command %q has empty risk metadata", cmd.Name)
+		}
+	}
+	if !strings.Contains(out, "기록") {
+		t.Fatalf("/help should expose history/audit metadata, got:\n%s", out)
+	}
+}
 
 func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
 	st := openTestStore(t)
@@ -206,6 +259,69 @@ func TestSlashProjectAndTicketCommands(t *testing.T) {
 	}
 }
 
+func TestSlashProjectUsePersistsCurrentProjectForTickets(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg, AccountID: "alice"}
+
+	first, err := st.CreateProject(store.CreateProjectRequest{Key: "first", Name: "First", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateProject(first): %v", err)
+	}
+	second, err := st.CreateProject(store.CreateProjectRequest{Key: "second", Name: "Second", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateProject(second): %v", err)
+	}
+	firstTicket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: first.ID, Title: "First ticket"})
+	if err != nil {
+		t.Fatalf("CreateTicket(first): %v", err)
+	}
+	secondTicket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: second.ID, Title: "Second ticket"})
+	if err != nil {
+		t.Fatalf("CreateTicket(second): %v", err)
+	}
+
+	ctx := ContextWithConversationID(context.Background(), "conv-project")
+	out, handled := tryHandleCommand(ctx, "/project use SECOND", sess)
+	if !handled || !strings.Contains(out, "선택") || !strings.Contains(out, "SECOND") {
+		t.Fatalf("/project use output = %q handled=%v", out, handled)
+	}
+
+	out, handled = tryHandleCommand(ctx, "/project current", sess)
+	if !handled || !strings.Contains(out, "SECOND") {
+		t.Fatalf("/project current output = %q handled=%v, want selected project", out, handled)
+	}
+
+	out, handled = tryHandleCommand(ctx, "/tickets", sess)
+	if !handled || !strings.Contains(out, secondTicket.Key) || strings.Contains(out, firstTicket.Key) {
+		t.Fatalf("/tickets output = %q handled=%v, want selected project only", out, handled)
+	}
+}
+
+func TestTicketChatCommandIsExplicitlyAdvisory(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "Chat target"})
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	out, handled := tryHandleCommand(context.Background(), "/ticket chat "+ticket.Key, sess)
+	if !handled {
+		t.Fatal("/ticket chat was not handled")
+	}
+	for _, want := range []string{"안내", ticket.TicketConversationID, "전환하지"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/ticket chat output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSlashRunExecutesInstalledSkill(t *testing.T) {
 	baseDir := t.TempDir()
 	cfg := core.DefaultConfig()
@@ -231,6 +347,137 @@ func TestSlashRunExecutesInstalledSkill(t *testing.T) {
 	}
 	if strings.Contains(out, "실행 요청됨") {
 		t.Fatalf("/run returned a queued/requested message instead of executing: %q", out)
+	}
+}
+
+func TestSlashRunResultIsRecordedInConversationHistory(t *testing.T) {
+	baseDir := t.TempDir()
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{
+		BaseDir: baseDir,
+		Config:  &cfg,
+		Store:   st,
+		Sandbox: sandbox.New(cfg.Sandbox),
+	}
+	if err := core.SaveSkillTo(baseDir, &core.Skill{
+		Name:        "hello",
+		Description: "test skill",
+		Enabled:     true,
+	}, `return "hello from slash history"`); err != nil {
+		t.Fatalf("save skill: %v", err)
+	}
+
+	out, err := sess.Run(context.Background(), slashCommandEvent(t, "/run hello"), nil)
+	if err != nil {
+		t.Fatalf("Run(/run): %v", err)
+	}
+	if out != "hello from slash history" {
+		t.Fatalf("/run output = %q", out)
+	}
+
+	turns, err := st.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForConversation: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %+v, want user and assistant turns", turns)
+	}
+	if turns[0].Content != "/run hello" || turns[1].Content != "hello from slash history" {
+		t.Fatalf("turns = %+v, want slash command transcript", turns)
+	}
+}
+
+func TestSlashHelpIsNotRecordedInConversationHistory(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+
+	if _, err := sess.Run(context.Background(), slashCommandEvent(t, "/help"), nil); err != nil {
+		t.Fatalf("Run(/help): %v", err)
+	}
+
+	turns, err := st.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForConversation: %v", err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("/help should not be recorded, got %+v", turns)
+	}
+}
+
+func TestSlashModelSwitchIsRecordedInConversationHistory(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.LLM.Default = "main"
+	cfg.LLM.Models = []core.ModelConfig{
+		{ID: "main", Provider: "openai", Model: "gpt-main"},
+		{ID: "alt", Provider: "openai", Model: "gpt-alt"},
+	}
+	sess := &Session{Store: st, Config: &cfg}
+
+	out, err := sess.Run(context.Background(), slashCommandEvent(t, "/model alt"), nil)
+	if err != nil {
+		t.Fatalf("Run(/model): %v", err)
+	}
+	if !strings.Contains(out, "alt") {
+		t.Fatalf("/model output = %q", out)
+	}
+
+	turns, err := st.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForConversation: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %+v, want model switch transcript", turns)
+	}
+	if turns[0].Content != "/model alt" || !strings.Contains(turns[1].Content, "alt") {
+		t.Fatalf("turns = %+v, want model switch transcript", turns)
+	}
+}
+
+func TestSlashSessionAndContextDiagnostics(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.LLM.Default = "main"
+	cfg.LLM.Models = []core.ModelConfig{{
+		ID:            "main",
+		Provider:      "anthropic",
+		Model:         "claude-sonnet-4-6",
+		ContextWindow: 200000,
+		MaxTokens:     4096,
+	}}
+	sess := &Session{Store: st, Config: &cfg, AccountID: "alice"}
+	for _, turn := range []core.ConversationTurn{
+		{ConversationID: store.DefaultConversationID, Role: core.RoleUser, Content: "hello", Timestamp: "1"},
+		{ConversationID: store.DefaultConversationID, Role: core.RoleAssistant, Content: "world", Timestamp: "2"},
+	} {
+		if err := st.AddConversationTurn(&turn); err != nil {
+			t.Fatalf("AddConversationTurn: %v", err)
+		}
+	}
+	if _, err := st.CreateCheckpoint("before diagnostics"); err != nil {
+		t.Fatalf("CreateCheckpoint: %v", err)
+	}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/session", sess)
+	if !handled {
+		t.Fatal("/session was not handled")
+	}
+	for _, want := range []string{"conversation", store.DefaultConversationID, "alice", "turns: 2", "checkpoint"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/session output missing %q:\n%s", want, out)
+		}
+	}
+
+	out, handled = tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/context", sess)
+	if !handled {
+		t.Fatal("/context was not handled")
+	}
+	for _, want := range []string{"prompt_tokens", "recent_window", "context_window", "200000"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/context output missing %q:\n%s", want, out)
+		}
 	}
 }
 

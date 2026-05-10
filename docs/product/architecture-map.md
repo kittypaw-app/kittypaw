@@ -97,8 +97,8 @@ Session.Run
         |
         +-- deterministic slash command?
         |     |
-        |     +-- yes: handle /staff, /model, /skills, /run, /teach, /status
-        |     +-- no
+        |     +-- yes: handle registry command or deterministic unknown-command error
+        |     +-- no: continue only when the message is not a slash command
         |
         +-- deterministic pipeline intent?
         |     |
@@ -117,6 +117,8 @@ Session.Run
 Important distinction:
 
 - Slash commands and pipeline intents are product control paths.
+- Unknown slash commands never fall through to the LLM; they return a `/help`
+  hint from the deterministic command path.
 - LLM tool calls are reasoning/execution paths.
 - A user-visible durable mutation should not depend only on a free-form LLM
   claim.
@@ -205,6 +207,13 @@ Local /kanban
 Natural-language chat
   -> Kanban.create/show/claim/complete/block/comment/link/heartbeat
   -> same account store
+
+Slash:
+  /projects, /project current|show|use
+  -> project rows + current_project:<conversation_id>
+
+  /tickets, /ticket show|chat|job|move|block|done
+  -> ticket rows, job plans, or ticket conversation_id advisory
 ```
 
 Kanban is a work surface. It should not be embedded in Settings as a tab.
@@ -267,4 +276,3 @@ kittypaw connect gmail/x
 
 The local daemon should not assume direct third-party API access when the
 product policy says usage must be controlled through KittyPaw servers.
-

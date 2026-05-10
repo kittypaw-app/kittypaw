@@ -92,13 +92,25 @@ These commands are entered inside `kittypaw chat`, Telegram, Kakao, or another
 connected chat channel:
 
 ```text
-/help                 show command help
-/status               show today's local execution stats
-/skills               list local user-created skills
-/run <name>           run an installed skill or package by id/name
-/teach <description>  create and save a draft skill from chat
-/staff <staff-id> set the default staff identity for this account
+/help                                      show generated command help
+/status                                    show today's local execution stats
+/skills                                    list local user-created skills
+/run <name>                                run an installed skill or package by id/name
+/teach <description>                       create and save a draft skill from chat
+/staff <current|list|show|use|hire|cancel> inspect or change staff state
+/model [id]                                show model info or switch this chat session
+/session                                   show current conversation/session diagnostics
+/context                                   show prompt/context window diagnostics
+/projects                                  list projects
+/project <current|show|use|new|settings>  inspect or select the current project
+/tickets [project-key]                     list tickets for the current or named project
+/ticket <show|chat|job|move|block|done>   inspect or update a ticket
 ```
+
+Unknown slash commands are handled deterministically and do not fall through to
+the LLM. Read-only diagnostics are not recorded in chat history; auditable
+mutations such as `/run`, `/model <id>`, `/project use`, and ticket state
+changes are recorded.
 
 ## Accounts
 

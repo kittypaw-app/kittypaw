@@ -160,6 +160,10 @@ inside a project.
 Rules:
 
 - `project` commands manage project-level lifecycle.
+- `/project use <key>` selects the current project for the active conversation;
+  `/tickets` follows that selection unless a project key is supplied.
+- `/ticket chat <key>` is advisory and returns the ticket conversation ID. It
+  does not switch the current chat implicitly.
 - `kanban` commands manage task/run lifecycle.
 - Web Kanban should be a direct Kanban surface, not a tab inside Settings.
 - Chat can create/update Kanban tasks through the `Kanban` tool global when the
@@ -171,4 +175,3 @@ Hosted Space is a remote surface, not a second source of truth. It should route
 to the local daemon through authenticated relay or local API calls. Do not mark
 a local web surface as available in hosted Space until the hosted route and
 relay/API path are implemented and documented.
-

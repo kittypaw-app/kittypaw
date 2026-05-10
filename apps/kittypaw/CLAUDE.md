@@ -144,6 +144,24 @@ Config: `[permissions]` section in `config.toml` — `require_approval` (operati
 Callback responses route through channel-internal `sync.Map` (not `eventCh`) to prevent dispatchLoop deadlock.
 `Skill.run` propagates the current run's permission callback into nested user skill/package execution, so a file write inside a skill prompts instead of failing with a no-callback approval error.
 
+## Slash Command Contract
+
+Slash commands are registry-driven in `engine/commands.go`; `/help` is generated
+from that registry instead of a separate hard-coded transcript. A message that
+starts with `/` is either a known command or a deterministic unknown-command
+error with `/help` guidance. It must not fall through to the LLM runner loop.
+
+Read-only commands such as `/help`, `/status`, `/model` without an ID,
+`/session`, and `/context` are diagnostics and should not write conversation
+turns. Auditable results such as `/run`, `/teach`, `/model <id>`,
+`/project use`, `/staff use|hire|cancel`, and ticket mutations may be persisted
+as user/assistant turns in the active conversation.
+
+Project selection is conversation-scoped through `user_context` key
+`current_project:<conversation_id>`. `/tickets` uses that selected project unless
+the user supplies an explicit project key. `/ticket chat <key>` only reports the
+ticket conversation ID; it does not switch the current chat by itself.
+
 ## Tool Trace Transcript
 
 Sandbox tool calls receive stable per-turn `skill_call_N` IDs and are persisted on assistant conversation turns as structured `tool_trace_json` (`skill`, `method`, `args`, raw JSON result or error, success flag). Traces accumulate across retry attempts and `Runner.observe` rounds before the final assistant turn is saved, so audit/replay sees every tool call that actually ran in the user turn.

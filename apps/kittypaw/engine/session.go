@@ -301,8 +301,13 @@ func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (
 	eventText := FormatEvent(&event)
 	ctx = ContextWithEvent(ctx, &event)
 	ctx = ContextWithConversationID(ctx, conversationKeyForEvent(s, &event))
-	if response, handled := tryHandleCommand(ctx, eventText, s); handled {
-		return response, nil
+	if result, handled := tryHandleCommandResult(ctx, eventText, s); handled {
+		if result.RecordHistory && s.Store != nil {
+			if err := s.recordPipelineTurn(event, eventText, result.Text); err != nil {
+				slog.Warn("slash command turn record failed", "error", err)
+			}
+		}
+		return result.Text, nil
 	}
 	if response, handled := tryHandleProjectBriefDraftApproval(s, event, eventText); handled {
 		if err := s.recordPipelineTurn(event, eventText, response); err != nil {
