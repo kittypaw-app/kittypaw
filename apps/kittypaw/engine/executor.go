@@ -1519,12 +1519,15 @@ func executeProjects(ctx context.Context, call core.SkillCall, s *Session) (stri
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
+		if s.ProjectJobRuntime == nil {
+			return jsonResult(map[string]any{"error": "project job runtime unavailable"})
+		}
 		opts := projectsJobOptionsArg(call, 1)
-		event, err := s.Store.AddJobEvent(store.AddJobEventRequest{JobID: jobID, Type: "input", ActorID: opts.ActorID, Message: opts.Text})
+		result, err := s.ProjectJobRuntime.AppendJobInput(ctx, jobID, strings.TrimSpace(opts.ActorID), opts.Text)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
-		return jsonResult(map[string]any{"event": event})
+		return jsonResult(map[string]any{"job": result.Job, "event": result.Event})
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Projects method: %s", call.Method)})
 	}

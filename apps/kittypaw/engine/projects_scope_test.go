@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -577,6 +578,60 @@ func TestProjectsToolJobLogsReturnsCurrentJobAndEvents(t *testing.T) {
 	}
 }
 
+func TestExecuteProjectsAppendJobInputUsesRuntime(t *testing.T) {
+	st := openTestStore(t)
+	project := createProjectsScopeRuntimeProject(t, st, "kitty")
+	ticket, err := st.CreateTicket(store.CreateTicketRequest{ProjectID: project.ID, Title: "PTY"})
+	if err != nil {
+		t.Fatalf("CreateTicket() error = %v", err)
+	}
+	if err := st.EnsureDefaultDrivers(); err != nil {
+		t.Fatalf("EnsureDefaultDrivers() error = %v", err)
+	}
+	job, err := st.PlanJob(store.PlanJobRequest{
+		ProjectID:     project.ID,
+		TicketID:      ticket.ID,
+		DriverID:      "shell",
+		Mode:          store.JobModePTY,
+		PromptSummary: "PTY",
+		PromptText:    "cat",
+		CreatedBy:     "pm",
+	})
+	if err != nil {
+		t.Fatalf("PlanJob() error = %v", err)
+	}
+	approved, err := st.ApproveJob(job.ID, "pm")
+	if err != nil {
+		t.Fatalf("ApproveJob() error = %v", err)
+	}
+	session := &fakeProjectsToolPTYSession{InputCh: make(chan string, 1), ResultCh: make(chan JobPTYResult, 1)}
+	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{Store: st, AccountID: "alice", BaseDir: t.TempDir(), PTYRunner: fakeProjectsToolPTYRunner{Session: session}})
+	sess := &Session{Store: st, ProjectJobRuntime: rt}
+	if _, err := executeProjects(context.Background(), skillCallForProjectsTest("startJob", approved.ID, map[string]any{"actor_id": "pm"}), sess); err != nil {
+		t.Fatalf("executeProjects(startJob) error = %v", err)
+	}
+	defer func() {
+		session.ResultCh <- JobPTYResult{ExitCode: 0, Summary: "done"}
+		_ = rt.WaitForJob(approved.ID, 2*time.Second)
+	}()
+
+	result, err := executeProjects(context.Background(), skillCallForProjectsTest("appendJobInput", approved.ID, map[string]any{"actor_id": "pm", "text": "yes\n"}), sess)
+	if err != nil {
+		t.Fatalf("executeProjects(appendJobInput) error = %v", err)
+	}
+	if !strings.Contains(result, `"event"`) || !strings.Contains(result, `"input"`) {
+		t.Fatalf("appendJobInput result = %s", result)
+	}
+	select {
+	case got := <-session.InputCh:
+		if got != "yes\n" {
+			t.Fatalf("input = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("input was not forwarded")
+	}
+}
+
 type fakeProjectsToolRunner struct {
 	ExitCode   int
 	ResultText string
@@ -584,6 +639,43 @@ type fakeProjectsToolRunner struct {
 
 func (r fakeProjectsToolRunner) Run(ctx context.Context, spec JobCommandSpec) JobCommandResult {
 	return JobCommandResult{ExitCode: r.ExitCode, Summary: r.ResultText}
+}
+
+type fakeProjectsToolPTYRunner struct {
+	Session *fakeProjectsToolPTYSession
+}
+
+func (r fakeProjectsToolPTYRunner) Start(ctx context.Context, spec JobPTYSpec) (JobPTYSession, error) {
+	if r.Session == nil {
+		return nil, fmt.Errorf("missing fake PTY session")
+	}
+	if spec.Emit != nil {
+		spec.Emit([]byte("tool pty output\n"))
+	}
+	return r.Session, nil
+}
+
+type fakeProjectsToolPTYSession struct {
+	InputCh  chan string
+	ResultCh chan JobPTYResult
+}
+
+func (s *fakeProjectsToolPTYSession) Input(text string) error {
+	s.InputCh <- text
+	return nil
+}
+
+func (s *fakeProjectsToolPTYSession) Wait(ctx context.Context) JobPTYResult {
+	select {
+	case result := <-s.ResultCh:
+		return result
+	case <-ctx.Done():
+		return JobPTYResult{ExitCode: -1, ErrorText: ctx.Err().Error()}
+	}
+}
+
+func (s *fakeProjectsToolPTYSession) Close() error {
+	return nil
 }
 
 func createProjectsScopeRuntimeProject(t *testing.T, st *store.Store, key string) *store.Project {
