@@ -29,26 +29,29 @@ import (
 // session, account schedulers, channel spawner, account router, and all
 // handler state.
 type Server struct {
-	config          *core.Config
-	configMu        sync.RWMutex // protects config during hot-reload
-	store           *store.Store
-	session         *engine.Session // default-account session; HTTP handlers use this
-	schedulers      *AccountSchedulers
-	router          chi.Router
-	spawner         *ChannelSpawner         // manages channel lifecycle for hot-reload
-	accounts        *AccountRouter          // routes channel events to account-scoped sessions
-	accountList     []*core.Account         // ordered account metadata for startup validation
-	accountRegistry *core.AccountRegistry   // shared cross-account registry (Share.read / Fanout)
-	eventCh         chan core.Event         // shared event channel between channels and dispatch loop
-	accountMu       sync.Mutex              // serializes AddAccount/RemoveAccount — validation→register→reconcile must not interleave
-	accountDeps     map[string]*AccountDeps // retained close-targets (Store+MCP) for RemoveAccount; populated on successful AddAccount
-	removingAccount map[string]bool         // account IDs detached from routing but still draining scheduler/deps
-	localAuth       *core.LocalAuthStore
-	webSessionKey   []byte
-	masterAPIKey    string
-	version         string
-	pkgManager      *core.PackageManager // default-account package manager for API handlers
-	liveIndexer     *engine.LiveIndexer  // default-account live indexer (nil if lazy mode)
+	config             *core.Config
+	configMu           sync.RWMutex // protects config during hot-reload
+	store              *store.Store
+	session            *engine.Session // default-account session; HTTP handlers use this
+	schedulers         *AccountSchedulers
+	router             chi.Router
+	spawner            *ChannelSpawner       // manages channel lifecycle for hot-reload
+	accounts           *AccountRouter        // routes channel events to account-scoped sessions
+	accountList        []*core.Account       // ordered account metadata for startup validation
+	accountRegistry    *core.AccountRegistry // shared cross-account registry (Share.read / Fanout)
+	eventCh            chan core.Event       // shared event channel between channels and dispatch loop
+	accountMu          sync.Mutex            // serializes AddAccount/RemoveAccount — validation→register→reconcile must not interleave
+	channelWorkersMu   sync.Mutex
+	channelWorkers     map[string]*channelEventWorker
+	channelTurnTimeout time.Duration
+	accountDeps        map[string]*AccountDeps // retained close-targets (Store+MCP) for RemoveAccount; populated on successful AddAccount
+	removingAccount    map[string]bool         // account IDs detached from routing but still draining scheduler/deps
+	localAuth          *core.LocalAuthStore
+	webSessionKey      []byte
+	masterAPIKey       string
+	version            string
+	pkgManager         *core.PackageManager // default-account package manager for API handlers
+	liveIndexer        *engine.LiveIndexer  // default-account live indexer (nil if lazy mode)
 
 	// reloadReconcile, if non-nil, replaces s.spawner.Reconcile inside
 	// handleReload. Test-only hook that lets AC-RELOAD-SYNC inject a barrier
@@ -133,6 +136,7 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 		accountList:     accountList,
 		accountRegistry: registry,
 		eventCh:         eventCh,
+		channelWorkers:  make(map[string]*channelEventWorker),
 		accountDeps:     depsByID,
 		removingAccount: make(map[string]bool),
 		localAuth:       newLocalAuthStore(),
@@ -708,62 +712,14 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			// keeps its per-job model.
 			runOpts = session.ApplyActiveModel(runOpts)
 
-			var response string
-			var runErr error
-			panicked := false
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						panicked = true
-						engine.RecoverAccountPanic(session, "server.dispatchLoop", r)
-					}
-				}()
-				response, runErr = session.Run(ctx, event, runOpts)
-			}()
-			if panicked {
-				// Health marked Degraded inside the recover helper.
-				// Drop this event — re-invoking the same panicking run
-				// on the same input would loop; AC-T8 only requires that
-				// the server survive and other accounts keep ticking.
-				continue
-			}
-			if runErr != nil {
-				slog.Error("channel event: engine error",
-					"type", event.Type,
-					"account", event.AccountID,
-					"chat_id", payload.ChatID,
-					"error", runErr,
-				)
-				continue
-			}
-			// Clean completion re-promotes the account to Ready so a
-			// transient panic self-heals without operator action.
-			engine.MarkAccountReady(session)
-
-			if !chOK {
-				slog.Warn("channel event: no channel for response routing, enqueuing for retry",
-					"type", event.Type, "account", event.AccountID)
-				if event.Type != core.EventKakaoTalk {
-					_ = s.store.EnqueueResponse(event.AccountID, string(event.Type), payload.ChatID, response)
-				}
-				continue
-			}
-
-			outbound := core.ParseOutboundResponse(response)
-			if err := sendChannelResponse(ctx, ch, payload.ChatID, outbound, payload.ReplyToMessageID); err != nil {
-				slog.Error("channel event: send response failed",
-					"type", event.Type,
-					"account", event.AccountID,
-					"chat_id", payload.ChatID,
-					"error", err,
-				)
-				// Kakao uses ephemeral action IDs — retry is futile.
-				if event.Type != core.EventKakaoTalk {
-					if qErr := s.store.EnqueueResponse(event.AccountID, string(event.Type), payload.ChatID, outbound.Text); qErr != nil {
-						slog.Error("channel event: enqueue response failed", "error", qErr)
-					}
-				}
-			}
+			s.enqueueChannelEvent(ctx, channelEventJob{
+				event:   event,
+				payload: payload,
+				session: session,
+				runOpts: runOpts,
+				ch:      ch,
+				chOK:    chOK,
+			})
 		}
 	}
 }

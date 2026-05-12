@@ -295,6 +295,17 @@ func (s *Session) runTurnOwner(ctx context.Context, turnID string, state *turnSt
 	state.result, state.err = exec(ownerCtx)
 }
 
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // Run processes a single event through the runner loop.
 func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
 	// Fast path: slash commands
@@ -812,6 +823,9 @@ observeLoop:
 		}
 
 		for attempt := range maxRetries {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			if attempt > 0 {
 				slog.Info("retry attempt", "attempt", attempt, "max", maxRetries)
 			}
@@ -895,7 +909,9 @@ observeLoop:
 				if attempt < maxRetries-1 {
 					slog.Warn("LLM error, retrying", "attempt", attempt, "error", err)
 					lastError = err.Error()
-					time.Sleep(2 * time.Second)
+					if err := sleepWithContext(ctx, 2*time.Second); err != nil {
+						return "", err
+					}
 					continue
 				}
 				// Try fallback on last attempt (skip when model was explicitly overridden).
