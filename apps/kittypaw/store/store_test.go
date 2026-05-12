@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 31 {
-		t.Fatalf("expected 31 migrations, got %d", count)
+	if count != 32 {
+		t.Fatalf("expected 32 migrations, got %d", count)
 	}
 }
 
@@ -336,6 +336,112 @@ func TestConversationTurnPersistsToolTraces(t *testing.T) {
 	turn := records[0].Turn()
 	if len(turn.ToolTraces) != 1 || turn.ToolTraces[0].ID != trace.ID {
 		t.Fatalf("Turn() lost tool traces: %+v", turn.ToolTraces)
+	}
+}
+
+func TestConversationRolloverMetadata(t *testing.T) {
+	st := openTestStore(t)
+	parent, err := st.CreateConversation(CreateConversationRequest{
+		ScopeType: "general",
+		ScopeID:   "web:old",
+		Title:     "Old",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation(parent): %v", err)
+	}
+	child, err := st.CreateConversation(CreateConversationRequest{
+		ScopeType:            "general",
+		ScopeID:              "web:new",
+		Title:                "New",
+		ParentConversationID: parent.ID,
+		RolloverReason:       "length_turns",
+		RolloverFromTurnID:   42,
+		SourceChannel:        "web_chat",
+		SourceSessionID:      "sess-1",
+		ChatID:               "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation(child): %v", err)
+	}
+	got, ok, err := st.Conversation(child.ID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation(child) ok=%v err=%v", ok, err)
+	}
+	if got.ParentConversationID != parent.ID || got.RolloverReason != "length_turns" || got.RolloverFromTurnID != 42 {
+		t.Fatalf("child metadata = %+v", got)
+	}
+}
+
+func TestConversationRouteUpsertAndLookup(t *testing.T) {
+	st := openTestStore(t)
+	first, err := st.CreateConversation(CreateConversationRequest{ScopeType: "general", ScopeID: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.CreateConversation(CreateConversationRequest{ScopeType: "general", ScopeID: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ConversationRoute{
+		RouteKey:        "web_chat:sess-1",
+		ConversationID:  first.ID,
+		SourceChannel:   "web_chat",
+		SourceSessionID: "sess-1",
+		ChatID:          "sess-1",
+	}
+	if err := st.UpsertConversationRoute(route); err != nil {
+		t.Fatalf("UpsertConversationRoute(first): %v", err)
+	}
+	route.ConversationID = second.ID
+	if err := st.UpsertConversationRoute(route); err != nil {
+		t.Fatalf("UpsertConversationRoute(second): %v", err)
+	}
+	got, ok, err := st.ConversationRoute("web_chat:sess-1")
+	if err != nil || !ok {
+		t.Fatalf("ConversationRoute ok=%v err=%v", ok, err)
+	}
+	if got.ConversationID != second.ID || got.SourceSessionID != "sess-1" {
+		t.Fatalf("route = %+v", got)
+	}
+}
+
+func TestCreateRolloverConversationUpdatesOneRoute(t *testing.T) {
+	st := openTestStore(t)
+	parent, err := st.CreateConversation(CreateConversationRequest{ScopeType: "general", ScopeID: "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateConversation(CreateConversationRequest{ScopeType: "general", ScopeID: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertConversationRoute(ConversationRoute{RouteKey: "web_chat:sess-1", ConversationID: parent.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertConversationRoute(ConversationRoute{RouteKey: "web_chat:sess-2", ConversationID: other.ID}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := st.CreateRolloverConversation(CreateRolloverConversationRequest{
+		ParentConversationID: parent.ID,
+		RolloverReason:       "length_turns",
+		RolloverFromTurnID:   7,
+		Route: ConversationRoute{
+			RouteKey:        "web_chat:sess-1",
+			SourceChannel:   "web_chat",
+			SourceSessionID: "sess-1",
+			ChatID:          "sess-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateRolloverConversation: %v", err)
+	}
+	got, _, _ := st.ConversationRoute("web_chat:sess-1")
+	if got.ConversationID != child.ID {
+		t.Fatalf("route sess-1 = %+v, want child %s", got, child.ID)
+	}
+	otherRoute, _, _ := st.ConversationRoute("web_chat:sess-2")
+	if otherRoute.ConversationID != other.ID {
+		t.Fatalf("route sess-2 changed: %+v", otherRoute)
 	}
 }
 
@@ -914,6 +1020,31 @@ func TestMemoryContextLines(t *testing.T) {
 		}
 		if !strings.Contains(joined, "fact.name") {
 			t.Fatalf("memory context missing normal fact: %s", joined)
+		}
+	})
+
+	t.Run("skips_rollover_and_route_control_state", func(t *testing.T) {
+		st := openTestStore(t)
+		st.SetUserContext("memory:preference:lang", "Korean replies", "conversation_rollover")
+		st.SetUserContext("current_project:general:abc", "proj_123", "slash_command")
+		st.SetUserContext("conversation_route:web:sess", "general:conv_123", "rollover")
+		st.SetUserContext("rollover_pending:web:sess", "general:conv_456", "rollover")
+		st.SetUserContext("fact.name", "Jinto", "user")
+
+		lines, err := st.MemoryContextLines()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(lines, "\n")
+		for _, leaked := range []string{"current_project:", "conversation_route:", "rollover_pending:", "proj_123", "conv_123", "conv_456"} {
+			if strings.Contains(joined, leaked) {
+				t.Fatalf("memory context leaked %q: %s", leaked, joined)
+			}
+		}
+		for _, want := range []string{"memory:preference:lang", "Korean replies", "fact.name"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("memory context missing %q: %s", want, joined)
+			}
 		}
 	})
 

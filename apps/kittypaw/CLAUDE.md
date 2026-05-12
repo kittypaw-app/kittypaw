@@ -181,6 +181,16 @@ stable general thread such as `general:slack:<channel>` or
 not all collapse into one account-wide timeline. Project and ticket chats still
 use their existing scoped IDs and load only their own history.
 
+`conversation_routes` is the durable route index from source session/channel to
+the active general conversation. Length-based rollover is automatic for general
+routes only: the route is moved to a new child conversation, the child records
+`parent_conversation_id`, `rollover_reason`, and `rollover_from_turn_id`, and
+the next assistant response includes a user-visible rollover notice. The memory
+distiller may persist only conservative `memory:*` facts from allowed
+categories; it must not store secrets, raw tool results, large file contents, or
+web page bodies. Topic-shift detection is advisory and should ask before
+splitting; it must not silently create a new thread by itself.
+
 Thread-scoped operations are load-bearing: chat history, forget, compact,
 checkpoint creation/listing, and checkpoint rollback must operate on a single
 `conversation_id`. Rollback deletes only turns after the checkpoint inside the

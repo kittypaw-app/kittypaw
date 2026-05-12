@@ -118,6 +118,20 @@ Chat owns intent-driven usage:
 Rule: registry installation must not happen before the user explicitly agrees
 in chat.
 
+### Conversation And Rollover
+
+Web chat, CLI chat, and channel events are the primary conversation surfaces.
+Each durable source route should resolve to one active general conversation
+until policy rollover moves that route to a child conversation. The user-facing
+rollover surface is the next assistant reply, which starts with a short
+"Conversation rolled over" notice and then continues the answer.
+
+Slash commands stay diagnostic here: `/session` shows current thread metadata,
+including parent and rollover fields when present; `/context` shows prompt and
+rollover thresholds. Natural-language topic changes may trigger a suggestion to
+split into a new conversation, but the assistant should ask instead of silently
+switching threads.
+
 ### Staff
 
 Slash commands are the deterministic in-chat control surface:

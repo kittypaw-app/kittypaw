@@ -18,6 +18,8 @@ import (
 
 // --- test helpers ---
 
+const testWebChatConversationID = "general:web_chat:test-session"
+
 func skipWithoutRuntime(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("deno"); err == nil {

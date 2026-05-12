@@ -420,6 +420,16 @@ func handleSession(ctx context.Context, s *Session) string {
 		return strings.TrimRight(sb.String(), "\n")
 	}
 
+	if conversation, ok, err := s.Store.Conversation(conversationID); err == nil && ok {
+		if conversation.ParentConversationID != "" {
+			fmt.Fprintf(&sb, "parent_conversation: %s\n", conversation.ParentConversationID)
+		}
+		if conversation.RolloverReason != "" {
+			fmt.Fprintf(&sb, "rollover_reason: %s\n", conversation.RolloverReason)
+			fmt.Fprintf(&sb, "rollover_from_turn: %d\n", conversation.RolloverFromTurnID)
+		}
+	}
+
 	sb.WriteString("staff: ")
 	sb.WriteString(handleStaffCurrent(s))
 	sb.WriteByte('\n')
@@ -484,6 +494,9 @@ func handleContext(ctx context.Context, s *Session) string {
 	fmt.Fprintf(&sb, "history_tokens: %d\n", historyTokens)
 	fmt.Fprintf(&sb, "total_tokens: %d\n", promptTokens+historyTokens)
 	fmt.Fprintf(&sb, "turns: %d\n", turnCount)
+	fmt.Fprintf(&sb, "rollover_turns: %d\n", turnCount)
+	fmt.Fprintf(&sb, "rollover_min_turns: %d\n", defaultRolloverPolicy.MinTurnsBeforeRollover)
+	fmt.Fprintf(&sb, "rollover_max_turns: %d\n", defaultRolloverPolicy.MaxTurns)
 	fmt.Fprintf(&sb, "recent_window: %d\n", compaction.RecentWindow)
 	fmt.Fprintf(&sb, "middle_window: %d\n", compaction.MiddleWindow)
 	fmt.Fprintf(&sb, "truncate_len: %d\n", compaction.TruncateLen)

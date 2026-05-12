@@ -244,8 +244,38 @@ func TestConversationKeyForEventDefaultsToGeneralConversation(t *testing.T) {
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
 	sess := &Session{Store: st, AccountID: "account"}
 
-	if got := conversationKeyForEvent(sess, &event); got != store.DefaultConversationID {
-		t.Fatalf("conversationKeyForEvent = %q, want default general conversation %q", got, store.DefaultConversationID)
+	if got := conversationKeyForEvent(sess, &event); got != "general:web_chat:browser-session" {
+		t.Fatalf("conversationKeyForEvent = %q, want source-derived general conversation", got)
+	}
+}
+
+func TestConversationKeyForEventUsesActiveConversationRoute(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.EnsureConversation("general:web_chat:browser-session", "general", "web_chat:browser-session"); err != nil {
+		t.Fatalf("EnsureConversation(parent): %v", err)
+	}
+	if err := st.EnsureConversation("general:conv_child", "general", "conv_child"); err != nil {
+		t.Fatalf("EnsureConversation(child): %v", err)
+	}
+	if err := st.UpsertConversationRoute(store.ConversationRoute{
+		RouteKey:       "web_chat:browser-session",
+		ConversationID: "general:conv_child",
+	}); err != nil {
+		t.Fatalf("UpsertConversationRoute: %v", err)
+	}
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:    "browser-session",
+		SessionID: "browser-session",
+		Text:      "일반 대화",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := core.Event{Type: core.EventWebChat, Payload: payload}
+	sess := &Session{Store: st, AccountID: "account"}
+
+	if got := conversationKeyForEvent(sess, &event); got != "general:conv_child" {
+		t.Fatalf("conversationKeyForEvent = %q, want active route conversation", got)
 	}
 }
 

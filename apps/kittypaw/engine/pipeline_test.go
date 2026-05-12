@@ -255,7 +255,7 @@ func TestRecordPipelineTurn_AppendsBothTurns(t *testing.T) {
 		t.Fatalf("recordPipelineTurn: %v", err)
 	}
 
-	state, err := st.LoadConversationState()
+	state, err := st.LoadConversationStateForChat(testWebChatConversationID)
 	if err != nil {
 		t.Fatalf("LoadConversationState: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestRecordPipelineTurn_StripsAckBeforeStoring(t *testing.T) {
 	if err := sess.recordPipelineTurn(event, "네", "✅ '환율 조회' 스킬을 설치했어요.\n\n📈 환율\n1 USD = 1477.04 KRW"); err != nil {
 		t.Fatal(err)
 	}
-	state, _ := st.LoadConversationState()
+	state, _ := st.LoadConversationStateForChat(testWebChatConversationID)
 	if len(state.Turns) != 2 {
 		t.Fatalf("expected 2 turns, got %d", len(state.Turns))
 	}
@@ -2005,7 +2005,7 @@ func TestRecordPipelineTurn_NextLoadSeesPriorTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, _ := st.LoadConversationState()
+	state, _ := st.LoadConversationStateForChat(testWebChatConversationID)
 	if len(state.Turns) != 4 {
 		t.Fatalf("expected 4 turns (2 user + 2 assistant), got %d", len(state.Turns))
 	}

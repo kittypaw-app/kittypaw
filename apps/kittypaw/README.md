@@ -112,6 +112,19 @@ the LLM. Read-only diagnostics are not recorded in chat history; auditable
 mutations such as `/run`, `/model <id>`, `/project use`, and ticket state
 changes are recorded.
 
+## Conversation Rollover
+
+General chat routes keep a stable conversation per source session/channel
+instead of mixing every message into one account timeline. When a general
+conversation grows past the rollover policy, KittyPaw creates a child
+conversation, carries forward conservative durable memories, and prepends a
+short "Conversation rolled over" notice to the next assistant reply.
+
+Topic changes are advisory: KittyPaw may suggest splitting a new topic, but it
+does not silently switch threads for topic changes alone. Project and ticket
+conversations keep their explicit scoped IDs and are not auto-rolled by the
+general chat policy. `/session` and `/context` show rollover diagnostics.
+
 ## Accounts
 
 Fresh installs create named local accounts under `~/.kittypaw/accounts/<accountID>/`.

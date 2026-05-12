@@ -79,6 +79,29 @@ The account is the default state boundary. A chat request, channel event, skill
 execution, Kanban operation, or workspace read must resolve to an account
 before touching local state.
 
+## Conversation Runtime
+
+```text
+source route
+    |
+    +-- explicit conversation_id? use it
+    |
+    +-- otherwise resolve conversation_routes(route_key)
+            |
+            +-- route exists: use active conversation
+            +-- route missing: create or reuse stable general conversation
+            |
+            +-- general conversation too long?
+                    |
+                    +-- distill conservative memory
+                    +-- create child conversation with parent rollover metadata
+                    +-- move route to child
+```
+
+Project and ticket conversations are explicit scoped conversations. Automatic
+length rollover applies only to general conversation routes; topic-shift
+detection is advisory and should ask before splitting.
+
 ## Chat Execution Flow
 
 ```text
@@ -104,6 +127,10 @@ Session.Run
         |     |
         |     +-- staff draft/approval/cancel/switch
         |     +-- other product intents
+        |
+        +-- resolve conversation route
+        |     |
+        |     +-- maybe auto-roll long general thread
         |
         +-- LLM runner loop
               |

@@ -48,31 +48,54 @@ const DefaultConversationID = "general:account"
 
 // ConversationRecord describes a first-class conversation/thread.
 type ConversationRecord struct {
-	ID              string `json:"id"`
-	AccountID       string `json:"account_id"`
-	ScopeType       string `json:"scope_type"`
-	ScopeID         string `json:"scope_id"`
-	Title           string `json:"title"`
-	DefaultStaffID  string `json:"default_staff_id,omitempty"`
-	SourceChannel   string `json:"source_channel,omitempty"`
-	SourceSessionID string `json:"source_session_id,omitempty"`
-	ChatID          string `json:"chat_id,omitempty"`
-	ArchivedAt      string `json:"archived_at,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
-	MessageCount    int    `json:"message_count,omitempty"`
-	LastMessage     string `json:"last_message,omitempty"`
+	ID                   string `json:"id"`
+	AccountID            string `json:"account_id"`
+	ScopeType            string `json:"scope_type"`
+	ScopeID              string `json:"scope_id"`
+	Title                string `json:"title"`
+	DefaultStaffID       string `json:"default_staff_id,omitempty"`
+	SourceChannel        string `json:"source_channel,omitempty"`
+	SourceSessionID      string `json:"source_session_id,omitempty"`
+	ChatID               string `json:"chat_id,omitempty"`
+	ParentConversationID string `json:"parent_conversation_id,omitempty"`
+	RolloverReason       string `json:"rollover_reason,omitempty"`
+	RolloverFromTurnID   int64  `json:"rollover_from_turn_id,omitempty"`
+	ArchivedAt           string `json:"archived_at,omitempty"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
+	MessageCount         int    `json:"message_count,omitempty"`
+	LastMessage          string `json:"last_message,omitempty"`
 }
 
 type CreateConversationRequest struct {
-	ID              string
-	ScopeType       string
-	ScopeID         string
-	Title           string
-	DefaultStaffID  string
-	SourceChannel   string
-	SourceSessionID string
-	ChatID          string
+	ID                   string
+	ScopeType            string
+	ScopeID              string
+	Title                string
+	DefaultStaffID       string
+	SourceChannel        string
+	SourceSessionID      string
+	ChatID               string
+	ParentConversationID string
+	RolloverReason       string
+	RolloverFromTurnID   int64
+}
+
+type ConversationRoute struct {
+	RouteKey        string `json:"route_key"`
+	ConversationID  string `json:"conversation_id"`
+	SourceChannel   string `json:"source_channel,omitempty"`
+	SourceSessionID string `json:"source_session_id,omitempty"`
+	ChatID          string `json:"chat_id,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	UpdatedAt       string `json:"updated_at,omitempty"`
+}
+
+type CreateRolloverConversationRequest struct {
+	ParentConversationID string
+	RolloverReason       string
+	RolloverFromTurnID   int64
+	Route                ConversationRoute
 }
 
 // ConversationSummary describes the account-wide conversation timeline.
@@ -497,12 +520,16 @@ func (s *Store) CreateConversation(req CreateConversationRequest) (*Conversation
 	if _, err := tx.Exec(`
 		INSERT INTO conversations (
 			id, scope_type, scope_id, title, default_staff_id,
-			source_channel, source_session_id, chat_id, created_at, updated_at
+			source_channel, source_session_id, chat_id,
+			parent_conversation_id, rollover_reason, rollover_from_turn_id,
+			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		conversationID, scopeType, scopeID, strings.TrimSpace(req.Title),
 		strings.TrimSpace(req.DefaultStaffID), strings.TrimSpace(req.SourceChannel),
-		strings.TrimSpace(req.SourceSessionID), strings.TrimSpace(req.ChatID), now, now); err != nil {
+		strings.TrimSpace(req.SourceSessionID), strings.TrimSpace(req.ChatID),
+		strings.TrimSpace(req.ParentConversationID), strings.TrimSpace(req.RolloverReason),
+		req.RolloverFromTurnID, now, now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -517,7 +544,8 @@ func (s *Store) Conversation(conversationID string) (*ConversationRecord, bool, 
 	rec, err := scanConversationRecord(s.db.QueryRow(`
 		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title,
 		       c.default_staff_id, c.source_channel, c.source_session_id,
-		       c.chat_id, c.archived_at, c.created_at, c.updated_at,
+		       c.chat_id, c.parent_conversation_id, c.rollover_reason,
+		       c.rollover_from_turn_id, c.archived_at, c.created_at, c.updated_at,
 		       COUNT(t.id) AS message_count,
 		       COALESCE((
 		           SELECT content
@@ -547,7 +575,8 @@ func (s *Store) ListConversations(limit int) ([]ConversationRecord, error) {
 	rows, err := s.db.Query(`
 		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title,
 		       c.default_staff_id, c.source_channel, c.source_session_id,
-		       c.chat_id, c.archived_at, c.created_at, c.updated_at,
+		       c.chat_id, c.parent_conversation_id, c.rollover_reason,
+		       c.rollover_from_turn_id, c.archived_at, c.created_at, c.updated_at,
 		       COUNT(t.id) AS message_count,
 		       COALESCE((
 		           SELECT content
@@ -585,12 +614,124 @@ func scanConversationRecord(row interface {
 	if err := row.Scan(
 		&rec.ID, &rec.AccountID, &rec.ScopeType, &rec.ScopeID, &rec.Title,
 		&rec.DefaultStaffID, &rec.SourceChannel, &rec.SourceSessionID,
-		&rec.ChatID, &rec.ArchivedAt, &rec.CreatedAt, &rec.UpdatedAt,
+		&rec.ChatID, &rec.ParentConversationID, &rec.RolloverReason,
+		&rec.RolloverFromTurnID, &rec.ArchivedAt, &rec.CreatedAt, &rec.UpdatedAt,
 		&rec.MessageCount, &rec.LastMessage,
 	); err != nil {
 		return nil, err
 	}
 	return &rec, nil
+}
+
+func (s *Store) UpsertConversationRoute(route ConversationRoute) error {
+	return upsertConversationRouteTx(s.db, route)
+}
+
+func upsertConversationRouteTx(exec sqlExecer, route ConversationRoute) error {
+	route.RouteKey = strings.TrimSpace(route.RouteKey)
+	route.ConversationID = normalizeConversationID(route.ConversationID)
+	if route.RouteKey == "" {
+		return errors.New("conversation route key is required")
+	}
+	if route.ConversationID == "" {
+		return errors.New("conversation route conversation id is required")
+	}
+	_, err := exec.Exec(`
+		INSERT INTO conversation_routes (
+			route_key, conversation_id, source_channel, source_session_id, chat_id, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		ON CONFLICT(route_key) DO UPDATE SET
+			conversation_id = excluded.conversation_id,
+			source_channel = excluded.source_channel,
+			source_session_id = excluded.source_session_id,
+			chat_id = excluded.chat_id,
+			updated_at = datetime('now')`,
+		route.RouteKey, route.ConversationID, strings.TrimSpace(route.SourceChannel),
+		strings.TrimSpace(route.SourceSessionID), strings.TrimSpace(route.ChatID))
+	return err
+}
+
+func (s *Store) ConversationRoute(routeKey string) (*ConversationRoute, bool, error) {
+	routeKey = strings.TrimSpace(routeKey)
+	if routeKey == "" {
+		return nil, false, nil
+	}
+	var route ConversationRoute
+	err := s.db.QueryRow(`
+		SELECT route_key, conversation_id, source_channel, source_session_id, chat_id, created_at, updated_at
+		FROM conversation_routes
+		WHERE route_key = ?`, routeKey).
+		Scan(&route.RouteKey, &route.ConversationID, &route.SourceChannel,
+			&route.SourceSessionID, &route.ChatID, &route.CreatedAt, &route.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &route, true, nil
+}
+
+func (s *Store) CreateRolloverConversation(req CreateRolloverConversationRequest) (*ConversationRecord, error) {
+	parentID := normalizeConversationID(req.ParentConversationID)
+	if parentID == "" {
+		return nil, errors.New("parent conversation id is required")
+	}
+	if strings.TrimSpace(req.Route.RouteKey) == "" {
+		return nil, errors.New("conversation route key is required")
+	}
+	reason := strings.TrimSpace(req.RolloverReason)
+	if reason == "" {
+		reason = "length_turns"
+	}
+	conversationID := "general:" + newProjectStoreID("conv_")
+	scopeID := strings.TrimPrefix(conversationID, "general:")
+	now := projectNow()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if err := setConversationScopeTx(tx, conversationID, "general", scopeID, now); err != nil {
+		return nil, err
+	}
+	_, err = tx.Exec(`
+		UPDATE conversations
+		SET parent_conversation_id = ?,
+		    rollover_reason = ?,
+		    rollover_from_turn_id = ?,
+		    source_channel = ?,
+		    source_session_id = ?,
+		    chat_id = ?,
+		    updated_at = ?
+		WHERE id = ?`,
+		parentID, reason, req.RolloverFromTurnID,
+		strings.TrimSpace(req.Route.SourceChannel), strings.TrimSpace(req.Route.SourceSessionID),
+		strings.TrimSpace(req.Route.ChatID), now, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	req.Route.ConversationID = conversationID
+	if err := upsertConversationRouteTx(tx, req.Route); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	rec, _, err := s.Conversation(conversationID)
+	return rec, err
+}
+
+func (s *Store) LatestConversationTurnID(conversationID string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		"SELECT COALESCE(MAX(id), 0) FROM v2_conversation_turns WHERE conversation_id = ?",
+		normalizeConversationID(conversationID),
+	).Scan(&id)
+	return id, err
 }
 
 // SaveConversationState upserts account-level runtime metadata. When the conversation is
@@ -1578,12 +1719,15 @@ func (s *Store) MemoryContextLines() ([]string, error) {
 	// --- Remembered Facts (user_context, cap 20, most recent first) ---
 	rows, err := s.db.Query(`
 		SELECT key, value FROM user_context
-		WHERE key NOT LIKE 'pending_staff_draft:%'
-		  AND key NOT LIKE 'pending_staff_offer:%'
-		  AND key NOT LIKE 'pending_staff_switch:%'
-		  AND key NOT LIKE 'active_staff:%'
-		ORDER BY updated_at DESC
-		LIMIT 20`)
+			WHERE key NOT LIKE 'pending_staff_draft:%'
+			  AND key NOT LIKE 'pending_staff_offer:%'
+			  AND key NOT LIKE 'pending_staff_switch:%'
+			  AND key NOT LIKE 'active_staff:%'
+			  AND key NOT LIKE 'current_project:%'
+			  AND key NOT LIKE 'conversation_route:%'
+			  AND key NOT LIKE 'rollover_pending:%'
+			ORDER BY updated_at DESC
+			LIMIT 20`)
 	if err != nil {
 		return nil, fmt.Errorf("memory context facts: %w", err)
 	}

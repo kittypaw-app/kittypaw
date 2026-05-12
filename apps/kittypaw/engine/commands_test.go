@@ -376,7 +376,7 @@ func TestSlashRunResultIsRecordedInConversationHistory(t *testing.T) {
 		t.Fatalf("/run output = %q", out)
 	}
 
-	turns, err := st.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	turns, err := st.ListConversationTurnsForConversation(testWebChatConversationID, 10)
 	if err != nil {
 		t.Fatalf("ListConversationTurnsForConversation: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestSlashHelpIsNotRecordedInConversationHistory(t *testing.T) {
 		t.Fatalf("Run(/help): %v", err)
 	}
 
-	turns, err := st.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	turns, err := st.ListConversationTurnsForConversation(testWebChatConversationID, 10)
 	if err != nil {
 		t.Fatalf("ListConversationTurnsForConversation: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestSlashModelSwitchIsRecordedInConversationHistory(t *testing.T) {
 		t.Fatalf("/model output = %q", out)
 	}
 
-	turns, err := st.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	turns, err := st.ListConversationTurnsForConversation(testWebChatConversationID, 10)
 	if err != nil {
 		t.Fatalf("ListConversationTurnsForConversation: %v", err)
 	}
@@ -475,6 +475,55 @@ func TestSlashSessionAndContextDiagnostics(t *testing.T) {
 		t.Fatal("/context was not handled")
 	}
 	for _, want := range []string{"prompt_tokens", "recent_window", "context_window", "200000"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/context output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSessionShowsRolloverMetadata(t *testing.T) {
+	st := openTestStore(t)
+	parent, err := st.CreateConversation(store.CreateConversationRequest{ScopeType: "general", ScopeID: "parent"})
+	if err != nil {
+		t.Fatalf("CreateConversation(parent): %v", err)
+	}
+	child, err := st.CreateConversation(store.CreateConversationRequest{
+		ScopeType:            "general",
+		ScopeID:              "child",
+		ParentConversationID: parent.ID,
+		RolloverReason:       rolloverReasonLengthTurns,
+		RolloverFromTurnID:   12,
+		SourceChannel:        "web_chat",
+		SourceSessionID:      "sess-1",
+		ChatID:               "chat-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation(child): %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg, AccountID: "alice"}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), child.ID), "/session", sess)
+	if !handled {
+		t.Fatal("/session was not handled")
+	}
+	for _, want := range []string{"parent_conversation", parent.ID, "rollover_reason", rolloverReasonLengthTurns, "rollover_from_turn: 12"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/session output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestContextShowsRolloverThreshold(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/context", sess)
+	if !handled {
+		t.Fatal("/context was not handled")
+	}
+	for _, want := range []string{"rollover_max_turns", "rollover_min_turns", "rollover_turns"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("/context output missing %q:\n%s", want, out)
 		}

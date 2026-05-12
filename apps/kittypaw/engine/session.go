@@ -656,7 +656,12 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventText string, opts *RunOptions) (string, error) {
 	loopStart := time.Now()
 	channelName := event.Type.ChannelName()
-	convKey := conversationKeyForEvent(s, &event)
+	resolution, err := resolveConversationForEvent(ctx, s, &event, s.Provider)
+	if err != nil {
+		return "", fmt.Errorf("resolve conversation: %w", err)
+	}
+	convKey := resolution.ConversationID
+	rolloverNotice := resolution.Notice
 	meta := conversationTurnSource(&event)
 
 	// Extract callbacks from options.
@@ -712,6 +717,11 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 		}
 	}
 
+	topicNotice := ""
+	if rolloverNotice == "" && topicShiftSuggestion(eventText, state.Turns) {
+		topicNotice = topicShiftNotice()
+	}
+
 	// Add user turn
 	userTurn := core.ConversationTurn{
 		ConversationID: convKey,
@@ -743,6 +753,8 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	); orchErr != nil {
 		slog.Warn("orchestration error, falling through", "error", orchErr)
 	} else if handled {
+		response = prependRolloverNotice(rolloverNotice, response)
+		response = prependTopicShiftNotice(topicNotice, response)
 		assistantTurn := core.ConversationTurn{
 			ConversationID: convKey,
 			Role:           core.RoleAssistant,
@@ -940,6 +952,8 @@ observeLoop:
 				if output == "" {
 					output = "(max observation rounds reached)"
 				}
+				output = prependRolloverNotice(rolloverNotice, output)
+				output = prependTopicShiftNotice(topicNotice, output)
 				assistantTurn := core.ConversationTurn{
 					ConversationID: convKey,
 					Role:           core.RoleAssistant,
@@ -966,6 +980,8 @@ observeLoop:
 				if output == "" {
 					output = "응답이 비어 있어요. 질문을 다시 한 번 말씀해 주시겠어요?"
 				}
+				output = prependRolloverNotice(rolloverNotice, output)
+				output = prependTopicShiftNotice(topicNotice, output)
 
 				slog.Info("execution success",
 					"phase", core.PhaseFinish,
@@ -1272,10 +1288,13 @@ func conversationKeyForEvent(s *Session, event *core.Event) string {
 			return candidate
 		}
 	}
-	if event.AccountID != "" {
-		if derived := sourceConversationKey(event.Type, payload); derived != "" {
-			return derived
+	if routeKey, _ := conversationRouteKey(event.Type, payload); routeKey != "" {
+		if route, ok, err := s.Store.ConversationRoute(routeKey); err == nil && ok {
+			return route.ConversationID
 		}
+	}
+	if derived := sourceConversationKey(event.Type, payload); derived != "" {
+		return derived
 	}
 	return store.DefaultConversationID
 }

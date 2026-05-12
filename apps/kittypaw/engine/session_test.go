@@ -576,7 +576,7 @@ return created.output || created.error || "missing draft output";
 	if base, err := core.ResolveBaseDir(sess.BaseDir); err != nil || core.StaffHasSoul(base, "finance") {
 		t.Fatalf("finance active staff = true, base err=%v, want false nil", err)
 	}
-	if _, ok, err := loadPendingStaffDraft(sess.BaseDir, store.DefaultConversationID); err != nil || !ok {
+	if _, ok, err := loadPendingStaffDraft(sess.BaseDir, testWebChatConversationID); err != nil || !ok {
 		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}
 }
@@ -600,7 +600,7 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "Staff 기능") {
 		t.Fatalf("first response = %q, want Staff opt-in question", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(baseDir, store.DefaultConversationID); err != nil || ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, testWebChatConversationID); err != nil || ok {
 		t.Fatalf("pending draft after opt-in question ok=%v err=%v, want none", ok, err)
 	}
 
@@ -611,7 +611,7 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "초안") || !strings.Contains(out, "dev-pm") {
 		t.Fatalf("opt-in response = %q, want dev-pm draft", out)
 	}
-	if _, ok, err := loadPendingStaffDraft(baseDir, store.DefaultConversationID); err != nil || !ok {
+	if _, ok, err := loadPendingStaffDraft(baseDir, testWebChatConversationID); err != nil || !ok {
 		t.Fatalf("pending draft after opt-in ok=%v err=%v, want ok true nil", ok, err)
 	}
 	if base, err := core.ResolveBaseDir(baseDir); err != nil || core.StaffHasSoul(base, "dev-pm") {
@@ -702,7 +702,7 @@ func TestStaffNaturalLanguageContextualRequestUsesLLMConversationForDraft(t *tes
 	if !strings.Contains(prompt, "이번 릴리즈는 요구사항 정리") || !strings.Contains(prompt, "우리 대화내용을 보고 pm") {
 		t.Fatalf("staff draft prompt missing conversation/request context:\n%s", prompt)
 	}
-	draft, ok, err := loadPendingStaffDraft(baseDir, store.DefaultConversationID)
+	draft, ok, err := loadPendingStaffDraft(baseDir, testWebChatConversationID)
 	if err != nil || !ok {
 		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}
@@ -771,7 +771,7 @@ func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
 		AccountID: "alice",
 		Pipeline:  NewPipelineState(),
 	}
-	if err := savePendingStaffDraft(sess.BaseDir, store.DefaultConversationID, buildStaffDraft("개발PM", "test")); err != nil {
+	if err := savePendingStaffDraft(sess.BaseDir, testWebChatConversationID, buildStaffDraft("개발PM", "test")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -782,14 +782,14 @@ func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
 	if !strings.Contains(out, "이미") || !strings.Contains(out, "dev-pm") {
 		t.Fatalf("response = %q, want existing draft notice", out)
 	}
-	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, store.DefaultConversationID)
+	draft, ok, err := loadPendingStaffDraft(sess.BaseDir, testWebChatConversationID)
 	if err != nil || !ok {
 		t.Fatalf("pending draft ok=%v err=%v, want ok true nil", ok, err)
 	}
 	if draft.ID != "dev-pm" {
 		t.Fatalf("pending draft ID = %q, want dev-pm", draft.ID)
 	}
-	if role, ok, err := loadPendingStaffOffer(st, store.DefaultConversationID); err != nil || ok {
+	if role, ok, err := loadPendingStaffOffer(st, testWebChatConversationID); err != nil || ok {
 		t.Fatalf("pending offer = %q ok=%v err=%v, want none", role, ok, err)
 	}
 }

@@ -137,6 +137,42 @@ func TestConversationsAPICreatesGeneralConversation(t *testing.T) {
 	}
 }
 
+func TestConversationInfoIncludesRolloverMetadata(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	parent, err := srv.store.CreateConversation(store.CreateConversationRequest{ScopeType: "general", ScopeID: "parent"})
+	if err != nil {
+		t.Fatalf("CreateConversation(parent): %v", err)
+	}
+	child, err := srv.store.CreateConversation(store.CreateConversationRequest{
+		ScopeType:            "general",
+		ScopeID:              "child",
+		ParentConversationID: parent.ID,
+		RolloverReason:       "length_turns",
+		RolloverFromTurnID:   42,
+		SourceChannel:        "web_chat",
+		SourceSessionID:      "sess-1",
+		ChatID:               "chat-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation(child): %v", err)
+	}
+
+	var info struct {
+		Conversation struct {
+			ID                   string `json:"id"`
+			ParentConversationID string `json:"parent_conversation_id"`
+			RolloverReason       string `json:"rollover_reason"`
+			RolloverFromTurnID   int64  `json:"rollover_from_turn_id"`
+		} `json:"conversation"`
+	}
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/conversations/"+url.PathEscape(child.ID), nil, http.StatusOK, &info)
+	if info.Conversation.ParentConversationID != parent.ID ||
+		info.Conversation.RolloverReason != "length_turns" ||
+		info.Conversation.RolloverFromTurnID != 42 {
+		t.Fatalf("conversation info = %+v", info.Conversation)
+	}
+}
+
 func TestChatForgetCanBeScopedToConversation(t *testing.T) {
 	srv := newProjectsAPITestServer(t)
 
