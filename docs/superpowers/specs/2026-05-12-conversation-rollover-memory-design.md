@@ -122,14 +122,35 @@ Before loading conversation state in `Session.runAgentLoop`:
 8. Prefix or otherwise include a short user-visible notice in the assistant
    response.
 
-The notice should be concise:
+The notice should be concise and visually separate from the carried-forward
+state:
 
 ```text
-대화가 길어져 새 대화로 정리해서 이어갑니다. 이전 대화의 중요한 기억만 반영했습니다.
+* Conversation rolled over
+
+────────────────────────────────
+
+상태를 이어받았습니다. 대화가 길어져 새 대화로 정리해서 이어갑니다.
+이전 대화의 중요한 기억만 반영했습니다.
 ```
 
 The notice is part of the assistant response and is recorded in the child
 conversation history.
+
+Same-thread persistent compaction can use the same visual language without
+creating a child conversation:
+
+```text
+* Context compacted
+
+────────────────────────────────
+
+상태를 이어받았습니다. 오래된 대화 내용을 요약해 현재 맥락에 반영했습니다.
+```
+
+The first implementation only needs the rollover notice. The compaction notice
+is documented so future `/compact` or automatic compaction UX uses the same
+pattern.
 
 ## Memory Distillation
 
