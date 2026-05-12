@@ -39,11 +39,21 @@ type ReadBackend interface {
 	Read(ctx context.Context, targetURL string, opts ReadOptions) (ReadResult, error)
 }
 
+type browserSkillExecutor interface {
+	Execute(ctx context.Context, call core.SkillCall) (string, error)
+}
+
+type browserSkillExecutorFunc func(context.Context, core.SkillCall) (string, error)
+
+func (f browserSkillExecutorFunc) Execute(ctx context.Context, call core.SkillCall) (string, error) {
+	return f(ctx, call)
+}
+
 func NewReadBackend(cfg *core.WebConfig) (ReadBackend, error) {
 	return NewReadBackendWithBrowser(cfg, nil)
 }
 
-func NewReadBackendWithBrowser(cfg *core.WebConfig, browserController BrowserController) (ReadBackend, error) {
+func NewReadBackendWithBrowser(cfg *core.WebConfig, browserExecutor browserSkillExecutor) (ReadBackend, error) {
 	if cfg == nil {
 		cfg = &core.WebConfig{}
 	}
@@ -61,10 +71,10 @@ func NewReadBackendWithBrowser(cfg *core.WebConfig, browserController BrowserCon
 		}
 		return firecrawl, nil
 	case "browser":
-		if browserController == nil {
+		if browserExecutor == nil {
 			return nil, fmt.Errorf("browser read backend requires browser controller")
 		}
-		return &BrowserReadBackend{Controller: browserController}, nil
+		return &BrowserReadBackend{Executor: browserExecutor}, nil
 	case "auto":
 		var firecrawl ReadBackend
 		if cfg.FirecrawlKey != "" {
@@ -160,17 +170,17 @@ type FirecrawlReadBackend struct {
 }
 
 type BrowserReadBackend struct {
-	Controller BrowserController
+	Executor browserSkillExecutor
 }
 
 func (b *BrowserReadBackend) Read(ctx context.Context, targetURL string, _ ReadOptions) (ReadResult, error) {
 	result := ReadResult{Backend: "browser", FinalURL: targetURL, ContentType: "text/plain", Status: http.StatusOK}
-	if b.Controller == nil {
+	if b.Executor == nil {
 		result.Error = "browser read backend requires browser controller"
 		return result, nil
 	}
 	urlArg, _ := json.Marshal(targetURL)
-	openResult, err := b.Controller.Execute(ctx, core.SkillCall{
+	openResult, err := b.Executor.Execute(ctx, core.SkillCall{
 		SkillName: "Browser",
 		Method:    "open",
 		Args:      []json.RawMessage{urlArg},
@@ -183,7 +193,7 @@ func (b *BrowserReadBackend) Read(ctx context.Context, targetURL string, _ ReadO
 		result.Error = errText
 		return result, nil
 	}
-	snapshotResult, err := b.Controller.Execute(ctx, core.SkillCall{
+	snapshotResult, err := b.Executor.Execute(ctx, core.SkillCall{
 		SkillName: "Browser",
 		Method:    "snapshot",
 	})

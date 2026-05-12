@@ -475,12 +475,16 @@ func backendName(b SearchBackend) string {
 
 func webFetch(ctx context.Context, targetURL string, s *Session) (string, error) {
 	var cfg *core.WebConfig
-	var browserController BrowserController
+	var browserExecutor browserSkillExecutor
 	if s != nil && s.Config != nil {
 		cfg = &s.Config.Web
-		browserController = s.BrowserController
+		if s.BrowserController != nil {
+			browserExecutor = browserSkillExecutorFunc(func(ctx context.Context, call core.SkillCall) (string, error) {
+				return resolveSkillCall(ctx, call, s, nil)
+			})
+		}
 	}
-	backend, err := NewReadBackendWithBrowser(cfg, browserController)
+	backend, err := NewReadBackendWithBrowser(cfg, browserExecutor)
 	if err != nil {
 		return jsonResult(ReadResult{OK: false, Error: err.Error(), FinalURL: targetURL})
 	}

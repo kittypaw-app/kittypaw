@@ -209,6 +209,47 @@ func TestExecuteHTTPWebFetchUsesConfiguredBrowserReadBackend(t *testing.T) {
 	}
 }
 
+func TestExecuteHTTPWebFetchBrowserBackendHonorsBrowserOpenApproval(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomySupervised
+	cfg.Web.ReadBackend = "browser"
+	controller := &fakeBrowserReadController{}
+	s := &Session{Config: &cfg, BrowserController: controller}
+	permissionCalls := 0
+	ctx := ContextWithPermissionCallback(context.Background(), func(_ context.Context, description, resource string) (bool, error) {
+		permissionCalls++
+		if description != "Browser.open: https://example.com/rendered" {
+			t.Fatalf("permission description = %q, want Browser.open target", description)
+		}
+		if resource != "Browser" {
+			t.Fatalf("permission resource = %q, want Browser", resource)
+		}
+		return false, nil
+	})
+	urlArg, _ := json.Marshal("https://example.com/rendered")
+	result, err := executeHTTP(ctx, core.SkillCall{
+		SkillName: "Web",
+		Method:    "fetch",
+		Args:      []json.RawMessage{urlArg},
+	}, s)
+	if err != nil {
+		t.Fatalf("executeHTTP: %v", err)
+	}
+	var resp ReadResult
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if permissionCalls != 1 {
+		t.Fatalf("permissionCalls = %d, want 1", permissionCalls)
+	}
+	if len(controller.calls) != 0 {
+		t.Fatalf("browser controller calls = %+v, want none after denial", controller.calls)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "Browser.open permission denied") {
+		t.Fatalf("resp = %+v, want denied Browser.open error", resp)
+	}
+}
+
 type fakeBrowserReadController struct {
 	calls []core.SkillCall
 }

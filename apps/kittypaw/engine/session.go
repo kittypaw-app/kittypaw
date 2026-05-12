@@ -1278,15 +1278,8 @@ func conversationKeyForEvent(s *Session, event *core.Event) string {
 	if err != nil {
 		return store.DefaultConversationID
 	}
-	for _, candidate := range []string{payload.ConversationID, payload.SessionID, payload.ChatID} {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		ok, err := conversationKeyExists(s, candidate)
-		if err == nil && ok {
-			return candidate
-		}
+	if selected, ok, err := existingConversationKeyFromPayload(s, payload, true); err == nil && ok {
+		return selected
 	}
 	if routeKey, _ := conversationRouteKey(event.Type, payload); routeKey != "" {
 		if route, ok, err := s.Store.ConversationRoute(routeKey); err == nil && ok {
@@ -1297,6 +1290,27 @@ func conversationKeyForEvent(s *Session, event *core.Event) string {
 		return derived
 	}
 	return store.DefaultConversationID
+}
+
+func existingConversationKeyFromPayload(s *Session, payload core.ChatPayload, includeConversationID bool) (string, bool, error) {
+	candidates := []string{payload.SessionID, payload.ChatID}
+	if includeConversationID {
+		candidates = append([]string{payload.ConversationID}, candidates...)
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		ok, err := conversationKeyExists(s, candidate)
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			return candidate, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func conversationKeyExists(s *Session, conversationID string) (bool, error) {

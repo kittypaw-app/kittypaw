@@ -92,6 +92,13 @@ func resolveConversationForEvent(ctx context.Context, s *Session, event *core.Ev
 		return maybeRolloverConversation(ctx, s, resolution, provider)
 	}
 
+	if selected, ok, err := existingConversationKeyFromPayload(s, payload, false); err != nil {
+		return resolution, err
+	} else if ok {
+		resolution.ConversationID = selected
+		return resolution, nil
+	}
+
 	conversationID := sourceConversationKey(event.Type, payload)
 	if conversationID == "" {
 		conversationID = store.DefaultConversationID

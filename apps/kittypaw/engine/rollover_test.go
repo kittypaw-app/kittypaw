@@ -187,6 +187,36 @@ func TestProjectConversationDoesNotAutoRollover(t *testing.T) {
 	}
 }
 
+func TestResolveConversationForEventPreservesExistingChatIDConversation(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateProject(store.CreateProjectRequest{
+		Key:      "preserve",
+		Name:     "Preserve",
+		RootPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg}
+	event := rolloverChatEvent(t, "continue project chat", project.ProjectConversationID, "browser-session", "")
+
+	resolution, err := resolveConversationForEvent(context.Background(), sess, &event, nil)
+	if err != nil {
+		t.Fatalf("resolveConversationForEvent: %v", err)
+	}
+	if resolution.ConversationID != project.ProjectConversationID {
+		t.Fatalf("ConversationID = %q, want existing project conversation %q", resolution.ConversationID, project.ProjectConversationID)
+	}
+	routeKey, _ := conversationRouteKey(core.EventWebChat, core.ChatPayload{
+		ChatID:    project.ProjectConversationID,
+		SessionID: "browser-session",
+	})
+	if route, ok, err := st.ConversationRoute(routeKey); err != nil || ok {
+		t.Fatalf("ConversationRoute(%q) = %+v ok=%v err=%v, want no route created", routeKey, route, ok, err)
+	}
+}
+
 func TestRolloverNoticeAppearsOnce(t *testing.T) {
 	useTestRolloverPolicy(t, rolloverPolicy{Enabled: true, MaxTurns: 4, MinTurnsBeforeRollover: 2, MaxEstimatedTokensRatio: 1})
 	st := openTestStore(t)
