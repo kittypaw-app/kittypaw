@@ -156,6 +156,7 @@ type WorkspaceRoot struct {
 
 // WebConfig controls web tool behavior (search backend, etc.).
 type WebConfig struct {
+	ReadBackend   string `toml:"read_backend"`   // "auto" | "static" | "firecrawl" | "browser"; empty = auto
 	SearchBackend string `toml:"search_backend"` // "firecrawl" | "tavily" | "duckduckgo"; empty = auto-detect
 	FirecrawlKey  string `toml:"-"`
 	FirecrawlURL  string `toml:"firecrawl_api_url"` // self-hosted; default https://api.firecrawl.dev

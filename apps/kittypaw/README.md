@@ -125,6 +125,18 @@ does not silently switch threads for topic changes alone. Project and ticket
 conversations keep their explicit scoped IDs and are not auto-rolled by the
 general chat policy. `/session` and `/context` show rollover diagnostics.
 
+## Web Tools
+
+`Web.search(query)` uses the configured search backend and treats its argument
+as a search query, not a URL. `Web.fetch(url)` returns structured page-read
+data: `ok`, `error`, `text`, `markdown`, `title`, `status`, `contentType`,
+`finalUrl`, and `backend`.
+
+Reader backends are configured under `[web]` with `read_backend = "auto"`,
+`"static"`, `"firecrawl"`, or `"browser"`. `auto` uses the static HTTP reader
+first and falls back to Firecrawl when static extraction is weak and a
+Firecrawl key is configured.
+
 ## Accounts
 
 Fresh installs create named local accounts under `~/.kittypaw/accounts/<accountID>/`.

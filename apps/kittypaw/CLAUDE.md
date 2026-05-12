@@ -73,6 +73,20 @@ Hop-by-hop headers (`Host`, `Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, 
 
 SSRF validation (`validateHTTPTarget`): explicit `allowed_hosts` in `package.toml` takes priority over private IP blocking — packages can declare `allowed_hosts = ["localhost"]` to reach local API servers. The package resolver validates URLs against the package's AllowedHosts and stores the validated hostname in context; `executeHTTP` verifies the actual request hostname matches.
 
+## Web Tool Contracts
+
+`Web.search(query)` is a search-query primitive and must not pass through URL
+or `allowed_hosts` validation. `Http.*` and `Web.fetch(url)` are URL primitives
+and remain subject to SSRF/allowed-host checks.
+
+Package resolver unwrapping is intentionally `Http`-only: package `Http.get`
+returns the raw `body` for legacy packages, while `Web.search` and `Web.fetch`
+return structured JSON. `Web.fetch` is backed by `ReadBackend` with
+`static`, `firecrawl`, `browser`, and `auto` modes. The stable result contract
+is `{ok,error,text,markdown,title,status,contentType,finalUrl,backend,warning?}`.
+`auto` tries static HTTP extraction first and uses Firecrawl only when static
+output is weak and a Firecrawl key is available.
+
 ## MoA (Multi-Model Aggregation)
 
 `Moa.query(prompt, options?)` JS skill runs parallel fan-out to multiple named models from config `[[models]]`, then synthesizes the responses via the Default model. Implemented in `engine/moa.go`. Public core: `QueryMoA(ctx, MoARequest, ProviderResolver, *SharedTokenBudget)`; the JS adapter `executeMoA` in the same file fills `MoARequest.Models` from `s.Config.Models` and `SynthesizerModel` from the `Default=true` entry when the caller omits them.

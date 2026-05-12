@@ -330,6 +330,12 @@ func executeHTTP(ctx context.Context, call core.SkillCall, s *Session) (string, 
 		return jsonResult(map[string]any{"error": "invalid url"})
 	}
 
+	// Web.search accepts a search query, not a URL. Keep it out of URL/SSRF
+	// validation so package or global allowed_hosts does not block plain text.
+	if call.Method == "search" {
+		return webSearch(ctx, urlStr, s.Config)
+	}
+
 	// SSRF prevention: skip only if the package resolver already validated this exact host.
 	parsedURL, parseErr := url.Parse(urlStr)
 	if parseErr != nil {
@@ -341,13 +347,9 @@ func executeHTTP(ctx context.Context, call core.SkillCall, s *Session) (string, 
 		}
 	}
 
-	// Web.search uses a search API
-	if call.Method == "search" {
-		return webSearch(ctx, urlStr, s.Config)
-	}
 	// Web.fetch gets page text
 	if call.Method == "fetch" {
-		return webFetch(ctx, urlStr)
+		return webFetch(ctx, urlStr, s)
 	}
 
 	method := strings.ToUpper(call.Method)
@@ -471,39 +473,23 @@ func backendName(b SearchBackend) string {
 	}
 }
 
-func webFetch(ctx context.Context, url string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return jsonResult(map[string]any{"error": err.Error()})
+func webFetch(ctx context.Context, targetURL string, s *Session) (string, error) {
+	var cfg *core.WebConfig
+	var browserController BrowserController
+	if s != nil && s.Config != nil {
+		cfg = &s.Config.Web
+		browserController = s.BrowserController
 	}
-	req.Header.Set("User-Agent", "KittyPaw/1.0")
-
-	resp, err := http.DefaultClient.Do(req)
+	backend, err := NewReadBackendWithBrowser(cfg, browserController)
 	if err != nil {
-		return jsonResult(map[string]any{"error": err.Error()})
+		return jsonResult(ReadResult{OK: false, Error: err.Error(), FinalURL: targetURL})
 	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 500_000))
-	rawHTML := string(body)
-
-	// Existing: strip HTML tags for plain text (backward compatible)
-	text := stripHTMLTags(rawHTML)
-	text = truncate(text, 10000)
-
-	// New: structured markdown conversion
-	md := htmlToMarkdown(rawHTML)
-	md = truncate(md, 10000)
-
-	// New: extract page title
-	title := extractTitle(rawHTML)
-
-	return jsonResult(map[string]any{
-		"text":     text,
-		"markdown": md,
-		"title":    title,
-		"status":   resp.StatusCode,
-	})
+	result, err := backend.Read(ctx, targetURL, ReadOptions{})
+	if err != nil {
+		result.OK = false
+		result.Error = err.Error()
+	}
+	return jsonResult(result)
 }
 
 // --- File ---
@@ -2367,7 +2353,7 @@ func buildPackageResolver(_ context.Context, pkg *core.SkillPackage, s *Session,
 		// Enforce package-level AllowedHosts for HTTP calls.
 		// The package's allowed_hosts overrides the global SSRF check,
 		// enabling packages to declare private hosts (e.g. localhost).
-		if (call.SkillName == "Http" || call.SkillName == "Web") && len(pkg.Permissions.AllowedHosts) > 0 {
+		if (call.SkillName == "Http" || (call.SkillName == "Web" && call.Method == "fetch")) && len(pkg.Permissions.AllowedHosts) > 0 {
 			if len(call.Args) > 0 {
 				var u string
 				if json.Unmarshal(call.Args[0], &u) == nil {
@@ -2390,8 +2376,9 @@ func buildPackageResolver(_ context.Context, pkg *core.SkillPackage, s *Session,
 		if err != nil {
 			return result, err
 		}
-		// Unwrap HTTP responses: packages expect the raw body, not {status, body}.
-		if call.SkillName == "Http" || call.SkillName == "Web" {
+		// Unwrap Http responses: packages expect the raw body, not {status, body}.
+		// Web.search/Web.fetch expose structured contracts and must stay JSON.
+		if call.SkillName == "Http" {
 			result = unwrapHTTPBody(result)
 		}
 		return result, nil

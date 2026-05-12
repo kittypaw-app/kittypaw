@@ -209,7 +209,7 @@ var SkillRegistry = []SkillMeta{
 	}},
 	{Name: "Web", Methods: []SkillMethodMeta{
 		{Name: "search", Signature: "Web.search(query) — returns {results: [{title, url, snippet}]}"},
-		{Name: "fetch", Signature: "Web.fetch(url) — returns {text, markdown, title, status}"},
+		{Name: "fetch", Signature: "Web.fetch(url) — returns {ok, error, text, markdown, title, status, contentType, finalUrl, backend}"},
 	}},
 	{Name: "Browser", Methods: []SkillMethodMeta{
 		{Name: "status", Signature: "Browser.status() — returns managed Chrome status and diagnostics"},

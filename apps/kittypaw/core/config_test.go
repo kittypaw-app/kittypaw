@@ -489,6 +489,28 @@ func TestBrowserConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestWebConfigParsing(t *testing.T) {
+	tomlContent := `
+[web]
+read_backend = "firecrawl"
+search_backend = "duckduckgo"
+firecrawl_api_url = "https://firecrawl.example.com"
+`
+	var cfg Config
+	if _, err := toml.Decode(tomlContent, &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if cfg.Web.ReadBackend != "firecrawl" {
+		t.Fatalf("ReadBackend = %q", cfg.Web.ReadBackend)
+	}
+	if cfg.Web.SearchBackend != "duckduckgo" {
+		t.Fatalf("SearchBackend = %q", cfg.Web.SearchBackend)
+	}
+	if cfg.Web.FirecrawlURL != "https://firecrawl.example.com" {
+		t.Fatalf("FirecrawlURL = %q", cfg.Web.FirecrawlURL)
+	}
+}
+
 func TestBrowserConfigParsing(t *testing.T) {
 	tomlContent := `
 [browser]
