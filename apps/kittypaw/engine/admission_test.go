@@ -104,6 +104,50 @@ func TestRuntimeAdmissionScopeLimitBusy(t *testing.T) {
 	second.Release()
 }
 
+func TestRuntimeAdmissionScopeQueuesWhenAccountUnlimited(t *testing.T) {
+	a := NewRuntimeAdmission(RuntimeAdmissionConfig{
+		MaxConcurrentAccount: 0,
+		MaxQueuedAccount:     1,
+		MaxConcurrentScope:   1,
+	})
+	first, err := a.Acquire(context.Background(), RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "general:slack:C123",
+	})
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		lease, err := a.Acquire(context.Background(), RuntimeAdmissionRequest{
+			AccountID: "alice",
+			ScopeKey:  "general:slack:C123",
+		})
+		if err == nil {
+			lease.Release()
+		}
+		secondDone <- err
+	}()
+
+	waitUntilAdmissionScopeQueued(t, a, 1)
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second acquire finished before scope release: %v", err)
+	default:
+	}
+
+	first.Release()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second Acquire after release: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Acquire did not finish after release")
+	}
+}
+
 func TestRuntimeAdmissionAccountQueueCapsScopeWaiters(t *testing.T) {
 	a := NewRuntimeAdmission(RuntimeAdmissionConfig{
 		MaxConcurrentAccount: 1,
@@ -154,4 +198,16 @@ func waitUntilAdmissionQueued(t *testing.T, a *RuntimeAdmission, want uint32) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("AccountQueued did not reach %d, snapshot=%#v", want, a.Snapshot())
+}
+
+func waitUntilAdmissionScopeQueued(t *testing.T, a *RuntimeAdmission, want uint32) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if got := a.Snapshot().ScopeQueued; got == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("ScopeQueued did not reach %d, snapshot=%#v", want, a.Snapshot())
 }

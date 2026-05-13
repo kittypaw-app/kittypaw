@@ -161,7 +161,7 @@ type admissionGate struct {
 
 func newAdmissionGate(maxConcurrent, maxQueued uint32) *admissionGate {
 	if maxConcurrent == 0 {
-		return unlimitedAdmissionGate()
+		return &admissionGate{maxQ: maxQueued}
 	}
 	return &admissionGate{
 		slots: make(chan struct{}, maxConcurrent),
@@ -241,12 +241,15 @@ func (g *admissionGate) releaseQueueSlot() {
 }
 
 func (g *admissionGate) snapshot() RuntimeAdmissionSnapshot {
-	if g == nil || g.slots == nil {
+	if g == nil {
 		return RuntimeAdmissionSnapshot{}
 	}
 	g.mu.Lock()
 	queued := g.queued
 	g.mu.Unlock()
+	if g.slots == nil {
+		return RuntimeAdmissionSnapshot{AccountQueued: queued}
+	}
 	return RuntimeAdmissionSnapshot{
 		AccountRunning: uint32(len(g.slots)),
 		AccountQueued:  queued,
