@@ -751,6 +751,42 @@ func (s *Server) handleConfigCheck(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/memory
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryList(w http.ResponseWriter, r *http.Request) {
+	limit := memoryLimitFromRequest(r, 50, 500)
+	rows, err := s.store.ListUserMemory(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"memory": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"memory": rows})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/memory/export
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
+	limit := memoryLimitFromRequest(r, 100, 500)
+	rows, err := s.store.ListUserMemory(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"memory": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"memory": rows})
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/memory/search?q=...
 // ---------------------------------------------------------------------------
 
@@ -761,14 +797,8 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 20
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
-	}
-
-	results, err := s.store.SearchExecutions(q, limit)
+	limit := memoryLimitFromRequest(r, 20, 100)
+	results, err := s.store.SearchUserMemory(q, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -778,6 +808,51 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/v1/memory/{key}
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(chi.URLParam(r, "key"))
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "memory key is required")
+		return
+	}
+	deleted, err := s.store.DeleteUserMemory(key)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !deleted {
+		writeError(w, http.StatusNotFound, "memory not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "deleted": true})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/memory/forget-all
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryForgetAll(w http.ResponseWriter, _ *http.Request) {
+	deleted, err := s.store.DeletePromptSafeUserMemory()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "deleted": deleted})
+}
+
+func memoryLimitFromRequest(r *http.Request, defaultLimit, maxLimit int) int {
+	limit := defaultLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= maxLimit {
+			limit = n
+		}
+	}
+	return limit
 }
 
 // ---------------------------------------------------------------------------

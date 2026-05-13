@@ -1099,6 +1099,33 @@ func TestMemoryContextLines(t *testing.T) {
 		}
 	})
 
+	t.Run("skips_setup_and_sensitive_rows", func(t *testing.T) {
+		st := openTestStore(t)
+		st.SetUserContext("memory:preference:lang", "Korean replies", "conversation_rollover")
+		st.SetUserContext("fact.name", "Jinto", "user")
+		st.SetUserContext("setup:llm_api_key", "sk-secret", "setup")
+		st.SetUserContext("setup:telegram_bot_token", "123456:SECRET", "setup")
+		st.SetUserContext("pref.api_key", "should-not-leak", "user")
+		st.SetUserContext("memory:note:secret", "secret value", "runner")
+		st.SetUserContext("onboarding_completed", "true", "system")
+
+		lines, err := st.MemoryContextLines()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(lines, "\n")
+		for _, leaked := range []string{"setup:", "sk-secret", "telegram_bot_token", "should-not-leak", "secret value", "onboarding_completed"} {
+			if strings.Contains(joined, leaked) {
+				t.Fatalf("memory context leaked %q: %s", leaked, joined)
+			}
+		}
+		for _, want := range []string{"memory:preference:lang", "Korean replies", "fact.name", "Jinto"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("memory context missing %q: %s", want, joined)
+			}
+		}
+	})
+
 	t.Run("24h_excludes_old", func(t *testing.T) {
 		st := openTestStore(t)
 
@@ -1139,6 +1166,54 @@ func TestMemoryContextLines(t *testing.T) {
 			t.Error("recent failure should be included")
 		}
 	})
+}
+
+func TestUserMemorySearchListAndDelete(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetUserMemory("fact.nickname", "Kitty", "runner"); err != nil {
+		t.Fatalf("SetUserMemory safe row: %v", err)
+	}
+	if got, ok, err := st.GetUserMemory("fact.nickname"); err != nil || !ok || got != "Kitty" {
+		t.Fatalf("GetUserMemory safe row = %q %v %v, want Kitty true nil", got, ok, err)
+	}
+	if err := st.SetUserMemory("pref.api_key", "should-not-store", "runner"); err != ErrUnsafeUserMemory {
+		t.Fatalf("SetUserMemory unsafe error = %v, want ErrUnsafeUserMemory", err)
+	}
+	st.SetUserContext("memory:preference:lang", "Korean replies", "conversation_rollover")
+	st.SetUserContext("fact.name", "Jinto", "runner")
+	st.SetUserContext("setup:llm_api_key", "sk-secret", "setup")
+	st.SetUserContext("pref.api_key", "should-not-leak", "runner")
+	st.SetUserContext("current_project:general:abc", "proj_123", "slash_command")
+
+	results, err := st.SearchUserMemory("Korean", 10)
+	if err != nil {
+		t.Fatalf("SearchUserMemory: %v", err)
+	}
+	if len(results) != 1 || results[0].Key != "memory:preference:lang" {
+		t.Fatalf("SearchUserMemory results = %+v", results)
+	}
+
+	all, err := st.ListUserMemory(10)
+	if err != nil {
+		t.Fatalf("ListUserMemory: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("ListUserMemory len = %d results=%+v, want 3 prompt-safe rows", len(all), all)
+	}
+
+	deleted, err := st.DeletePromptSafeUserMemory()
+	if err != nil {
+		t.Fatalf("DeletePromptSafeUserMemory: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted = %d, want 3", deleted)
+	}
+	if _, ok, _ := st.GetUserContext("setup:llm_api_key"); !ok {
+		t.Fatal("DeletePromptSafeUserMemory must not delete setup rows")
+	}
+	if _, ok, _ := st.GetUserContext("pref.api_key"); !ok {
+		t.Fatal("DeletePromptSafeUserMemory must not delete sensitive-looking memory rows")
+	}
 }
 
 func TestCheckpoints(t *testing.T) {

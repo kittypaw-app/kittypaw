@@ -189,8 +189,8 @@ type LLMUsageByModel struct {
 
 // KeyValue is a generic key-value pair used for user context listings.
 type KeyValue struct {
-	Key   string
-	Value string
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // Checkpoint is a named snapshot of conversation progress.
@@ -1699,6 +1699,8 @@ func (s *Store) StorageList(namespace string) ([]string, error) {
 // User Context
 // ---------------------------------------------------------------------------
 
+var ErrUnsafeUserMemory = errors.New("unsafe user memory")
+
 // SetUserContext upserts a user context key.
 func (s *Store) SetUserContext(key, value, source string) error {
 	_, err := s.db.Exec(`
@@ -1710,6 +1712,14 @@ func (s *Store) SetUserContext(key, value, source string) error {
 			updated_at = datetime('now')`,
 		key, value, source)
 	return err
+}
+
+// SetUserMemory stores a prompt-safe long-term user memory row.
+func (s *Store) SetUserMemory(key, value, source string) error {
+	if !isPromptSafeUserMemory(key, value) {
+		return ErrUnsafeUserMemory
+	}
+	return s.SetUserContext(key, value, source)
 }
 
 // GetUserContext retrieves a single user context value.
@@ -1725,6 +1735,18 @@ func (s *Store) GetUserContext(key string) (string, bool, error) {
 		return "", false, err
 	}
 	return v, true, nil
+}
+
+// GetUserMemory retrieves a prompt-safe long-term user memory row.
+func (s *Store) GetUserMemory(key string) (string, bool, error) {
+	value, ok, err := s.GetUserContext(key)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	if !isPromptSafeUserMemory(key, value) {
+		return "", false, nil
+	}
+	return value, true, nil
 }
 
 // ListUserContextPrefix returns all key-value pairs whose keys start with
@@ -1749,6 +1771,193 @@ func (s *Store) ListUserContextPrefix(prefix string) ([]KeyValue, error) {
 	return out, rows.Err()
 }
 
+// ListUserMemory returns prompt-safe user memory rows, newest first.
+func (s *Store) ListUserMemory(limit int) ([]KeyValue, error) {
+	limit = normalizeUserMemoryLimit(limit)
+	rows, err := s.db.Query(`
+		SELECT key, value FROM user_context
+		ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []KeyValue
+	for rows.Next() {
+		var kv KeyValue
+		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
+			return nil, err
+		}
+		if !isPromptSafeUserMemory(kv.Key, kv.Value) {
+			continue
+		}
+		out = append(out, kv)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+// SearchUserMemory searches prompt-safe user memory rows by key or value.
+func (s *Store) SearchUserMemory(query string, limit int) ([]KeyValue, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	limit = normalizeUserMemoryLimit(limit)
+	like := "%" + strings.ToLower(query) + "%"
+	rows, err := s.db.Query(`
+		SELECT key, value FROM user_context
+		WHERE lower(key) LIKE ? OR lower(value) LIKE ?
+		ORDER BY updated_at DESC`, like, like)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []KeyValue
+	for rows.Next() {
+		var kv KeyValue
+		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
+			return nil, err
+		}
+		if !isPromptSafeUserMemory(kv.Key, kv.Value) {
+			continue
+		}
+		out = append(out, kv)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+// DeletePromptSafeUserMemory deletes only rows that are eligible to be treated
+// as user memory. Internal setup/control rows are intentionally preserved.
+func (s *Store) DeletePromptSafeUserMemory() (int, error) {
+	rows, err := s.db.Query("SELECT key, value FROM user_context")
+	if err != nil {
+		return 0, err
+	}
+	var keys []string
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if isPromptSafeUserMemory(key, value) {
+			keys = append(keys, key)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, key := range keys {
+		ok, err := s.DeleteUserContext(key)
+		if err != nil {
+			return deleted, err
+		}
+		if ok {
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// DeleteUserMemory removes one prompt-safe user memory row. Internal
+// setup/control rows are not considered memory and are left untouched.
+func (s *Store) DeleteUserMemory(key string) (bool, error) {
+	_, ok, err := s.GetUserMemory(key)
+	if err != nil || !ok {
+		return false, err
+	}
+	return s.DeleteUserContext(key)
+}
+
+func normalizeUserMemoryLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func isPromptSafeUserMemory(key, value string) bool {
+	k := strings.ToLower(strings.TrimSpace(key))
+	v := strings.ToLower(strings.TrimSpace(value))
+	if k == "" || v == "" {
+		return false
+	}
+	for _, exact := range []string{
+		"onboarding_completed",
+	} {
+		if k == exact {
+			return false
+		}
+	}
+	for _, prefix := range []string{
+		"setup:",
+		"pending_staff_draft:",
+		"pending_staff_offer:",
+		"pending_staff_switch:",
+		"active_staff:",
+		"current_project:",
+		"conversation_route:",
+		"rollover_pending:",
+		"suggest_candidate:",
+		"surfaced_at:",
+		"rejected_intent:",
+		"reflection:",
+		"preference_pending_confirmation:",
+		"topic_pref:",
+	} {
+		if strings.HasPrefix(k, prefix) {
+			return false
+		}
+	}
+	for _, marker := range []string{
+		"api_key",
+		"apikey",
+		"bot_token",
+		"relay_token",
+		"access_token",
+		"refresh_token",
+		"token",
+		"secret",
+		"password",
+		"credential",
+		"oauth",
+	} {
+		if strings.Contains(k, marker) || strings.Contains(v, marker) {
+			return false
+		}
+	}
+	if strings.HasPrefix(v, "sk-") {
+		return false
+	}
+	for _, prefix := range []string{
+		"memory:",
+		"fact.",
+		"pref.",
+		"preference:",
+		"identity:",
+		"user:",
+	} {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return !strings.Contains(k, ":")
+}
+
 // MemoryContextLines builds context sections for LLM prompt injection.
 // Returns user facts, recent failures, and today's stats as markdown sections.
 // Sections with no data are omitted entirely.
@@ -1758,15 +1967,8 @@ func (s *Store) MemoryContextLines() ([]string, error) {
 	// --- Remembered Facts (user_context, cap 20, most recent first) ---
 	rows, err := s.db.Query(`
 		SELECT key, value FROM user_context
-			WHERE key NOT LIKE 'pending_staff_draft:%'
-			  AND key NOT LIKE 'pending_staff_offer:%'
-			  AND key NOT LIKE 'pending_staff_switch:%'
-			  AND key NOT LIKE 'active_staff:%'
-			  AND key NOT LIKE 'current_project:%'
-			  AND key NOT LIKE 'conversation_route:%'
-			  AND key NOT LIKE 'rollover_pending:%'
-			ORDER BY updated_at DESC
-			LIMIT 20`)
+		ORDER BY updated_at DESC
+		LIMIT 200`)
 	if err != nil {
 		return nil, fmt.Errorf("memory context facts: %w", err)
 	}
@@ -1777,7 +1979,13 @@ func (s *Store) MemoryContextLines() ([]string, error) {
 			rows.Close()
 			return nil, fmt.Errorf("memory context scan fact: %w", err)
 		}
+		if !isPromptSafeUserMemory(k, v) {
+			continue
+		}
 		factLines = append(factLines, fmt.Sprintf("- %s: %s", sanitizeForPrompt(k, 100), sanitizeForPrompt(v, 500)))
+		if len(factLines) >= 20 {
+			break
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

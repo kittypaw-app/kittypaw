@@ -626,6 +626,13 @@ func TestSetupCompleteRefreshesLoggedInAccountRuntime(t *testing.T) {
 	if got := srv.accountRegistry.Get("bob").Config.LLM.BaseURL; got != "http://localhost:11434/v1/chat/completions" {
 		t.Fatalf("bob registry config base URL = %q, want generated local URL", got)
 	}
+	setupRows, err := srv.accountDepsForID("bob").Store.ListUserContextPrefix("setup:")
+	if err != nil {
+		t.Fatalf("ListUserContextPrefix(setup:): %v", err)
+	}
+	if len(setupRows) != 0 {
+		t.Fatalf("setup staging rows after complete = %+v, want none", setupRows)
+	}
 
 	aliceReload := core.DefaultConfig()
 	aliceReload.LLM.Provider = "anthropic"

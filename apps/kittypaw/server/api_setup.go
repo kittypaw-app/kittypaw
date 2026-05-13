@@ -561,6 +561,9 @@ func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("setup: channel reconcile partial failure", "error", rErr)
 		}
 	}
+	if _, err := acct.Store.DeleteUserContextPrefix("setup:"); err != nil {
+		slog.Warn("setup: failed to clear staging rows", "account", accountID, "error", err)
+	}
 	_ = acct.Store.SetUserContext("onboarding_completed", "true", "system")
 	s.accountMu.Unlock()
 	if oldScheduler != nil {

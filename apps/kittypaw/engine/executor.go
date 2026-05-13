@@ -1304,7 +1304,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		}
 		var query string
 		_ = json.Unmarshal(call.Args[0], &query)
-		results, err := s.Store.SearchExecutions(query, 10)
+		results, err := s.Store.SearchUserMemory(query, 10)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
@@ -1318,7 +1318,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		_ = json.Unmarshal(call.Args[0], &key)
 		var value string
 		_ = json.Unmarshal(call.Args[1], &value)
-		if err := s.Store.SetUserContext(key, value, "runner"); err != nil {
+		if err := s.Store.SetUserMemory(key, value, "runner"); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"success": true})
@@ -1329,7 +1329,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		}
 		var key string
 		_ = json.Unmarshal(call.Args[0], &key)
-		val, ok, err := s.Store.GetUserContext(key)
+		val, ok, err := s.Store.GetUserMemory(key)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
@@ -1344,7 +1344,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		}
 		var key string
 		_ = json.Unmarshal(call.Args[0], &key)
-		ok, err := s.Store.DeleteUserContext(key)
+		ok, err := s.Store.DeleteUserMemory(key)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}

@@ -494,7 +494,11 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Get("/channels", s.handleChannels)
 
 				// Memory
+				r.Get("/memory", s.handleMemoryList)
+				r.Get("/memory/export", s.handleMemoryExport)
 				r.Get("/memory/search", s.handleMemorySearch)
+				r.Post("/memory/forget-all", s.handleMemoryForgetAll)
+				r.Delete("/memory/{key}", s.handleMemoryDelete)
 
 				// Staff
 				r.Get("/staff", s.handleStaffList)

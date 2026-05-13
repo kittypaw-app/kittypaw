@@ -685,6 +685,93 @@ func TestResolveSkillCallCreateOnceDelayStoresRunAt(t *testing.T) {
 	}
 }
 
+func TestExecuteMemorySearchUsesUserMemory(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetUserContext("memory:preference:lang", "Korean replies", "runner"); err != nil {
+		t.Fatalf("SetUserContext: %v", err)
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	if err := st.RecordExecution(&store.ExecutionRecord{
+		SkillID:       "exec-1",
+		SkillName:     "korean-history",
+		StartedAt:     now,
+		FinishedAt:    now,
+		ResultSummary: "Korean execution history",
+		Success:       true,
+	}); err != nil {
+		t.Fatalf("RecordExecution: %v", err)
+	}
+
+	query, _ := json.Marshal("Korean")
+	got, err := executeMemory(context.Background(), core.SkillCall{
+		SkillName: "Memory",
+		Method:    "search",
+		Args:      []json.RawMessage{query},
+	}, &AccountRuntime{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "memory:preference:lang") || !strings.Contains(got, "Korean replies") {
+		t.Fatalf("Memory.search result = %s, want user memory row", got)
+	}
+	if strings.Contains(got, "korean-history") || strings.Contains(got, "execution history") {
+		t.Fatalf("Memory.search leaked execution history: %s", got)
+	}
+}
+
+func TestExecuteMemoryToolsRejectUnsafeRows(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetUserContext("setup:llm_api_key", "sk-secret", "setup"); err != nil {
+		t.Fatalf("SetUserContext setup: %v", err)
+	}
+
+	arg := func(v string) json.RawMessage {
+		raw, _ := json.Marshal(v)
+		return raw
+	}
+	got, err := executeMemory(context.Background(), core.SkillCall{
+		SkillName: "Memory",
+		Method:    "get",
+		Args:      []json.RawMessage{arg("setup:llm_api_key")},
+	}, &AccountRuntime{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "sk-secret") {
+		t.Fatalf("Memory.get leaked setup secret: %s", got)
+	}
+
+	got, err = executeMemory(context.Background(), core.SkillCall{
+		SkillName: "Memory",
+		Method:    "set",
+		Args:      []json.RawMessage{arg("fact.api_key"), arg("should-not-store")},
+	}, &AccountRuntime{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "unsafe user memory") {
+		t.Fatalf("Memory.set unsafe result = %s, want unsafe error", got)
+	}
+	if _, ok, _ := st.GetUserContext("fact.api_key"); ok {
+		t.Fatal("unsafe Memory.set row was stored")
+	}
+
+	got, err = executeMemory(context.Background(), core.SkillCall{
+		SkillName: "Memory",
+		Method:    "delete",
+		Args:      []json.RawMessage{arg("setup:llm_api_key")},
+	}, &AccountRuntime{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, `"deleted":true`) {
+		t.Fatalf("Memory.delete deleted unsafe setup row: %s", got)
+	}
+	if _, ok, _ := st.GetUserContext("setup:llm_api_key"); !ok {
+		t.Fatal("unsafe Memory.delete should leave setup row untouched")
+	}
+}
+
 type capturedNotification struct {
 	Target core.DeliveryTarget
 	Text   string
