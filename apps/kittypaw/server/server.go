@@ -147,6 +147,12 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 		pkgManager:      defaultDeps.PkgMgr,
 		liveIndexer:     defaultDeps.LiveIndexer,
 	}
+	for _, td := range accounts {
+		if td == nil || td.Account == nil {
+			continue
+		}
+		s.attachSessionNotifier(td.Account.ID, router.Session(td.Account.ID))
+	}
 	s.router = s.setupRoutes()
 	return s
 }

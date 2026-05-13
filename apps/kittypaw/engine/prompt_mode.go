@@ -53,7 +53,7 @@ func BuildPromptModeSystemPrompt(skill *core.Skill, body string) string {
 		for _, s := range allowed {
 			sb.WriteString(fmt.Sprintf("### %s\n", s.Name))
 			for _, m := range s.Methods {
-				sb.WriteString(fmt.Sprintf("- `%s`\n", m.Signature))
+				sb.WriteString(fmt.Sprintf("- tool `%s` for `%s`\n", promptModeToolName(s.Name, m.Name), m.Signature))
 			}
 			sb.WriteString("\n")
 		}

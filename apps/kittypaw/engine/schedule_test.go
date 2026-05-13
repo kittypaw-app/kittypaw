@@ -2,10 +2,13 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/llm"
+	"github.com/jinto/kittypaw/sandbox"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -277,6 +280,144 @@ func TestFirstTelegramTarget_PicksFirstTelegram(t *testing.T) {
 	}
 	if chat != "54076829" {
 		t.Errorf("expected admin chat id; got %q", chat)
+	}
+}
+
+func TestRunSkillAutoDeliversReturnToTriggerDeliveryTarget(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	baseDir := t.TempDir()
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomyFull
+	notifier := &captureNotifier{}
+	session := &Session{
+		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`return "scheduled output";`)}},
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Notifier:  notifier,
+	}
+	sched := NewScheduler(session, nil)
+	sched.runSkill(context.Background(), &core.SkillWithCode{
+		Skill: core.Skill{
+			Name:    "scheduled-output",
+			Enabled: true,
+			Trigger: core.SkillTrigger{
+				Type: "schedule",
+				Delivery: core.DeliveryTarget{
+					AccountID: "alice",
+					Channel:   string(core.EventTelegram),
+					ChatID:    "chat-1",
+				},
+			},
+		},
+		Code: `return "ignored";`,
+	})
+
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one auto-delivery", notifier.deliveries)
+	}
+	if notifier.deliveries[0].Text != "scheduled output" {
+		t.Fatalf("delivered text = %q", notifier.deliveries[0].Text)
+	}
+	if notifier.deliveries[0].Target.ChatID != "chat-1" {
+		t.Fatalf("delivery target = %+v, want chat-1", notifier.deliveries[0].Target)
+	}
+}
+
+func TestRunSkillSkipsAutoDeliveryAfterNotifySend(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	baseDir := t.TempDir()
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomyFull
+	notifier := &captureNotifier{}
+	session := &Session{
+		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`Notify.send("explicit notice"); return "explicit notice";`)}},
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Notifier:  notifier,
+	}
+	sched := NewScheduler(session, nil)
+	sched.runSkill(context.Background(), &core.SkillWithCode{
+		Skill: core.Skill{
+			Name:    "scheduled-notify",
+			Enabled: true,
+			Trigger: core.SkillTrigger{
+				Type: "schedule",
+				Delivery: core.DeliveryTarget{
+					AccountID: "alice",
+					Channel:   string(core.EventTelegram),
+					ChatID:    "chat-1",
+				},
+			},
+		},
+		Code: `return "ignored";`,
+	})
+
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want only explicit Notify.send delivery", notifier.deliveries)
+	}
+	if notifier.deliveries[0].Text != "explicit notice" {
+		t.Fatalf("delivered text = %q", notifier.deliveries[0].Text)
+	}
+}
+
+func TestRunOnceSkillDeletesAfterDeliveryFailure(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	baseDir := t.TempDir()
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomyFull
+	notifier := &captureNotifier{err: errors.New("delivery unavailable")}
+	session := &Session{
+		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`return "scheduled output";`)}},
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Notifier:  notifier,
+	}
+	skill := &core.Skill{
+		Name:        "once-delivery-fails",
+		Version:     1,
+		Description: "one-shot reminder",
+		Enabled:     true,
+		Format:      core.SkillFormatNative,
+		Trigger: core.SkillTrigger{
+			Type: "once",
+			Delivery: core.DeliveryTarget{
+				AccountID: "alice",
+				Channel:   string(core.EventKakaoTalk),
+				ChatID:    "chat-1",
+			},
+		},
+	}
+	if err := core.SaveSkillTo(baseDir, skill, `return "scheduled output";`); err != nil {
+		t.Fatalf("SaveSkillTo: %v", err)
+	}
+
+	sched := NewScheduler(session, nil)
+	sched.runSkill(context.Background(), &core.SkillWithCode{
+		Skill: *skill,
+		Code:  `return "ignored";`,
+	})
+
+	got, _, err := core.LoadSkillFrom(baseDir, skill.Name)
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(%s): %v", skill.Name, err)
+	}
+	if got != nil {
+		t.Fatalf("one-shot skill remained on disk after delivery failure: %+v", got.Trigger)
 	}
 }
 

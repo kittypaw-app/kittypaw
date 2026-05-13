@@ -213,7 +213,17 @@ func (s *Scheduler) deliverWeeklyReport(ctx context.Context) {
 		slog.Info("weekly report: no telegram channel configured, skipping dispatch")
 		return
 	}
-	if err := SendTelegramText(ctx, token, chatID, report); err != nil {
+	target := core.DeliveryTarget{
+		AccountID: s.session.AccountID,
+		Channel:   string(core.EventTelegram),
+		ChatID:    chatID,
+	}
+	if s.session.Notifier != nil {
+		if err := s.session.Notifier.SendNotification(ctx, target, report); err != nil {
+			slog.Warn("weekly report: telegram dispatch failed", "error", err)
+			return
+		}
+	} else if err := SendTelegramText(ctx, token, chatID, report); err != nil {
 		slog.Warn("weekly report: telegram dispatch failed", "error", err)
 		return
 	}
@@ -388,7 +398,16 @@ func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
 		token := config["telegram_token"]
 		chatID := config["chat_id"]
 		if token != "" && chatID != "" {
-			if err := SendTelegramText(ctx, token, chatID, output); err != nil {
+			target := core.DeliveryTarget{
+				AccountID: s.session.AccountID,
+				Channel:   string(core.EventTelegram),
+				ChatID:    chatID,
+			}
+			if s.session.Notifier != nil {
+				if err := s.session.Notifier.SendNotification(ctx, target, output); err != nil {
+					slog.Error("scheduler: telegram dispatch failed", "id", pkg.Meta.ID, "error", err)
+				}
+			} else if err := SendTelegramText(ctx, token, chatID, output); err != nil {
 				slog.Error("scheduler: telegram dispatch failed", "id", pkg.Meta.ID, "error", err)
 			}
 		}
@@ -478,7 +497,11 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 		Payload: payload,
 	}
 
-	_, err := s.session.Run(ctx, event, nil)
+	target := sk.Skill.Trigger.Delivery
+	runCtx := ContextWithDeliveryTarget(ctx, target)
+	state := &deliveryState{}
+	runCtx = contextWithDeliveryState(runCtx, state)
+	output, err := s.session.Run(runCtx, event, nil)
 	if err != nil {
 		slog.Error("scheduler: skill execution failed", "name", sk.Skill.Name, "error", err)
 		_ = s.session.Store.IncrementFailureCount(sk.Skill.Name)
@@ -494,6 +517,19 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 	}
 
 	_ = s.session.Store.ResetFailureCount(sk.Skill.Name)
+
+	if strings.TrimSpace(output) != "" && !notificationSent(runCtx) && s.session.Notifier != nil && !target.IsZero() {
+		if err := s.session.Notifier.SendNotification(ctx, target, output); err != nil {
+			slog.Error("scheduler: skill output delivery failed", "name", sk.Skill.Name, "error", err)
+			_ = s.session.Store.IncrementFailureCount(sk.Skill.Name)
+			if sk.Skill.Trigger.Type == "once" {
+				if delErr := core.DeleteSkillFrom(s.session.BaseDir, sk.Skill.Name); delErr != nil {
+					slog.Error("scheduler: failed to delete one-shot skill after delivery failure", "name", sk.Skill.Name, "error", delErr)
+				}
+			}
+			return
+		}
+	}
 
 	// Delete one-shot skills after successful execution
 	if sk.Skill.Trigger.Type == "once" {

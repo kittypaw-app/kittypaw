@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 33 {
-		t.Fatalf("expected 33 migrations, got %d", count)
+	if count != 34 {
+		t.Fatalf("expected 34 migrations, got %d", count)
 	}
 }
 
@@ -673,6 +673,9 @@ func TestExecutionHistory(t *testing.T) {
 			ResultSummary: "said hello",
 			Success:       true,
 		}
+		if i == 2 {
+			rec.MetadataJSON = `{"prompt_hash":"abc123","layers":["identity","skills"]}`
+		}
 		if err := st.RecordExecution(rec); err != nil {
 			t.Fatalf("record exec %d: %v", i, err)
 		}
@@ -688,6 +691,9 @@ func TestExecutionHistory(t *testing.T) {
 	}
 	if recs[0].StartedAt <= recs[1].StartedAt {
 		t.Errorf("expected descending started_at order: %q <= %q", recs[0].StartedAt, recs[1].StartedAt)
+	}
+	if !strings.Contains(recs[0].MetadataJSON, `"prompt_hash":"abc123"`) {
+		t.Fatalf("metadata_json = %q, want prompt audit metadata", recs[0].MetadataJSON)
 	}
 
 	// SkillExecutionCount.

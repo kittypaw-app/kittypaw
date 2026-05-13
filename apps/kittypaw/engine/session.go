@@ -60,8 +60,30 @@ type BrowserController interface {
 // RunOptions holds per-call options for Session.Run. Callbacks are scoped to
 // a single Run invocation, avoiding shared mutable state across concurrent calls.
 type RunOptions struct {
-	OnPermission  PermissionCallback
-	ModelOverride string // use a named model from config [[models]] for this run
+	OnPermission         PermissionCallback
+	ModelOverride        string // use a named model from config [[models]] for this run
+	StaffOverride        string // force a canonical staff id for this run
+	ForceAgentLoop       bool   // bypass slash/project/pipeline fast paths
+	DisableOrchestration bool   // prevent PM fan-out recursion for child runs
+	Delegation           *DelegationRunOptions
+	Usage                *RunUsageResult
+}
+
+// RunUsageResult reports LLM usage charged during a Session.Run invocation.
+type RunUsageResult struct {
+	TokenUsage      int64
+	BudgetExhausted bool
+}
+
+// DelegationRunOptions carries parent/child metadata for staff delegate runs.
+type DelegationRunOptions struct {
+	ParentConversationID   string
+	DelegateConversationID string
+	ParentStaffID          string
+	StaffID                string
+	Task                   string
+	Depth                  int
+	MaxDepth               int
 }
 
 // SetActiveModel records the user's `/model <id>` choice for subsequent chat
@@ -125,6 +147,7 @@ type Session struct {
 	APITokenMgr       *core.APITokenManager     // nil when API token management is not configured
 	ServiceTokenMgr   *core.ServiceTokenManager // nil when external OAuth services are not configured
 	ProjectJobRuntime *ProjectJobRuntime
+	Notifier          Notifier                 // nil when outbound delivery is not wired (bare engine tests/CLI)
 	allowedPaths      atomic.Pointer[[]string] // cached workspace paths for isPathAllowed
 
 	// activeModelOverride: turn-level model swap from the chat REPL `/model`
@@ -308,10 +331,14 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 // Run processes a single event through the runner loop.
 func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
-	// Fast path: slash commands
 	eventText := FormatEvent(&event)
 	ctx = ContextWithEvent(ctx, &event)
 	ctx = ContextWithConversationID(ctx, conversationKeyForEvent(s, &event))
+	if opts != nil && opts.ForceAgentLoop {
+		return s.runAgentLoop(ctx, event, eventText, opts)
+	}
+
+	// Fast path: slash commands
 	if result, handled := tryHandleCommandResult(ctx, eventText, s); handled {
 		if result.RecordHistory && s.Store != nil {
 			if err := s.recordPipelineTurn(event, eventText, result.Text); err != nil {
@@ -688,6 +715,10 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	// Store the account conversation key and event in context for downstream handlers.
 	ctx = ContextWithConversationID(ctx, convKey)
 	ctx = ContextWithEvent(ctx, &event)
+	if opts != nil && opts.Delegation != nil {
+		ctx = ContextWithDelegationInfo(ctx, *opts.Delegation)
+	}
+	ctx, _ = ensureDeliveryState(ctx)
 
 	// Load or create conversation state. Scoped project/ticket chats use only
 	// their own turns so unrelated account history does not enter the prompt.
@@ -707,29 +738,50 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 
 	slog.Info("conversation state ready", "phase", core.PhaseInit, "conversation", convKey)
 
-	// Parse @mention routing
+	staffOverride := ""
+	if opts != nil {
+		staffOverride = strings.TrimSpace(opts.StaffOverride)
+	}
+
+	// Parse @mention routing. Forced delegate runs keep the selected staff
+	// stable even when the packed task text contains an incidental @mention.
 	var mentionOverride string
 	eventText := rawEventText
-	if staffRef, remaining, matched := ParseAtMention(rawEventText); matched {
+	if staffOverride == "" {
+		if staffRef, remaining, matched := ParseAtMention(rawEventText); matched {
+			base, err := core.ResolveBaseDir(s.BaseDir)
+			if err != nil {
+				return "", fmt.Errorf("resolve staff base: %w", err)
+			}
+			if staffID, ok, err := core.ResolveStaffReference(base, staffRef); err != nil {
+				return "", fmt.Errorf("resolve staff reference: %w", err)
+			} else if ok {
+				slog.Info("@mention routing", "staff_id", staffID)
+				mentionOverride = staffID
+				eventText = remaining
+			} else {
+				response := fmt.Sprintf("staff %q를 찾지 못했습니다.", staffRef)
+				if core.StaffHasDraft(base, staffRef) {
+					response = fmt.Sprintf("staff %q는 아직 생성 중입니다. 먼저 생성 승인을 완료해 주세요.", staffRef)
+				}
+				if err := s.recordPipelineTurn(event, rawEventText, response); err != nil {
+					slog.Warn("mention rejection turn record failed", "error", err)
+				}
+				return response, nil
+			}
+		}
+	}
+	if staffOverride != "" {
 		base, err := core.ResolveBaseDir(s.BaseDir)
 		if err != nil {
 			return "", fmt.Errorf("resolve staff base: %w", err)
 		}
-		if staffID, ok, err := core.ResolveStaffReference(base, staffRef); err != nil {
+		if staffID, ok, err := core.ResolveStaffReference(base, staffOverride); err != nil {
 			return "", fmt.Errorf("resolve staff reference: %w", err)
 		} else if ok {
-			slog.Info("@mention routing", "staff_id", staffID)
-			mentionOverride = staffID
-			eventText = remaining
+			staffOverride = staffID
 		} else {
-			response := fmt.Sprintf("staff %q를 찾지 못했습니다.", staffRef)
-			if core.StaffHasDraft(base, staffRef) {
-				response = fmt.Sprintf("staff %q는 아직 생성 중입니다. 먼저 생성 승인을 완료해 주세요.", staffRef)
-			}
-			if err := s.recordPipelineTurn(event, rawEventText, response); err != nil {
-				slog.Warn("mention rejection turn record failed", "error", err)
-			}
-			return response, nil
+			return "", fmt.Errorf("staff %q not found", staffOverride)
 		}
 	}
 
@@ -740,9 +792,31 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 
 	// Resolve and load staff once per turn. The selected staff is audited on
 	// persisted turns and its runtime policy applies to prompt/tool execution.
-	staffID := ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store, s.BaseDir)
+	staffID := staffOverride
+	if staffID == "" {
+		staffID = ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store, s.BaseDir)
+	}
 	staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
 	runCtx := ContextWithStaffPolicy(ctx, staffID, staff.AllowedSkills)
+	runtimeCtx := PromptRuntimeContext{
+		ConversationID: convKey,
+		StaffID:        staffID,
+		ChannelName:    channelName,
+		ChannelUserID:  meta.ChannelUserID,
+		ChatID:         meta.ChatID,
+		MessageID:      meta.MessageID,
+		Now:            time.Now(),
+		Background:     meta.ChatID == "scheduler" || meta.ChannelUserID == "scheduler",
+	}
+	if opts != nil && opts.Delegation != nil {
+		runtimeCtx.Delegated = true
+		runtimeCtx.ParentConversationID = opts.Delegation.ParentConversationID
+		runtimeCtx.DelegateConversationID = opts.Delegation.DelegateConversationID
+		runtimeCtx.DelegationTask = opts.Delegation.Task
+	}
+	if s.Config != nil {
+		runtimeCtx.Timezone = s.Config.User.Timezone
+	}
 
 	// Add user turn
 	userTurn := core.ConversationTurn{
@@ -771,27 +845,27 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	}
 
 	// Orchestration gate: PM runner may delegate to staff.
-	if response, handled, orchErr := OrchestrateRequest(
-		ctx, eventText, s.Provider, s.Store, &s.Config.Orchestration, s.Budget, s.BaseDir,
-	); orchErr != nil {
-		slog.Warn("orchestration error, falling through", "error", orchErr)
-	} else if handled {
-		response = prependRolloverNotice(rolloverNotice, response)
-		response = prependTopicShiftNotice(topicNotice, response)
-		assistantTurn := core.ConversationTurn{
-			ConversationID: convKey,
-			Role:           core.RoleAssistant,
-			Content:        response,
-			StaffID:        staffID,
-			Channel:        meta.Channel,
-			ChannelUserID:  meta.ChannelUserID,
-			ChatID:         meta.ChatID,
-			Timestamp:      core.NowTimestamp(),
+	if opts == nil || !opts.DisableOrchestration {
+		if response, handled, orchErr := OrchestrateRequest(ctx, eventText, s); orchErr != nil {
+			slog.Warn("orchestration error, falling through", "error", orchErr)
+		} else if handled {
+			response = prependRolloverNotice(rolloverNotice, response)
+			response = prependTopicShiftNotice(topicNotice, response)
+			assistantTurn := core.ConversationTurn{
+				ConversationID: convKey,
+				Role:           core.RoleAssistant,
+				Content:        response,
+				StaffID:        staffID,
+				Channel:        meta.Channel,
+				ChannelUserID:  meta.ChannelUserID,
+				ChatID:         meta.ChatID,
+				Timestamp:      core.NowTimestamp(),
+			}
+			state.Turns = append(state.Turns, assistantTurn)
+			_ = s.Store.AddConversationTurn(&assistantTurn)
+			_ = s.Store.SaveConversationState(state)
+			return response, nil
 		}
-		state.Turns = append(state.Turns, assistantTurn)
-		_ = s.Store.AddConversationTurn(&assistantTurn)
-		_ = s.Store.SaveConversationState(state)
-		return response, nil
 	}
 
 	// Load memory context once before retry loop.
@@ -826,6 +900,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 		activeProvider = s.resolveProvider(opts.ModelOverride)
 	}
 	fallbackUsed := false
+	lastPromptMetadata := ""
 
 observeLoop:
 	for observeRound := 0; observeRound <= maxObserveRounds; observeRound++ {
@@ -847,7 +922,8 @@ observeLoop:
 			compaction := s.compactionForAttempt(attempt)
 
 			// Build prompt (observations are volatile — replaced each observe round)
-			messages := BuildPrompt(state, eventText, compaction, s.Config, channelName, staff, memoryContext, mcpToolsSection, observations, s.BaseDir)
+			runtimeCtx.Now = time.Now()
+			messages := BuildPromptWithRuntime(state, eventText, compaction, s.Config, channelName, staff, memoryContext, mcpToolsSection, observations, s.BaseDir, runtimeCtx)
 
 			// Cross-turn augmentation — short follow-up + recent skill output.
 			// The conversation transcript already carries the prior assistant
@@ -909,6 +985,11 @@ observeLoop:
 					Content: hint,
 				})
 			}
+			modelOverride := ""
+			if opts != nil {
+				modelOverride = opts.ModelOverride
+			}
+			lastPromptMetadata = BuildPromptAudit(messages, runtimeCtx, compaction, attempt, observeRound, modelOverride).MetadataJSON()
 
 			// Call LLM
 			var resp *llm.Response
@@ -934,6 +1015,17 @@ observeLoop:
 				}
 				slog.Error("LLM call failed after retries", "conversation", convKey, "retries", maxRetries, "raw_error", err.Error())
 				return "", fmt.Errorf("지금 답변을 만들지 못했어요. 잠시 후 다시 한 번 말씀해 주시겠어요?")
+			}
+			if opts != nil && opts.Usage != nil {
+				opts.Usage.TokenUsage += tokenUsageTotal(resp.Usage)
+			}
+			if opts != nil && opts.Delegation != nil && s.Budget != nil {
+				if !s.Budget.TrySpendFromUsage(resp.Usage) {
+					if opts.Usage != nil {
+						opts.Usage.BudgetExhausted = true
+					}
+					return "", fmt.Errorf("token budget exhausted")
+				}
 			}
 
 			code := normalizeGeneratedCode(resp.Content)
@@ -995,7 +1087,7 @@ observeLoop:
 				state.Turns = append(state.Turns, assistantTurn)
 				_ = s.Store.AddConversationTurn(&assistantTurn)
 				_ = s.Store.SaveConversationState(state)
-				s.recordExecution(eventText, output, resp, loopStart, attempt, true)
+				s.recordExecution(eventText, output, resp, loopStart, attempt, true, lastPromptMetadata)
 				return output, nil
 			}
 
@@ -1004,7 +1096,9 @@ observeLoop:
 				if override := staffToolOverrideOutput(s.BaseDir, convKey, execResult.SkillCalls); override != "" {
 					output = override
 				}
-				if output == "" {
+				if strings.TrimSpace(output) == "" && notificationSent(runCtx) {
+					output = ""
+				} else if output == "" {
 					output = "응답이 비어 있어요. 질문을 다시 한 번 말씀해 주시겠어요?"
 				}
 				output = prependRolloverNotice(rolloverNotice, output)
@@ -1041,7 +1135,7 @@ observeLoop:
 				}
 
 				// Record execution metrics.
-				s.recordExecution(eventText, output, resp, loopStart, attempt, true)
+				s.recordExecution(eventText, output, resp, loopStart, attempt, true, lastPromptMetadata)
 
 				// Cache invalidation — successful legacy-LLM turn
 				// consumed (or rejected) the cached raw skill output.
@@ -1108,7 +1202,7 @@ observeLoop:
 		slog.Warn("failed to save conversation state after failure", "conversation", convKey, "error", err)
 	}
 
-	s.recordExecution(eventText, errMsg, nil, loopStart, maxRetries, false)
+	s.recordExecution(eventText, errMsg, nil, loopStart, maxRetries, false, lastPromptMetadata)
 
 	// User-facing fallback: the raw error (SyntaxError, undefined ident,
 	// etc.) is internal noise that doesn't help the user act. Log captures
@@ -1136,7 +1230,7 @@ func toolTraceIDExists(traces []core.ToolTrace, id string) bool {
 	return false
 }
 
-func (s *Session) recordExecution(input, output string, resp *llm.Response, start time.Time, retries int, success bool) {
+func (s *Session) recordExecution(input, output string, resp *llm.Response, start time.Time, retries int, success bool, metadataJSON string) {
 	summary := output
 	if len(summary) > 200 {
 		summary = summary[:200]
@@ -1158,6 +1252,7 @@ func (s *Session) recordExecution(input, output string, resp *llm.Response, star
 		Success:       success,
 		RetryCount:    retries,
 		UsageJSON:     usageJSON,
+		MetadataJSON:  metadataJSON,
 	}); err != nil {
 		slog.Warn("failed to record execution", "skill_id", "chat", "error", err)
 	}

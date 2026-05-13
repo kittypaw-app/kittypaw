@@ -104,6 +104,7 @@ func (s *Server) AddAccount(t *core.Account) error {
 	}
 
 	sess := buildAccountSession(td, s.accountRegistry, s.eventCh)
+	s.attachSessionNotifier(t.ID, sess)
 
 	s.accountRegistry.Register(t)
 	rollback = append(rollback, func() { s.accountRegistry.Unregister(t.ID) })

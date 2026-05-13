@@ -418,6 +418,38 @@ func TestDispatchLoop_PersistsResponseBeforeSending(t *testing.T) {
 	t.Fatal("pending response row was not removed after successful send")
 }
 
+func TestDispatchLoop_SuppressesNormalReplyAfterDirectNotifySend(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	cfg.AllowedChatIDs = []string{"alice-chat"}
+	cfg.Channels = []core.ChannelConfig{
+		{ChannelType: core.ChannelTelegram, Token: "alice-token"},
+	}
+	deps := buildAccountDeps(t, root, "alice", &cfg)
+	deps.Provider = &chatRelayMockProvider{content: `Notify.send("direct notice"); return null;`}
+	srv := New([]*AccountDeps{deps}, "test", "alice")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv.spawner = NewChannelSpawner(ctx, srv.eventCh)
+	defer srv.spawner.StopAll()
+	telegram := newEmittingStub("telegram", "alice")
+	if err := srv.spawner.TrySpawn("alice", telegram, cfg.Channels[0]); err != nil {
+		t.Fatalf("spawn telegram: %v", err)
+	}
+	go srv.dispatchLoop(ctx)
+
+	srv.eventCh <- dispatchTestEvent(t, core.EventTelegram, "alice", "alice-chat", "send directly")
+	if got := readDispatchResponse(t, telegram.responses); got.response != "direct notice" {
+		t.Fatalf("first response = %+v, want direct notice", got)
+	}
+	select {
+	case got := <-telegram.responses:
+		t.Fatalf("unexpected normal follow-up response after direct send: %+v", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
 func TestDispatchLoop_SendsFailureResponseOnRunError(t *testing.T) {
 	root := t.TempDir()
 	deps := buildAccountDeps(t, root, "alice", &core.Config{})

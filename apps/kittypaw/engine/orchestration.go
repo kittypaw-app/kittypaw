@@ -39,23 +39,19 @@ type PMTaskSpec struct {
 	Background bool   `json:"background,omitempty"`
 }
 
-// DelegateCtx holds context for runner delegation within the skill executor.
-type DelegateCtx struct {
-	Provider llm.Provider
-	Store    *store.Store
-	Config   *core.Config
-	Budget   *SharedTokenBudget
-	Depth    int
-	MaxDepth int
-}
-
 // DelegateResult holds the outcome of a single delegation.
 type DelegateResult struct {
-	StaffID    string `json:"staff_id"`
-	Task       string `json:"task"`
-	Result     string `json:"result"`
-	Success    bool   `json:"success"`
-	TokenUsage int64  `json:"token_usage"`
+	StaffID        string `json:"staff_id"`
+	Task           string `json:"task"`
+	Result         string `json:"result"`
+	Success        bool   `json:"success"`
+	TokenUsage     int64  `json:"token_usage"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	DurationMs     int64  `json:"duration_ms,omitempty"`
+}
+
+type delegateSessionRunner interface {
+	Run(context.Context, core.Event, *RunOptions) (string, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -69,17 +65,20 @@ type DelegateResult struct {
 func OrchestrateRequest(
 	ctx context.Context,
 	text string,
-	provider llm.Provider,
-	st *store.Store,
-	config *core.OrchestrationConfig,
-	budget *SharedTokenBudget,
-	baseDir string,
+	s *Session,
 ) (string, bool, error) {
+	if s == nil || s.Config == nil {
+		return "", false, nil
+	}
+	config := &s.Config.Orchestration
 	if !config.Enabled {
 		return "", false, nil
 	}
+	if s.Provider == nil {
+		return "", false, nil
+	}
 
-	base, err := core.ResolveBaseDir(baseDir)
+	base, err := core.ResolveBaseDir(s.BaseDir)
 	if err != nil {
 		return "", false, nil
 	}
@@ -89,7 +88,7 @@ func OrchestrateRequest(
 	}
 
 	// PM decision.
-	decision, err := pmDecide(ctx, text, staff, provider)
+	decision, err := pmDecide(ctx, text, staff, s.Provider)
 	if err != nil {
 		slog.Warn("orchestration: PM decision failed", "error", err)
 		return "", false, nil
@@ -109,13 +108,13 @@ func OrchestrateRequest(
 	}
 
 	// Execute delegations in parallel.
-	results, err := fanOutDelegations(ctx, decision.Tasks, provider, st, budget, maxDepth, config, baseDir)
+	results, err := fanOutDelegations(ctx, decision.Tasks, s, maxDepth, config, ConversationIDFromContext(ctx), EventFromContext(ctx))
 	if err != nil {
 		return "", false, fmt.Errorf("delegation fan-out: %w", err)
 	}
 
 	// Synthesize results.
-	response, err := pmSynthesize(ctx, decision.Tasks, results, provider)
+	response, err := pmSynthesize(ctx, decision.Tasks, results, s.Provider)
 	if err != nil {
 		return "", false, fmt.Errorf("synthesis: %w", err)
 	}
@@ -180,12 +179,11 @@ Output ONLY valid JSON.`, text, staffList.String())
 func fanOutDelegations(
 	ctx context.Context,
 	tasks []PMTaskSpec,
-	provider llm.Provider,
-	st *store.Store,
-	budget *SharedTokenBudget,
+	s *Session,
 	maxDepth int,
 	config *core.OrchestrationConfig,
-	baseDir string,
+	parentConversationID string,
+	parentEvent *core.Event,
 ) ([]DelegateResult, error) {
 	maxDelegates := int(config.MaxDelegates)
 	if maxDelegates == 0 {
@@ -209,11 +207,11 @@ func fanOutDelegations(
 			childCtx, cancel := context.WithTimeout(gCtx, 60*time.Second)
 			defer cancel()
 
-			result := executeDelegateTask(childCtx, task, provider, st, budget, 1, maxDepth, baseDir)
+			result := executeDelegateTask(childCtx, task, s, 1, maxDepth, parentConversationID, parentEvent)
 			results[i] = result
 
 			// If budget exhausted, cancel all remaining siblings.
-			if budget != nil && budget.Remaining() == 0 {
+			if s != nil && s.Budget != nil && s.Budget.Remaining() == 0 {
 				slog.Warn("orchestration: budget exhausted, canceling remaining", "staff", task.StaffID)
 				cancelAll()
 			}
@@ -230,12 +228,12 @@ func fanOutDelegations(
 func executeDelegateTask(
 	ctx context.Context,
 	task PMTaskSpec,
-	provider llm.Provider,
-	st *store.Store,
-	budget *SharedTokenBudget,
+	s *Session,
 	depth, maxDepth int,
-	baseDir string,
+	parentConversationID string,
+	parentEvent *core.Event,
 ) DelegateResult {
+	start := time.Now()
 	result := DelegateResult{
 		StaffID: task.StaffID,
 		Task:    task.Task,
@@ -254,9 +252,17 @@ func executeDelegateTask(
 		result.Result = fmt.Sprintf("max delegation depth reached (%d)", maxDepth)
 		return result
 	}
+	if s == nil {
+		result.Result = "no session available"
+		return result
+	}
+	if s.Store == nil {
+		result.Result = "no store available"
+		return result
+	}
 
 	// Load staff from the file registry. SOUL.md is the existence signal.
-	base, err := core.ResolveBaseDir(baseDir)
+	base, err := core.ResolveBaseDir(s.BaseDir)
 	if err != nil {
 		result.Result = fmt.Sprintf("staff base error: %s", err)
 		return result
@@ -270,27 +276,46 @@ func executeDelegateTask(
 		result.Result = fmt.Sprintf("staff %q not found", task.StaffID)
 		return result
 	}
-	meta, err := core.ReadStaffMetaFile(base, canonicalID)
-	if err != nil {
+	if _, err := core.ReadStaffMetaFile(base, canonicalID); err != nil {
 		result.Result = fmt.Sprintf("staff metadata error: %s", err)
 		return result
 	}
 	task.StaffID = canonicalID
+	result.StaffID = canonicalID
 
-	// Build system prompt: try SOUL.md, fallback to description.
-	systemPrompt := loadSOUL(baseDir, task.StaffID)
-	if systemPrompt == "" {
-		systemPrompt = fmt.Sprintf("You are the %q staff member. %s", meta.ID, meta.Description)
-	}
-
-	if provider == nil {
+	if s.Provider == nil {
 		result.Result = "no LLM provider available"
 		return result
 	}
+	if s.Sandbox == nil {
+		result.Result = "no sandbox available"
+		return result
+	}
 
-	messages := []core.LlmMessage{
-		{Role: core.RoleSystem, Content: systemPrompt + "\n\nRespond directly with the result."},
-		{Role: core.RoleUser, Content: task.Task},
+	if parentConversationID == "" {
+		parentConversationID = store.DefaultConversationID
+	}
+	delegateConvID := delegateConversationID(parentConversationID, task.StaffID)
+	result.ConversationID = delegateConvID
+	packedTask := packDelegateTask(ctx, s, parentConversationID, task)
+	delegateEvent := buildDelegateEvent(parentEvent, packedTask, delegateConvID, task.StaffID)
+	usage := &RunUsageResult{}
+	opts := &RunOptions{
+		StaffOverride:        task.StaffID,
+		ForceAgentLoop:       true,
+		DisableOrchestration: true,
+		Usage:                usage,
+		Delegation: &DelegationRunOptions{
+			ParentConversationID:   parentConversationID,
+			DelegateConversationID: delegateConvID,
+			StaffID:                task.StaffID,
+			Task:                   task.Task,
+			Depth:                  depth,
+			MaxDepth:               maxDepth,
+		},
+	}
+	if parentInfo, ok := DelegationInfoFromContext(ctx); ok {
+		opts.Delegation.ParentStaffID = parentInfo.StaffID
 	}
 
 	// Determine token cap for background tasks.
@@ -300,24 +325,162 @@ func executeDelegateTask(
 	}
 	_ = maxTokens // TODO: pass to provider when token limit per-call is supported
 
-	resp, err := provider.Generate(WithLLMCallKind(ctx, "orchestration.delegate"), messages)
+	var runner delegateSessionRunner = s
+	output, err := runner.Run(WithLLMCallKind(ctx, "orchestration.delegate"), delegateEvent, opts)
+	result.TokenUsage = usage.TokenUsage
 	if err != nil {
-		result.Result = fmt.Sprintf("LLM error: %s", err)
+		if usage.BudgetExhausted {
+			result.Result = "token budget exhausted"
+		} else {
+			result.Result = fmt.Sprintf("delegate error: %s", err)
+		}
+		result.DurationMs = time.Since(start).Milliseconds()
+		recordDelegationExecution(s, task, result, parentConversationID, delegateConvID, start, false)
 		return result
 	}
 
-	// Budget check.
-	if budget != nil && resp.Usage != nil {
-		if !budget.TrySpendFromUsage(resp.Usage) {
-			result.Result = "token budget exhausted"
-			return result
-		}
-		result.TokenUsage = resp.Usage.InputTokens + resp.Usage.OutputTokens
-	}
-
-	result.Result = resp.Content
+	result.Result = output
 	result.Success = true
+	result.DurationMs = time.Since(start).Milliseconds()
+	recordDelegationExecution(s, task, result, parentConversationID, delegateConvID, start, true)
 	return result
+}
+
+func delegateConversationID(parentConversationID, staffID string) string {
+	parentPart := conversationKeyPart(parentConversationID)
+	if parentPart == "" {
+		parentPart = "default"
+	}
+	staffPart := conversationKeyPart(staffID)
+	if staffPart == "" {
+		staffPart = "staff"
+	}
+	return "delegation:" + parentPart + ":" + staffPart
+}
+
+func packDelegateTask(ctx context.Context, s *Session, parentConversationID string, task PMTaskSpec) string {
+	var lines []string
+	lines = append(lines,
+		fmt.Sprintf("Delegated staff: %s", task.StaffID),
+		fmt.Sprintf("Parent conversation: %s", parentConversationID),
+		"",
+		"Current delegated task:",
+		strings.TrimSpace(task.Task),
+	)
+	if s != nil && s.Store != nil && parentConversationID != "" {
+		if turns, err := s.Store.ListConversationTurnsForConversation(parentConversationID, 8); err == nil && len(turns) > 0 {
+			lines = append(lines, "", "Parent conversation context:")
+			for _, turn := range turns {
+				content := sanitizeDelegationContext(turn.Content, 700)
+				if content == "" {
+					continue
+				}
+				role := sanitizeDelegationContext(string(turn.Role), 32)
+				staff := sanitizeDelegationContext(turn.StaffID, 80)
+				prefix := role
+				if staff != "" {
+					prefix += "/" + staff
+				}
+				lines = append(lines, fmt.Sprintf("- %s: %s", prefix, content))
+			}
+		}
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		lines = append(lines, "", "Deadline: "+deadline.UTC().Format(time.RFC3339))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sanitizeDelegationContext(value string, limit int) string {
+	value = strings.TrimSpace(strings.Join(strings.Fields(value), " "))
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if limit > 0 && len(runes) > limit {
+		return string(runes[:limit]) + "..."
+	}
+	return value
+}
+
+func buildDelegateEvent(parent *core.Event, text, conversationID, staffID string) core.Event {
+	eventType := core.EventWebChat
+	accountID := ""
+	payload := core.ChatPayload{
+		ChatID:         "delegate",
+		Text:           text,
+		SessionID:      "delegate-" + staffID,
+		ConversationID: conversationID,
+	}
+	if parent != nil {
+		eventType = parent.Type
+		accountID = parent.AccountID
+		if parsed, err := parent.ParsePayload(); err == nil {
+			payload = parsed
+			payload.Text = text
+			payload.ConversationID = conversationID
+			if payload.ChatID == "" {
+				payload.ChatID = "delegate"
+			}
+			if payload.SessionID == "" {
+				payload.SessionID = "delegate-" + staffID
+			}
+		}
+	}
+	raw, _ := json.Marshal(payload)
+	return core.Event{Type: eventType, AccountID: accountID, Payload: raw}
+}
+
+func recordDelegationExecution(s *Session, task PMTaskSpec, result DelegateResult, parentConversationID, delegateConversationID string, start time.Time, success bool) {
+	if s == nil || s.Store == nil {
+		return
+	}
+	summary := result.Result
+	if len(summary) > 200 {
+		summary = summary[:200]
+	}
+	metadata := map[string]any{
+		"staff_id":                 task.StaffID,
+		"task":                     task.Task,
+		"parent_conversation_id":   parentConversationID,
+		"delegate_conversation_id": delegateConversationID,
+		"success":                  success,
+		"duration_ms":              time.Since(start).Milliseconds(),
+	}
+	if traces := latestDelegateToolTraces(s.Store, delegateConversationID); len(traces) > 0 {
+		metadata["tool_traces"] = traces
+	}
+	metadataJSON := ""
+	if data, err := json.Marshal(metadata); err == nil {
+		metadataJSON = string(data)
+	}
+	if err := s.Store.RecordExecution(&store.ExecutionRecord{
+		SkillID:       "delegate:" + task.StaffID,
+		SkillName:     "delegation",
+		StartedAt:     start.UTC().Format("2006-01-02T15:04:05Z"),
+		FinishedAt:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		DurationMs:    time.Since(start).Milliseconds(),
+		InputParams:   task.Task,
+		ResultSummary: summary,
+		Success:       success,
+		RetryCount:    0,
+		MetadataJSON:  metadataJSON,
+	}); err != nil {
+		slog.Warn("failed to record delegation execution", "staff_id", task.StaffID, "error", err)
+	}
+}
+
+func latestDelegateToolTraces(st *store.Store, conversationID string) []core.ToolTrace {
+	turns, err := st.ListConversationTurnsForConversation(conversationID, 12)
+	if err != nil {
+		return nil
+	}
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == core.RoleAssistant && len(turns[i].ToolTraces) > 0 {
+			return turns[i].ToolTraces
+		}
+	}
+	return nil
 }
 
 // loadSOUL reads ~/.kittypaw/staff/{id}/SOUL.md via core.LoadStaff.

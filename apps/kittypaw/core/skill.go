@@ -48,11 +48,33 @@ type Skill struct {
 
 // SkillTrigger defines how a skill is activated.
 type SkillTrigger struct {
-	Type    string `toml:"type"    json:"type"`
-	Cron    string `toml:"cron"    json:"cron,omitempty"`
-	Natural string `toml:"natural" json:"natural,omitempty"`
-	Keyword string `toml:"keyword" json:"keyword,omitempty"`
-	RunAt   string `toml:"run_at"  json:"run_at,omitempty"` // RFC 3339 UTC
+	Type     string         `toml:"type"     json:"type"`
+	Cron     string         `toml:"cron"     json:"cron,omitempty"`
+	Natural  string         `toml:"natural"  json:"natural,omitempty"`
+	Keyword  string         `toml:"keyword"  json:"keyword,omitempty"`
+	RunAt    string         `toml:"run_at"   json:"run_at,omitempty"` // RFC 3339 UTC
+	Delivery DeliveryTarget `toml:"delivery" json:"delivery,omitempty"`
+}
+
+// DeliveryTarget identifies where a background skill or notification should be
+// delivered. It is intentionally channel-generic so scheduled skills can replay
+// to the chat/conversation that created them.
+type DeliveryTarget struct {
+	AccountID      string `toml:"account_id,omitempty"       json:"account_id,omitempty"`
+	Channel        string `toml:"channel,omitempty"          json:"channel,omitempty"`
+	ChatID         string `toml:"chat_id,omitempty"          json:"chat_id,omitempty"`
+	ConversationID string `toml:"conversation_id,omitempty"  json:"conversation_id,omitempty"`
+	ChannelUserID  string `toml:"channel_user_id,omitempty"  json:"channel_user_id,omitempty"`
+	ReplyToMessage string `toml:"reply_to_message,omitempty" json:"reply_to_message,omitempty"`
+}
+
+func (t DeliveryTarget) IsZero() bool {
+	return strings.TrimSpace(t.AccountID) == "" &&
+		strings.TrimSpace(t.Channel) == "" &&
+		strings.TrimSpace(t.ChatID) == "" &&
+		strings.TrimSpace(t.ConversationID) == "" &&
+		strings.TrimSpace(t.ChannelUserID) == "" &&
+		strings.TrimSpace(t.ReplyToMessage) == ""
 }
 
 // SkillPermissions declares what a skill is allowed to do.

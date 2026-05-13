@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -522,6 +523,65 @@ func TestRunRecordsChosenStaffOnAssistantTurn(t *testing.T) {
 	assistant := turns[len(turns)-1]
 	if assistant.Role != core.RoleAssistant || assistant.StaffID != "conv-bot" {
 		t.Fatalf("assistant turn = %+v, want staff_id conv-bot", assistant)
+	}
+}
+
+func TestRunRecordsPromptAuditMetadata(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.User.Timezone = "Asia/Seoul"
+	provider := &promptCaptureProvider{response: `return "audit ok";`}
+	sess := &Session{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   t.TempDir(),
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("audit this prompt"), nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if out != "audit ok" {
+		t.Fatalf("out = %q, want audit ok", out)
+	}
+	execs, err := st.RecentExecutions(1)
+	if err != nil {
+		t.Fatalf("RecentExecutions: %v", err)
+	}
+	if len(execs) != 1 {
+		t.Fatalf("executions = %d, want 1", len(execs))
+	}
+	var meta struct {
+		PromptHash     string   `json:"prompt_hash"`
+		Layers         []string `json:"layers"`
+		StaffID        string   `json:"staff_id"`
+		ConversationID string   `json:"conversation_id"`
+		Channel        string   `json:"channel"`
+		Source         struct {
+			ChatID        string `json:"chat_id"`
+			ChannelUserID string `json:"channel_user_id"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(execs[0].MetadataJSON), &meta); err != nil {
+		t.Fatalf("decode metadata %q: %v", execs[0].MetadataJSON, err)
+	}
+	if meta.PromptHash == "" {
+		t.Fatalf("prompt_hash missing in metadata: %+v", meta)
+	}
+	if !slices.Contains(meta.Layers, "runtime_context") || !slices.Contains(meta.Layers, "skills") {
+		t.Fatalf("layers missing runtime/skills: %+v", meta.Layers)
+	}
+	if meta.StaffID != "default" || meta.ConversationID != testWebChatConversationID || meta.Channel != "web" {
+		t.Fatalf("prompt audit route metadata = %+v", meta)
+	}
+	if meta.Source.ChatID != "test-chat" || meta.Source.ChannelUserID != "test-session" {
+		t.Fatalf("prompt audit source = %+v", meta.Source)
 	}
 }
 

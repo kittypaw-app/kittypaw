@@ -129,6 +129,10 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 
 	engine.MarkAccountReady(job.session)
 
+	if strings.TrimSpace(response) == "" {
+		return
+	}
+
 	if !job.chOK {
 		slog.Warn("channel event: no channel for response routing, enqueuing for retry",
 			"type", job.event.Type, "account", job.event.AccountID)

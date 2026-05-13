@@ -142,6 +142,7 @@ type ExecutionRecord struct {
 	Success       bool
 	RetryCount    int
 	UsageJSON     string
+	MetadataJSON  string
 }
 
 // ExecutionStats is an aggregated daily summary.
@@ -1429,13 +1430,14 @@ func (s *Store) RecordExecution(rec *ExecutionRecord) error {
 	_, err := s.db.Exec(`
 		INSERT INTO execution_history
 			(skill_id, skill_name, started_at, finished_at, duration_ms,
-			 input_params, result_summary, success, retry_count, usage_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 input_params, result_summary, success, retry_count, usage_json,
+			 metadata_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.SkillID, rec.SkillName, rec.StartedAt,
 		nullString(rec.FinishedAt), rec.DurationMs,
 		nullString(rec.InputParams), nullString(rec.ResultSummary),
 		boolToInt(rec.Success), rec.RetryCount,
-		nullString(rec.UsageJSON))
+		nullString(rec.UsageJSON), nullString(rec.MetadataJSON))
 	return err
 }
 
@@ -1469,7 +1471,8 @@ func (s *Store) RecentExecutions(limit int) ([]ExecutionRecord, error) {
 		SELECT id, skill_id, skill_name, started_at,
 			   COALESCE(finished_at,''), COALESCE(duration_ms,0),
 			   COALESCE(input_params,''), COALESCE(result_summary,''),
-			   success, retry_count, COALESCE(usage_json,'')
+			   success, retry_count, COALESCE(usage_json,''),
+			   COALESCE(metadata_json,'')
 		FROM execution_history
 		ORDER BY started_at DESC
 		LIMIT ?`, limit)
@@ -1596,7 +1599,8 @@ func (s *Store) SearchExecutions(query string, limit int) ([]ExecutionRecord, er
 		SELECT e.id, e.skill_id, e.skill_name, e.started_at,
 			   COALESCE(e.finished_at,''), COALESCE(e.duration_ms,0),
 			   COALESCE(e.input_params,''), COALESCE(e.result_summary,''),
-			   e.success, e.retry_count, COALESCE(e.usage_json,'')
+			   e.success, e.retry_count, COALESCE(e.usage_json,''),
+			   COALESCE(e.metadata_json,'')
 		FROM execution_history e
 		JOIN execution_fts f ON f.rowid = e.id
 		WHERE execution_fts MATCH ?
@@ -2803,7 +2807,7 @@ func scanExecutions(rows *sql.Rows) ([]ExecutionRecord, error) {
 			&r.ID, &r.SkillID, &r.SkillName, &r.StartedAt,
 			&r.FinishedAt, &r.DurationMs,
 			&r.InputParams, &r.ResultSummary,
-			&success, &r.RetryCount, &r.UsageJSON,
+			&success, &r.RetryCount, &r.UsageJSON, &r.MetadataJSON,
 		); err != nil {
 			return nil, err
 		}

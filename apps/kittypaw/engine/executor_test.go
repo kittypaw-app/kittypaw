@@ -11,6 +11,7 @@ import (
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/llm"
+	"github.com/jinto/kittypaw/sandbox"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -684,6 +685,255 @@ func TestResolveSkillCallCreateOnceDelayStoresRunAt(t *testing.T) {
 	}
 }
 
+type capturedNotification struct {
+	Target core.DeliveryTarget
+	Text   string
+}
+
+type captureNotifier struct {
+	deliveries []capturedNotification
+	err        error
+}
+
+func (n *captureNotifier) SendNotification(_ context.Context, target core.DeliveryTarget, text string) error {
+	n.deliveries = append(n.deliveries, capturedNotification{Target: target, Text: text})
+	return n.err
+}
+
+func TestNotifySendUsesCurrentDeliveryTarget(t *testing.T) {
+	notifier := &captureNotifier{}
+	s := &Session{
+		Config:    &core.Config{AutonomyLevel: core.AutonomyFull},
+		AccountID: "alice",
+		Notifier:  notifier,
+	}
+	ctx := ContextWithDeliveryTarget(context.Background(), core.DeliveryTarget{
+		AccountID:      "alice",
+		Channel:        string(core.EventSlack),
+		ChatID:         "C123",
+		ConversationID: "general:slack:C123",
+		ChannelUserID:  "U456",
+		ReplyToMessage: "thread-1",
+	})
+
+	got, err := resolveSkillCall(ctx, core.SkillCall{
+		SkillName: "Notify",
+		Method:    "send",
+		Args:      []json.RawMessage{json.RawMessage(`"ship it"`)},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Notify.send result = %s", got)
+	}
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one", notifier.deliveries)
+	}
+	gotDelivery := notifier.deliveries[0]
+	if gotDelivery.Text != "ship it" {
+		t.Fatalf("text = %q, want ship it", gotDelivery.Text)
+	}
+	if gotDelivery.Target.AccountID != "alice" || gotDelivery.Target.Channel != string(core.EventSlack) || gotDelivery.Target.ChatID != "C123" {
+		t.Fatalf("target = %+v, want alice slack C123", gotDelivery.Target)
+	}
+}
+
+func TestNotifySendChannelOverrideClearsCurrentChatTarget(t *testing.T) {
+	notifier := &captureNotifier{}
+	s := &Session{
+		Config:    &core.Config{AutonomyLevel: core.AutonomyFull},
+		AccountID: "alice",
+		Notifier:  notifier,
+	}
+	ctx := ContextWithDeliveryTarget(context.Background(), core.DeliveryTarget{
+		AccountID:      "alice",
+		Channel:        string(core.EventSlack),
+		ChatID:         "C123",
+		ChannelUserID:  "U456",
+		ReplyToMessage: "thread-1",
+	})
+
+	got, err := resolveSkillCall(ctx, core.SkillCall{
+		SkillName: "Notify",
+		Method:    "send",
+		Args: []json.RawMessage{
+			json.RawMessage(`"send via telegram"`),
+			json.RawMessage(`{"channel":"telegram"}`),
+		},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Notify.send result = %s", got)
+	}
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one", notifier.deliveries)
+	}
+	target := notifier.deliveries[0].Target
+	if target.Channel != string(core.EventTelegram) {
+		t.Fatalf("channel = %q, want telegram", target.Channel)
+	}
+	if target.ChatID != "" || target.ChannelUserID != "" || target.ReplyToMessage != "" {
+		t.Fatalf("channel-specific fields were not cleared: %+v", target)
+	}
+}
+
+func TestDurableDeliveryTargetTreatsDesktopAsNonDurable(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.AllowedChatIDs = []string{"chat-1"}
+	cfg.Channels = []core.ChannelConfig{
+		{ChannelType: core.ChannelTelegram, Token: "telegram-token"},
+	}
+	s := &Session{
+		Config:    &cfg,
+		AccountID: "alice",
+	}
+	payload, err := json.Marshal(core.ChatPayload{
+		ChatID:    "desktop-session",
+		SessionID: "desktop-session",
+		Text:      "remind me",
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	event := core.Event{Type: core.EventDesktop, AccountID: "alice", Payload: payload}
+	ctx := ContextWithEvent(context.Background(), &event)
+
+	target := durableDeliveryTargetFromContextOrEvent(ctx, s)
+	if target.Channel != string(core.EventTelegram) || target.ChatID != "chat-1" {
+		t.Fatalf("target = %+v, want telegram/chat-1 fallback", target)
+	}
+}
+
+func TestPlatformSendWithoutNotifierDoesNotPretendSuccess(t *testing.T) {
+	s := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}}
+	for _, tt := range []struct {
+		skill  string
+		method string
+	}{
+		{"Slack", "send"},
+		{"Discord", "send"},
+	} {
+		t.Run(tt.skill, func(t *testing.T) {
+			got, err := resolveSkillCall(context.Background(), core.SkillCall{
+				SkillName: tt.skill,
+				Method:    tt.method,
+				Args:      []json.RawMessage{json.RawMessage(`"hello"`)},
+			}, s, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got, `"success":true`) {
+				t.Fatalf("%s.%s returned fake success: %s", tt.skill, tt.method, got)
+			}
+			if !strings.Contains(got, "delivery not configured") {
+				t.Fatalf("result = %s, want delivery not configured error", got)
+			}
+		})
+	}
+}
+
+func TestSkillCreateFromWebChatUsesDurableConfiguredDeliveryTarget(t *testing.T) {
+	baseDir := t.TempDir()
+	cfg := &core.Config{
+		AutonomyLevel:  core.AutonomyFull,
+		AllowedChatIDs: []string{"admin-chat"},
+		Channels: []core.ChannelConfig{
+			{ChannelType: core.ChannelWeb},
+			{ChannelType: core.ChannelTelegram, Token: "tok"},
+		},
+	}
+	s := &Session{
+		BaseDir:   baseDir,
+		Config:    cfg,
+		AccountID: "alice",
+	}
+	payload, _ := json.Marshal(core.ChatPayload{
+		ChatID:    "browser-session",
+		SessionID: "browser-user",
+	})
+	event := core.Event{Type: core.EventWebChat, AccountID: "alice", Payload: payload}
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), "general:web_chat:browser-session")
+
+	got, err := resolveSkillCall(ctx, core.SkillCall{
+		SkillName: "Skill",
+		Method:    "create",
+		Args: []json.RawMessage{
+			json.RawMessage(`"web-reminder"`),
+			json.RawMessage(`"reminder created from browser"`),
+			json.RawMessage(`"return \"done\";"`),
+			json.RawMessage(`"once"`),
+			json.RawMessage(`"2m"`),
+		},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Skill.create result = %s", got)
+	}
+
+	skill, _, err := core.LoadSkillFrom(baseDir, "web-reminder")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(web-reminder): %v", err)
+	}
+	if skill.Trigger.Delivery.Channel == string(core.EventWebChat) {
+		t.Fatalf("web_chat stored as durable delivery target: %+v", skill.Trigger.Delivery)
+	}
+	if skill.Trigger.Delivery.Channel != string(core.EventTelegram) || skill.Trigger.Delivery.ChatID != "admin-chat" {
+		t.Fatalf("delivery target = %+v, want telegram/admin-chat", skill.Trigger.Delivery)
+	}
+}
+
+func TestSkillCreateCapturesDeliveryTarget(t *testing.T) {
+	baseDir := t.TempDir()
+	s := &Session{
+		BaseDir:   baseDir,
+		Config:    &core.Config{AutonomyLevel: core.AutonomyFull},
+		AccountID: "alice",
+	}
+	payload, _ := json.Marshal(core.ChatPayload{
+		ChatID:           "C123",
+		SessionID:        "U456",
+		ReplyToMessageID: "thread-1",
+	})
+	event := core.Event{Type: core.EventSlack, AccountID: "alice", Payload: payload}
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), "general:slack:C123")
+
+	got, err := resolveSkillCall(ctx, core.SkillCall{
+		SkillName: "Skill",
+		Method:    "create",
+		Args: []json.RawMessage{
+			json.RawMessage(`"remind-slack"`),
+			json.RawMessage(`"remind this slack channel"`),
+			json.RawMessage(`"return \"done\";"`),
+			json.RawMessage(`"schedule"`),
+			json.RawMessage(`"every 1h"`),
+		},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Skill.create result = %s", got)
+	}
+
+	skill, _, err := core.LoadSkillFrom(baseDir, "remind-slack")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(remind-slack): %v", err)
+	}
+	if skill.Trigger.Delivery.AccountID != "alice" ||
+		skill.Trigger.Delivery.Channel != string(core.EventSlack) ||
+		skill.Trigger.Delivery.ChatID != "C123" ||
+		skill.Trigger.Delivery.ChannelUserID != "U456" ||
+		skill.Trigger.Delivery.ConversationID != "general:slack:C123" ||
+		skill.Trigger.Delivery.ReplyToMessage != "thread-1" {
+		t.Fatalf("delivery target = %+v", skill.Trigger.Delivery)
+	}
+}
+
 func TestResolveSkillCallPermissionGate(t *testing.T) {
 	st := openTestStore(t)
 	s := &Session{
@@ -857,6 +1107,222 @@ func TestResolveSkillCallBrowserNotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(got, "browser not configured") {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestRunPromptModeSkillUsesProvider(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	baseDir := t.TempDir()
+	skill := &core.Skill{
+		Name:        "prompt-reminder",
+		Version:     1,
+		Description: "Prompt mode reminder skill",
+		Enabled:     true,
+		Format:      core.SkillFormatMd,
+		Permissions: core.SkillPermissions{Primitives: []string{"Memory"}},
+	}
+	body := "Always answer with a concise reminder. This is SKILL.md text, not JavaScript."
+	if err := core.SaveSkillTo(baseDir, skill, body); err != nil {
+		t.Fatalf("save prompt skill: %v", err)
+	}
+
+	cfg := core.DefaultConfig()
+	provider := &recordingProvider{resp: &llm.Response{Content: "remember to stretch"}}
+	sess := &Session{
+		BaseDir:  baseDir,
+		Config:   &cfg,
+		Provider: provider,
+		Sandbox:  sandbox.New(cfg.Sandbox),
+	}
+	event := webChatEvent("2분 뒤 스트레칭 알려줘")
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), testWebChatConversationID)
+
+	raw, err := runSkillOrPackageWithParams(ctx, "prompt-reminder", sess, map[string]any{"delay": "2m"})
+	if err != nil {
+		t.Fatalf("runSkillOrPackageWithParams: %v", err)
+	}
+	var got struct {
+		Success bool   `json:"success"`
+		Output  string `json:"output"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode result %s: %v", raw, err)
+	}
+	if !got.Success || got.Output != "remember to stretch" || got.Error != "" {
+		t.Fatalf("result = %+v, raw %s", got, raw)
+	}
+	if len(provider.captured) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.captured))
+	}
+	msgs := provider.captured[0]
+	if len(msgs) != 2 {
+		t.Fatalf("prompt-mode messages = %+v, want system + user", msgs)
+	}
+	if !strings.Contains(msgs[0].Content, "## Skill Instructions") || !strings.Contains(msgs[0].Content, body) {
+		t.Fatalf("system prompt missing skill body:\n%s", msgs[0].Content)
+	}
+	if !strings.Contains(msgs[1].Content, "2분 뒤 스트레칭") || !strings.Contains(msgs[1].Content, `"delay":"2m"`) {
+		t.Fatalf("user prompt missing event text or params:\n%s", msgs[1].Content)
+	}
+}
+
+type promptModeToolProvider struct {
+	calls    int
+	tools    [][]llm.Tool
+	messages [][]core.LlmMessage
+}
+
+func (p *promptModeToolProvider) Generate(_ context.Context, _ []core.LlmMessage) (*llm.Response, error) {
+	return &llm.Response{Content: "plain generation path"}, nil
+}
+
+func (p *promptModeToolProvider) GenerateWithTools(_ context.Context, msgs []core.LlmMessage, tools []llm.Tool) (*llm.Response, error) {
+	p.calls++
+	p.messages = append(p.messages, append([]core.LlmMessage(nil), msgs...))
+	p.tools = append(p.tools, append([]llm.Tool(nil), tools...))
+	if p.calls == 1 {
+		return &llm.Response{
+			StopReason: "tool_use",
+			ContentBlocks: []core.ContentBlock{{
+				Type:  core.BlockTypeToolUse,
+				ID:    "toolu_memory_set",
+				Name:  "Memory__set",
+				Input: map[string]any{"args": []any{"prompt-mode-key", "prompt-mode-value"}},
+			}},
+		}, nil
+	}
+	return &llm.Response{Content: "saved via tool", StopReason: "end_turn"}, nil
+}
+
+func (p *promptModeToolProvider) ContextWindow() int { return 128_000 }
+func (p *promptModeToolProvider) MaxTokens() int     { return 4096 }
+
+func TestRunPromptModeSkillExecutesDeclaredTools(t *testing.T) {
+	baseDir := t.TempDir()
+	st := openTestStore(t)
+	skill := &core.Skill{
+		Name:        "prompt-memory",
+		Version:     1,
+		Description: "Prompt mode memory skill",
+		Enabled:     true,
+		Format:      core.SkillFormatMd,
+		Permissions: core.SkillPermissions{Primitives: []string{"Memory"}},
+	}
+	body := "Store the requested value by calling Memory.set, then report success."
+	if err := core.SaveSkillTo(baseDir, skill, body); err != nil {
+		t.Fatalf("save prompt skill: %v", err)
+	}
+
+	cfg := core.DefaultConfig()
+	provider := &promptModeToolProvider{}
+	sess := &Session{
+		BaseDir:  baseDir,
+		Config:   &cfg,
+		Provider: provider,
+		Store:    st,
+	}
+	event := webChatEvent("remember this")
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), testWebChatConversationID)
+
+	raw, err := runSkillOrPackage(ctx, "prompt-memory", sess)
+	if err != nil {
+		t.Fatalf("runSkillOrPackage: %v", err)
+	}
+	var got struct {
+		Success bool   `json:"success"`
+		Output  string `json:"output"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode result %s: %v", raw, err)
+	}
+	if !got.Success || got.Output != "saved via tool" || got.Error != "" {
+		t.Fatalf("result = %+v, raw %s", got, raw)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("GenerateWithTools calls = %d, want tool_use + final", provider.calls)
+	}
+	foundMemorySet := false
+	if len(provider.tools) > 0 {
+		for _, tool := range provider.tools[0] {
+			if tool.Name == "Memory__set" {
+				foundMemorySet = true
+				break
+			}
+		}
+	}
+	if !foundMemorySet {
+		t.Fatalf("tools = %+v, want declared Memory__set tool", provider.tools)
+	}
+	val, ok, err := st.GetUserContext("prompt-mode-key")
+	if err != nil || !ok || val != "prompt-mode-value" {
+		t.Fatalf("stored memory value = %q ok=%v err=%v", val, ok, err)
+	}
+	if len(provider.messages) < 2 || len(provider.messages[1]) < 3 {
+		t.Fatalf("tool result turn was not appended: %+v", provider.messages)
+	}
+	last := provider.messages[1][len(provider.messages[1])-1]
+	if len(last.ContentBlocks) != 1 || last.ContentBlocks[0].ToolUseID != "toolu_memory_set" {
+		t.Fatalf("last tool result message = %+v", last)
+	}
+}
+
+func TestSkillListIncludesScheduleState(t *testing.T) {
+	baseDir := t.TempDir()
+	st := openTestStore(t)
+	runAt := time.Now().UTC().Add(30 * time.Minute).Format(time.RFC3339)
+	skill := &core.Skill{
+		Name:        "scheduled-reminder",
+		Version:     1,
+		Description: "Scheduled reminder",
+		Enabled:     true,
+		Format:      core.SkillFormatNative,
+		Trigger:     core.SkillTrigger{Type: "once", RunAt: runAt},
+	}
+	if err := core.SaveSkillTo(baseDir, skill, "return \"ok\";"); err != nil {
+		t.Fatalf("save scheduled skill: %v", err)
+	}
+	lastRun := time.Now().UTC().Add(-time.Hour)
+	if err := st.SetLastRun(skill.Name, lastRun); err != nil {
+		t.Fatalf("SetLastRun: %v", err)
+	}
+	if err := st.IncrementFailureCount(skill.Name); err != nil {
+		t.Fatalf("IncrementFailureCount: %v", err)
+	}
+	sess := &Session{BaseDir: baseDir, Store: st}
+
+	raw, err := executeSkillMgmt(context.Background(), core.SkillCall{SkillName: "Skill", Method: "list"}, sess)
+	if err != nil {
+		t.Fatalf("Skill.list: %v", err)
+	}
+	var got struct {
+		Skills []map[string]any `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	var item map[string]any
+	for _, candidate := range got.Skills {
+		if candidate["name"] == skill.Name {
+			item = candidate
+			break
+		}
+	}
+	if item == nil {
+		t.Fatalf("scheduled skill missing from %v", got.Skills)
+	}
+	for _, key := range []string{"run_at", "last_run", "next_run", "failure_count", "due"} {
+		if _, ok := item[key]; !ok {
+			t.Fatalf("Skill.list item missing %q: %#v", key, item)
+		}
+	}
+	if item["run_at"] != runAt {
+		t.Fatalf("run_at = %v, want %s", item["run_at"], runAt)
+	}
+	if item["failure_count"] != float64(1) {
+		t.Fatalf("failure_count = %v, want 1", item["failure_count"])
 	}
 }
 

@@ -96,10 +96,12 @@ var SkillRegistry = []SkillMeta{
 		{Name: "delete", Signature: "Storage.delete(key)"},
 		{Name: "list", Signature: "Storage.list()"},
 	}},
+	{Name: "Notify", Methods: []SkillMethodMeta{
+		{Name: "send", Signature: "Notify.send(text, target?) — send a message to the current conversation or explicit target {channel, chat_id}"},
+	}},
 	{Name: "Telegram", Methods: []SkillMethodMeta{
 		{Name: "send", Signature: "Telegram.send(text)"},
 		{Name: "sendMessage", Signature: "Telegram.sendMessage(text)"},
-		{Name: "sendVoice", Signature: "Telegram.sendVoice(path)"},
 	}},
 	{Name: "Slack", Methods: []SkillMethodMeta{
 		{Name: "send", Signature: "Slack.send(text)"},

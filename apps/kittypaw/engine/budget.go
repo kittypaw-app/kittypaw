@@ -51,6 +51,13 @@ func (b *SharedTokenBudget) TrySpendFromUsage(usage *llm.TokenUsage) bool {
 	if usage == nil {
 		return true
 	}
+	return b.TrySpend(uint64(tokenUsageTotal(usage)))
+}
+
+func tokenUsageTotal(usage *llm.TokenUsage) int64 {
+	if usage == nil {
+		return 0
+	}
 	in := usage.InputTokens
 	out := usage.OutputTokens
 	if in < 0 {
@@ -59,7 +66,7 @@ func (b *SharedTokenBudget) TrySpendFromUsage(usage *llm.TokenUsage) bool {
 	if out < 0 {
 		out = 0
 	}
-	return b.TrySpend(uint64(in + out))
+	return in + out
 }
 
 // Remaining returns how many tokens are left. Returns ^uint64(0) (max)

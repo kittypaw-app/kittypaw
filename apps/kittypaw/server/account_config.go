@@ -212,6 +212,7 @@ func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Sess
 	if old != nil {
 		sess.SetActiveModel(old.GetActiveModel())
 	}
+	s.attachSessionNotifier(td.Account.ID, sess)
 
 	if roots := td.Account.Config.WorkspaceRoots(); len(roots) > 0 {
 		if err := td.Store.SeedWorkspaceRootsFromConfig(roots); err != nil {

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/llm"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -30,6 +31,9 @@ const ctxKeyConversationID contextKey = "conversationID"
 const ctxKeyEvent contextKey = "event"
 const ctxKeyPackageParams contextKey = "packageParams"
 const ctxKeyPermissionCallback contextKey = "permissionCallback"
+const ctxKeyDelegation contextKey = "delegation"
+
+const promptModeMaxToolIterations = 8
 
 // ContextWithConversationID stores the conversation ID in context for use by skill handlers.
 func ContextWithConversationID(ctx context.Context, conversationID string) context.Context {
@@ -84,6 +88,17 @@ func PermissionCallbackFromContext(ctx context.Context) PermissionCallback {
 		return v
 	}
 	return nil
+}
+
+func ContextWithDelegationInfo(ctx context.Context, info DelegationRunOptions) context.Context {
+	return context.WithValue(ctx, ctxKeyDelegation, info)
+}
+
+func DelegationInfoFromContext(ctx context.Context) (DelegationRunOptions, bool) {
+	if v, ok := ctx.Value(ctxKeyDelegation).(DelegationRunOptions); ok {
+		return v, true
+	}
+	return DelegationRunOptions{}, false
 }
 
 // needsPermission checks whether a skill call requires explicit user approval
@@ -172,6 +187,8 @@ func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, perm
 		return executeProjects(ctx, call, s)
 	case "Env":
 		return executeEnv(call)
+	case "Notify":
+		return executeNotify(ctx, call, s)
 	case "Telegram":
 		return executeTelegram(ctx, call, s)
 	case "Slack":
@@ -1811,54 +1828,90 @@ func executeEnv(call core.SkillCall) (string, error) {
 // --- Channel sends (Telegram, Slack, Discord) ---
 
 func executeTelegram(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
-	if call.Method != "sendMessage" && call.Method != "send" && call.Method != "sendVoice" {
+	if call.Method == "sendVoice" {
+		return jsonResult(map[string]any{"error": "Telegram.sendVoice delivery is not implemented"})
+	}
+	if call.Method != "sendMessage" && call.Method != "send" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Telegram method: %s", call.Method)})
 	}
-	// Find telegram token from config
-	var token string
-	for _, ch := range s.Config.Channels {
-		if ch.ChannelType == core.ChannelTelegram {
-			token = ch.Token
-			break
-		}
-	}
-	if token == "" {
-		return jsonResult(map[string]any{"error": "telegram not configured"})
-	}
-	if len(call.Args) == 0 {
-		return jsonResult(map[string]any{"error": "text required"})
-	}
-	var text string
-	_ = json.Unmarshal(call.Args[0], &text)
-
-	// Send via Telegram Bot API
-	return sendTelegramMessage(ctx, token, text)
+	return executePlatformSend(ctx, call, s, core.EventTelegram)
 }
 
 func executeSlack(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	if call.Method != "send" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Slack method: %s", call.Method)})
 	}
-	_ = ctx
-	_ = s
-	if len(call.Args) == 0 {
-		return jsonResult(map[string]any{"error": "text required"})
-	}
-	// TODO: implement Slack send
-	return jsonResult(map[string]any{"success": true, "note": "slack send not yet implemented"})
+	return executePlatformSend(ctx, call, s, core.EventSlack)
 }
 
 func executeDiscord(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
 	if call.Method != "send" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Discord method: %s", call.Method)})
 	}
-	_ = ctx
-	_ = s
+	return executePlatformSend(ctx, call, s, core.EventDiscord)
+}
+
+func executeNotify(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+	if call.Method != "send" {
+		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Notify method: %s", call.Method)})
+	}
 	if len(call.Args) == 0 {
 		return jsonResult(map[string]any{"error": "text required"})
 	}
-	// TODO: implement Discord send
-	return jsonResult(map[string]any{"success": true, "note": "discord send not yet implemented"})
+	var text string
+	if err := json.Unmarshal(call.Args[0], &text); err != nil {
+		return jsonResult(map[string]any{"error": "text must be a string"})
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return jsonResult(map[string]any{"error": "text required"})
+	}
+
+	target := deliveryTargetFromContextOrEvent(ctx, s)
+	if len(call.Args) > 1 && len(call.Args[1]) > 0 && string(call.Args[1]) != "null" {
+		var override core.DeliveryTarget
+		if err := json.Unmarshal(call.Args[1], &override); err != nil {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("target must be an object: %v", err)})
+		}
+		target = mergeDeliveryTarget(target, override)
+	}
+	if s == nil || s.Notifier == nil {
+		return jsonResult(map[string]any{"error": "delivery not configured"})
+	}
+	if err := s.Notifier.SendNotification(ctx, target, text); err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	markNotificationSent(ctx)
+	return jsonResult(map[string]any{"success": true})
+}
+
+func executePlatformSend(ctx context.Context, call core.SkillCall, s *Session, channel core.EventType) (string, error) {
+	if len(call.Args) == 0 {
+		return jsonResult(map[string]any{"error": "text required"})
+	}
+	var text string
+	if err := json.Unmarshal(call.Args[0], &text); err != nil {
+		return jsonResult(map[string]any{"error": "text must be a string"})
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return jsonResult(map[string]any{"error": "text required"})
+	}
+	if s == nil || s.Notifier == nil {
+		return jsonResult(map[string]any{"error": "delivery not configured"})
+	}
+	target := deliveryTargetFromContextOrEvent(ctx, s)
+	if target.Channel != "" && target.Channel != string(channel) {
+		target.ChatID = ""
+		target.ChannelUserID = ""
+		target.ReplyToMessage = ""
+	}
+	target.Channel = string(channel)
+	if err := s.Notifier.SendNotification(ctx, target, text); err != nil {
+		return jsonResult(map[string]any{"error": err.Error()})
+	}
+	markNotificationSent(ctx)
+	return jsonResult(map[string]any{"success": true})
 }
 
 // --- Skill Management ---
@@ -1872,12 +1925,24 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (str
 		}
 		var items []map[string]any
 		for _, sk := range skills {
-			items = append(items, map[string]any{
+			item := map[string]any{
 				"name":        sk.Skill.Name,
 				"description": sk.Skill.Description,
 				"enabled":     sk.Skill.Enabled,
 				"trigger":     sk.Skill.Trigger.Type,
-			})
+				"cron":        sk.Skill.Trigger.Cron,
+				"run_at":      sk.Skill.Trigger.RunAt,
+			}
+			if s.Store != nil {
+				lastRun, _ := s.Store.GetLastRun(sk.Skill.Name)
+				failCount, _ := s.Store.GetFailureCount(sk.Skill.Name)
+				state := SkillScheduleStateFor(&sk.Skill, lastRun, failCount, time.Now())
+				item["last_run"] = formatOptionalScheduleTime(state.LastRun)
+				item["next_run"] = formatOptionalScheduleTime(state.NextRun)
+				item["failure_count"] = state.FailureCount
+				item["due"] = state.Due
+			}
+			items = append(items, item)
 		}
 		// Include installed packages.
 		if s.PackageManager != nil {
@@ -1953,6 +2018,9 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (str
 			Trigger: core.SkillTrigger{
 				Type: triggerType,
 			},
+		}
+		if triggerType == "schedule" || triggerType == "once" {
+			skill.Trigger.Delivery = durableDeliveryTargetFromContextOrEvent(ctx, s)
 		}
 		if triggerType == "schedule" {
 			skill.Trigger.Cron = schedule
@@ -2176,6 +2244,13 @@ func parseDelayDuration(raw string) (time.Duration, error) {
 	return 0, fmt.Errorf("invalid duration %q", raw)
 }
 
+func formatOptionalScheduleTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // runSkillOrPackage executes a user-created skill or installed package by name.
 // User skills take priority over packages with the same name.
 func runSkillOrPackage(ctx context.Context, name string, s *Session) (string, error) {
@@ -2188,9 +2263,16 @@ func runSkillOrPackageWithParams(ctx context.Context, name string, s *Session, p
 	}
 	// Try user-created skill first.
 	skill, code, err := core.LoadSkillFrom(s.BaseDir, name)
-	if err == nil && skill != nil && code != "" {
+	if err == nil && skill != nil && (code != "" || IsPromptModeSkill(skill)) {
 		if !skill.Enabled {
 			return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q is disabled", name)})
+		}
+		if IsPromptModeSkill(skill) {
+			body := code
+			if body == "" {
+				body = skill.SourceText
+			}
+			return runPromptModeSkill(ctx, name, skill, body, s, params)
 		}
 		resolver := func(ctx context.Context, call core.SkillCall) (string, error) {
 			return resolveSkillCall(ctx, call, s, nil)
@@ -2312,6 +2394,270 @@ func runSkillOrPackageWithParams(ctx context.Context, name string, s *Session, p
 	}
 	output := normalizePackageOutputAttribution(pkg.Meta.ID, result.Output)
 	return jsonResult(map[string]any{"success": true, "output": output})
+}
+
+func runPromptModeSkill(ctx context.Context, name string, skill *core.Skill, body string, s *Session, params map[string]any) (string, error) {
+	if s == nil || s.Provider == nil {
+		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q requires an LLM provider", name)})
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q has empty SKILL.md instructions", name)})
+	}
+	messages := []core.LlmMessage{
+		{Role: core.RoleSystem, Content: BuildPromptModeSystemPrompt(skill, body)},
+		{Role: core.RoleUser, Content: buildPromptModeUserPrompt(ctx, name, params)},
+	}
+	tools, bindings := promptModeToolDefinitions(skill)
+	if len(tools) > 0 {
+		return runPromptModeSkillWithTools(ctx, name, messages, tools, bindings, s)
+	}
+	resp, err := s.Provider.Generate(WithLLMCallKind(ctx, "skill.prompt"), messages)
+	if err != nil {
+		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q prompt execution failed: %v", name, err)})
+	}
+	output := ""
+	if resp != nil {
+		output = strings.TrimSpace(resp.Content)
+	}
+	if output == "" {
+		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q returned an empty response", name)})
+	}
+	return jsonResult(map[string]any{"success": true, "output": output})
+}
+
+type promptModeToolBinding struct {
+	SkillName string
+	Method    string
+	ArgNames  []string
+}
+
+func runPromptModeSkillWithTools(ctx context.Context, name string, messages []core.LlmMessage, tools []llm.Tool, bindings map[string]promptModeToolBinding, s *Session) (string, error) {
+	for i := 0; i < promptModeMaxToolIterations; i++ {
+		resp, err := s.Provider.GenerateWithTools(WithLLMCallKind(ctx, "skill.prompt"), messages, tools)
+		if err != nil {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q prompt execution failed: %v", name, err)})
+		}
+		toolUses := promptModeToolUseBlocks(resp)
+		if len(toolUses) == 0 {
+			output := ""
+			if resp != nil {
+				output = strings.TrimSpace(resp.Content)
+			}
+			if output == "" {
+				return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q returned an empty response", name)})
+			}
+			return jsonResult(map[string]any{"success": true, "output": output})
+		}
+
+		messages = append(messages, core.LlmMessage{
+			Role:          core.RoleAssistant,
+			ContentBlocks: resp.ContentBlocks,
+		})
+		resultBlocks := make([]core.ContentBlock, 0, len(toolUses))
+		for _, toolUse := range toolUses {
+			result := promptModeExecuteToolUse(ctx, toolUse, bindings, s)
+			resultBlocks = append(resultBlocks, core.ContentBlock{
+				Type:      core.BlockTypeToolResult,
+				ToolUseID: toolUse.ID,
+				Content:   result,
+			})
+		}
+		messages = append(messages, core.LlmMessage{
+			Role:          core.RoleUser,
+			ContentBlocks: resultBlocks,
+		})
+	}
+	return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q exceeded prompt-mode tool iteration limit", name)})
+}
+
+func promptModeToolDefinitions(skill *core.Skill) ([]llm.Tool, map[string]promptModeToolBinding) {
+	allowed := FilterSkillsByPermissions(core.SkillRegistry, skill.Permissions.Primitives)
+	tools := make([]llm.Tool, 0)
+	bindings := map[string]promptModeToolBinding{}
+	for _, skillMeta := range allowed {
+		for _, method := range skillMeta.Methods {
+			name := promptModeToolName(skillMeta.Name, method.Name)
+			tools = append(tools, llm.Tool{
+				Name:        name,
+				Description: fmt.Sprintf("Call %s.%s. Signature: %s. Provide positional arguments as {\"args\": [...]} or named fields matching the signature.", skillMeta.Name, method.Name, method.Signature),
+				InputSchema: promptModeToolInputSchema(method),
+			})
+			bindings[name] = promptModeToolBinding{
+				SkillName: skillMeta.Name,
+				Method:    method.Name,
+				ArgNames:  promptModeArgNames(method.Signature),
+			}
+		}
+	}
+	return tools, bindings
+}
+
+func promptModeToolInputSchema(method core.SkillMethodMeta) map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"args": map[string]any{
+				"type":        "array",
+				"description": fmt.Sprintf("Positional arguments for %s.", method.Signature),
+			},
+		},
+		"additionalProperties": true,
+	}
+}
+
+func promptModeToolName(skillName, method string) string {
+	return skillName + "__" + method
+}
+
+func promptModeToolUseBlocks(resp *llm.Response) []core.ContentBlock {
+	if resp == nil {
+		return nil
+	}
+	out := make([]core.ContentBlock, 0, len(resp.ContentBlocks))
+	for _, block := range resp.ContentBlocks {
+		if block.Type == core.BlockTypeToolUse {
+			out = append(out, block)
+		}
+	}
+	return out
+}
+
+func promptModeExecuteToolUse(ctx context.Context, toolUse core.ContentBlock, bindings map[string]promptModeToolBinding, s *Session) string {
+	binding, ok := bindings[toolUse.Name]
+	if !ok {
+		result, _ := jsonResult(map[string]any{"error": fmt.Sprintf("tool %q is not available to this skill", toolUse.Name)})
+		return result
+	}
+	args, err := promptModeToolArgs(toolUse.Input, binding.ArgNames)
+	if err != nil {
+		result, _ := jsonResult(map[string]any{"error": err.Error()})
+		return result
+	}
+	result, err := resolveSkillCall(ctx, core.SkillCall{
+		ID:        toolUse.ID,
+		SkillName: binding.SkillName,
+		Method:    binding.Method,
+		Args:      args,
+	}, s, nil)
+	if err != nil {
+		result, _ = jsonResult(map[string]any{"error": err.Error()})
+	}
+	return result
+}
+
+func promptModeToolArgs(input map[string]any, argNames []string) ([]json.RawMessage, error) {
+	if len(input) == 0 {
+		return nil, nil
+	}
+	if rawArgs, ok := input["args"]; ok {
+		return promptModeRawArgs(rawArgs)
+	}
+	var args []json.RawMessage
+	for _, name := range argNames {
+		value, ok := input[name]
+		if !ok {
+			break
+		}
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("marshal %s argument: %w", name, err)
+		}
+		args = append(args, json.RawMessage(data))
+	}
+	if len(args) > 0 {
+		return args, nil
+	}
+	if len(argNames) == 1 {
+		data, err := json.Marshal(input)
+		if err != nil {
+			return nil, fmt.Errorf("marshal %s argument: %w", argNames[0], err)
+		}
+		return []json.RawMessage{data}, nil
+	}
+	return nil, nil
+}
+
+func promptModeRawArgs(value any) ([]json.RawMessage, error) {
+	if raw, ok := value.(string); ok {
+		var out []json.RawMessage
+		if err := json.Unmarshal([]byte(raw), &out); err == nil {
+			return out, nil
+		}
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		return []json.RawMessage{data}, nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var out []json.RawMessage
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("tool args must be an array")
+	}
+	return out, nil
+}
+
+func promptModeArgNames(signature string) []string {
+	start := strings.Index(signature, "(")
+	end := strings.Index(signature, ")")
+	if start < 0 || end <= start+1 {
+		return nil
+	}
+	inside := signature[start+1 : end]
+	parts := strings.Split(inside, ",")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		part = strings.Trim(part, "[]")
+		part = strings.TrimSuffix(part, "?")
+		if part == "" {
+			continue
+		}
+		if idx := strings.IndexAny(part, " :"); idx >= 0 {
+			part = part[:idx]
+		}
+		part = strings.TrimSpace(part)
+		if part != "" {
+			names = append(names, part)
+		}
+	}
+	return names
+}
+
+func buildPromptModeUserPrompt(ctx context.Context, name string, params map[string]any) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Run Skill.run(%q) for the current request.\n", name)
+	if convID := ConversationIDFromContext(ctx); convID != "" {
+		fmt.Fprintf(&sb, "conversation_id: %s\n", convID)
+	}
+	if event := EventFromContext(ctx); event != nil {
+		fmt.Fprintf(&sb, "event_type: %s\n", event.Type)
+		fmt.Fprintf(&sb, "channel: %s\n", event.Type.ChannelName())
+		if payload, err := event.ParsePayload(); err == nil {
+			if payload.Text != "" {
+				fmt.Fprintf(&sb, "\nUser request:\n%s\n", payload.Text)
+			}
+			if payload.FromName != "" {
+				fmt.Fprintf(&sb, "from_name: %s\n", payload.FromName)
+			}
+			if payload.ChatID != "" {
+				fmt.Fprintf(&sb, "chat_id: %s\n", payload.ChatID)
+			}
+			if payload.SessionID != "" {
+				fmt.Fprintf(&sb, "session_id: %s\n", payload.SessionID)
+			}
+		}
+	}
+	if len(params) > 0 {
+		data, _ := json.Marshal(params)
+		fmt.Fprintf(&sb, "\nStructured params:\n%s\n", string(data))
+	}
+	sb.WriteString("\nReturn the final response text only.")
+	return sb.String()
 }
 
 func overlayStructuredUserContext(userCtx map[string]any, params map[string]any) map[string]any {
@@ -2695,12 +3041,30 @@ func executeRunner(ctx context.Context, call core.SkillCall, s *Session) (string
 		if s.Config.Orchestration.MaxDepth > 0 {
 			maxDepth = int(s.Config.Orchestration.MaxDepth)
 		}
+		depth := 1
+		parentConversationID := ConversationIDFromContext(ctx)
+		if parentConversationID == "" {
+			parentConversationID = store.DefaultConversationID
+		}
+		if info, ok := DelegationInfoFromContext(ctx); ok {
+			depth = info.Depth + 1
+			if info.MaxDepth > 0 {
+				maxDepth = info.MaxDepth
+			}
+			if info.ParentConversationID != "" {
+				parentConversationID = info.ParentConversationID
+			}
+		}
 
-		result := executeDelegateTask(ctx, spec, s.Provider, s.Store, nil, 1, maxDepth, s.BaseDir)
+		result := executeDelegateTask(ctx, spec, s, depth, maxDepth, parentConversationID, EventFromContext(ctx))
 		return jsonResult(map[string]any{
-			"result":      result.Result,
-			"success":     result.Success,
-			"token_usage": result.TokenUsage,
+			"staff_id":        result.StaffID,
+			"task":            result.Task,
+			"result":          result.Result,
+			"success":         result.Success,
+			"token_usage":     result.TokenUsage,
+			"conversation_id": result.ConversationID,
+			"duration_ms":     result.DurationMs,
 		})
 
 	default:
@@ -2902,21 +3266,4 @@ func stripHTMLTags(s string) string {
 		}
 	}
 	return result.String()
-}
-
-func sendTelegramMessage(ctx context.Context, token, text string) (string, error) {
-	// This needs a chat_id — get it from the event context
-	// For now, broadcast to admin chat IDs would need config
-	// The actual chat_id comes from the event being processed
-	_ = ctx
-	_ = token
-
-	// Chunked sending for long messages (Telegram 4096 char limit)
-	const maxLen = 4096
-	if len(text) <= maxLen {
-		return jsonResult(map[string]any{"success": true, "message": text})
-	}
-
-	chunks := core.SplitChunks(text, maxLen)
-	return jsonResult(map[string]any{"success": true, "chunks": len(chunks)})
 }
