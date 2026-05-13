@@ -24,6 +24,7 @@ func TestParseCronInterval(t *testing.T) {
 		{"every 30s", 30 * time.Second},
 		{"*/5 * * * *", 5 * time.Minute},
 		{"*/30 * * * *", 30 * time.Minute},
+		{"0 0 3 * * *", 24 * time.Hour},
 		{"", 0},
 		{"  ", 0},
 		{"invalid", 0},
@@ -57,6 +58,30 @@ func TestSchedulerStartAsyncStopWaitIncludesLoops(t *testing.T) {
 	sched.StartAsync(context.Background())
 	sched.Stop()
 	sched.Wait()
+}
+
+func TestReflectionDueUsesConfiguredCron(t *testing.T) {
+	cfg := core.ReflectionConfig{Cron: "0 9 * * *"}
+	lastRun := time.Date(2026, 5, 12, 9, 30, 0, 0, time.UTC)
+
+	if !reflectionDueAt(cfg, &lastRun, time.Date(2026, 5, 13, 9, 30, 0, 0, time.UTC)) {
+		t.Fatal("reflection should be due inside the configured 09:00 cron window")
+	}
+	if reflectionDueAt(cfg, &lastRun, time.Date(2026, 5, 13, 3, 30, 0, 0, time.UTC)) {
+		t.Fatal("reflection should not use hard-coded 03:00 when cron is configured for 09:00")
+	}
+}
+
+func TestReflectionDueParsesDefaultSixFieldCron(t *testing.T) {
+	cfg := core.ReflectionConfig{Cron: "0 0 3 * * *"}
+	lastRun := time.Date(2026, 5, 12, 3, 30, 0, 0, time.UTC)
+
+	if !reflectionDueAt(cfg, &lastRun, time.Date(2026, 5, 13, 3, 30, 0, 0, time.UTC)) {
+		t.Fatal("reflection should parse default six-field cron and run in the 03:00 window")
+	}
+	if reflectionDueAt(cfg, &lastRun, time.Date(2026, 5, 13, 4, 0, 0, 0, time.UTC)) {
+		t.Fatal("reflection should not run after the configured cron window")
+	}
 }
 
 // ---------------------------------------------------------------------------

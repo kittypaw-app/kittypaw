@@ -26,6 +26,13 @@ type Scheduler struct {
 	wg         sync.WaitGroup // tracks in-flight runSkill goroutines for graceful drain
 }
 
+type SkillScheduleState struct {
+	LastRun      *time.Time
+	FailureCount int
+	NextRun      *time.Time
+	Due          bool
+}
+
 // NewScheduler creates a scheduler that uses the given session for execution.
 // pkgManager may be nil if packages are not configured.
 func NewScheduler(session *Session, pkgManager *core.PackageManager) *Scheduler {
@@ -230,19 +237,30 @@ func (s *Scheduler) firstTelegramTarget() (string, string) {
 	return "", ""
 }
 
-// isReflectionDue returns true if the reflection cycle should run now.
-// Checks: has it been at least 23 hours since last run, and is the current
-// hour within the configured window (default: 3am).
+// isReflectionDue returns true if the reflection cycle should run inside the
+// configured cron window. When no cron is configured, it uses 03:00 daily.
 func (s *Scheduler) isReflectionDue() bool {
 	lastRun, _ := s.session.Store.GetLastRun("__reflection__")
-	if lastRun != nil && time.Since(*lastRun) < 23*time.Hour {
+	return reflectionDueAt(s.session.Config.Reflection, lastRun, time.Now())
+}
+
+func reflectionDueAt(cfg core.ReflectionConfig, lastRun *time.Time, now time.Time) bool {
+	expr := strings.TrimSpace(cfg.Cron)
+	if expr == "" {
+		expr = "0 0 3 * * *"
+	}
+	if strings.HasPrefix(expr, "every ") {
+		return cronIsDueAt(expr, lastRun, now)
+	}
+	schedule, err := parseCronSchedule(expr)
+	if err != nil {
 		return false
 	}
-
-	// Default: run at 3am.
-	targetHour := 3
-	// TODO: parse config.Reflection.Cron for target hour
-	return time.Now().Hour() == targetHour
+	fire := schedule.Next(now.Add(-1 * time.Hour))
+	if fire.After(now) {
+		return false
+	}
+	return lastRun == nil || lastRun.Before(fire)
 }
 
 // Stop signals the scheduler to exit. Safe to call multiple times.
@@ -439,32 +457,8 @@ func (s *Scheduler) isDue(skill *core.Skill) bool {
 		return false
 	}
 
-	// Check failure backoff
 	failCount, _ := s.session.Store.GetFailureCount(skill.Name)
-	if failCount > 0 {
-		backoff := time.Duration(1<<min(failCount, 6)) * time.Minute
-		if lastRun != nil && time.Since(*lastRun) < backoff {
-			return false
-		}
-	}
-
-	if skill.Trigger.Type == "once" {
-		// One-shot: run if never run before and RunAt has passed
-		if lastRun != nil {
-			return false // Already ran
-		}
-		if skill.Trigger.RunAt != "" {
-			runAt, err := time.Parse(time.RFC3339, skill.Trigger.RunAt)
-			if err != nil {
-				return false
-			}
-			return time.Now().After(runAt)
-		}
-		return true
-	}
-
-	// Schedule type: use parsed cron schedule for accurate due check.
-	return cronIsDue(skill.Trigger.Cron, lastRun)
+	return SkillScheduleStateFor(skill, lastRun, failCount, time.Now()).Due
 }
 
 func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
@@ -538,8 +532,7 @@ func parseCronInterval(expr string) time.Duration {
 
 	// Standard 5-field cron: use robfig/cron/v3 to compute interval
 	// between next two fires.
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	schedule, err := parser.Parse(expr)
+	schedule, err := parseCronSchedule(expr)
 	if err != nil {
 		return 0
 	}
@@ -554,6 +547,10 @@ func parseCronInterval(expr string) time.Duration {
 // For standard 5-field cron it uses schedule.Next(lastRun) directly, which
 // correctly handles non-uniform schedules (monthly, weekday-only, DST).
 func cronIsDue(expr string, lastRun *time.Time) bool {
+	return cronIsDueAt(expr, lastRun, time.Now())
+}
+
+func cronIsDueAt(expr string, lastRun *time.Time, now time.Time) bool {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return false
@@ -566,15 +563,87 @@ func cronIsDue(expr string, lastRun *time.Time) bool {
 	// Simple "every" expressions — uniform interval, duration comparison is correct.
 	if strings.HasPrefix(expr, "every ") {
 		interval := parseCronInterval(expr)
-		return interval > 0 && time.Since(*lastRun) >= interval
+		return interval > 0 && !now.Before(lastRun.Add(interval))
 	}
 
 	// Standard cron: compute the next fire time after lastRun and check if it's past.
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	schedule, err := parser.Parse(expr)
+	schedule, err := parseCronSchedule(expr)
 	if err != nil {
 		return false
 	}
 	nextFire := schedule.Next(*lastRun)
-	return time.Now().After(nextFire)
+	return !now.Before(nextFire)
+}
+
+func parseCronSchedule(expr string) (cron.Schedule, error) {
+	parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	return parser.Parse(expr)
+}
+
+func SkillScheduleStateFor(skill *core.Skill, lastRun *time.Time, failureCount int, now time.Time) SkillScheduleState {
+	state := SkillScheduleState{LastRun: lastRun, FailureCount: failureCount}
+	if skill == nil {
+		return state
+	}
+
+	switch skill.Trigger.Type {
+	case "once":
+		if lastRun != nil {
+			return state
+		}
+		if strings.TrimSpace(skill.Trigger.RunAt) == "" {
+			next := now.UTC()
+			state.NextRun = &next
+			state.Due = true
+			return state
+		}
+		runAt, err := time.Parse(time.RFC3339, skill.Trigger.RunAt)
+		if err != nil {
+			return state
+		}
+		runAt = runAt.UTC()
+		state.NextRun = &runAt
+		state.Due = !now.Before(runAt)
+		return state
+
+	case "schedule":
+		next, ok := nextScheduledRun(skill.Trigger.Cron, lastRun, now)
+		if !ok {
+			return state
+		}
+		if failureCount > 0 && lastRun != nil {
+			backoff := time.Duration(1<<min(failureCount, 6)) * time.Minute
+			backoffUntil := lastRun.Add(backoff).UTC()
+			if backoffUntil.After(next) {
+				next = backoffUntil
+			}
+		}
+		state.NextRun = &next
+		state.Due = !now.Before(next)
+		return state
+	default:
+		return state
+	}
+}
+
+func nextScheduledRun(expr string, lastRun *time.Time, now time.Time) (time.Time, bool) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return time.Time{}, false
+	}
+	if lastRun == nil {
+		return now.UTC(), true
+	}
+	if strings.HasPrefix(expr, "every ") {
+		interval := parseCronInterval(expr)
+		if interval <= 0 {
+			return time.Time{}, false
+		}
+		return lastRun.Add(interval).UTC(), true
+	}
+	schedule, err := parseCronSchedule(expr)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return schedule.Next(*lastRun).UTC(), true
 }

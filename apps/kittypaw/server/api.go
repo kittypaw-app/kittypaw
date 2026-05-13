@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -409,25 +410,46 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	type skillItem struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Enabled     bool   `json:"enabled"`
-		Version     uint32 `json:"version"`
-		Trigger     string `json:"trigger"`
-		CreatedAt   string `json:"created_at"`
-		UpdatedAt   string `json:"updated_at"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Enabled      bool   `json:"enabled"`
+		Version      uint32 `json:"version"`
+		Trigger      string `json:"trigger"`
+		Cron         string `json:"cron,omitempty"`
+		RunAt        string `json:"run_at,omitempty"`
+		LastRun      string `json:"last_run,omitempty"`
+		FailureCount int    `json:"failure_count"`
+		NextRun      string `json:"next_run,omitempty"`
+		Due          bool   `json:"due"`
+		CreatedAt    string `json:"created_at"`
+		UpdatedAt    string `json:"updated_at"`
 	}
 	items := make([]skillItem, 0, len(skills))
-	for _, s := range skills {
-		items = append(items, skillItem{
-			Name:        s.Skill.Name,
-			Description: s.Skill.Description,
-			Enabled:     s.Skill.Enabled,
-			Version:     s.Skill.Version,
-			Trigger:     s.Skill.Trigger.Type,
-			CreatedAt:   s.Skill.CreatedAt,
-			UpdatedAt:   s.Skill.UpdatedAt,
-		})
+	now := time.Now()
+	for _, sk := range skills {
+		lastRun, _ := s.store.GetLastRun(sk.Skill.Name)
+		failureCount, _ := s.store.GetFailureCount(sk.Skill.Name)
+		status := engine.SkillScheduleStateFor(&sk.Skill, lastRun, failureCount, now)
+		item := skillItem{
+			Name:         sk.Skill.Name,
+			Description:  sk.Skill.Description,
+			Enabled:      sk.Skill.Enabled,
+			Version:      sk.Skill.Version,
+			Trigger:      sk.Skill.Trigger.Type,
+			Cron:         sk.Skill.Trigger.Cron,
+			RunAt:        sk.Skill.Trigger.RunAt,
+			FailureCount: failureCount,
+			Due:          status.Due,
+			CreatedAt:    sk.Skill.CreatedAt,
+			UpdatedAt:    sk.Skill.UpdatedAt,
+		}
+		if lastRun != nil {
+			item.LastRun = lastRun.UTC().Format(time.RFC3339)
+		}
+		if status.NextRun != nil {
+			item.NextRun = status.NextRun.UTC().Format(time.RFC3339)
+		}
+		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"skills": items})
 }

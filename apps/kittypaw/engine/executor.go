@@ -1956,6 +1956,12 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (str
 		}
 		if triggerType == "schedule" {
 			skill.Trigger.Cron = schedule
+		} else if triggerType == "once" {
+			runAt, err := onceRunAtFromSchedule(schedule, time.Now())
+			if err != nil {
+				return jsonResult(map[string]any{"error": err.Error()})
+			}
+			skill.Trigger.RunAt = runAt
 		}
 
 		if err := core.SaveSkillTo(s.BaseDir, skill, code); err != nil {
@@ -2141,6 +2147,33 @@ func newRegistryClient(cfg *core.Config) (*core.RegistryClient, error) {
 		url = cfg.Registry.URL
 	}
 	return core.NewRegistryClient(url)
+}
+
+func onceRunAtFromSchedule(raw string, now time.Time) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC().Format(time.RFC3339), nil
+	}
+	if d, err := parseDelayDuration(raw); err == nil && d > 0 {
+		return now.UTC().Add(d).Format(time.RFC3339), nil
+	}
+	return "", fmt.Errorf("invalid once schedule %q: use a duration like 2m or an RFC3339 timestamp", raw)
+}
+
+func parseDelayDuration(raw string) (time.Duration, error) {
+	if d, err := time.ParseDuration(raw); err == nil {
+		return d, nil
+	}
+	if strings.HasSuffix(raw, "d") {
+		spec := strings.TrimSuffix(raw, "d")
+		if d, err := time.ParseDuration(spec + "h"); err == nil {
+			return d * 24, nil
+		}
+	}
+	return 0, fmt.Errorf("invalid duration %q", raw)
 }
 
 // runSkillOrPackage executes a user-created skill or installed package by name.

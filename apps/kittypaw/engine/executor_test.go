@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/llm"
@@ -628,6 +629,58 @@ description = "현재 날씨와 비 여부를 확인합니다."
 	}
 	if _, _, err := pm.LoadPackage("weather-now"); err == nil {
 		t.Fatal("weather-now package still installed")
+	}
+}
+
+func TestResolveSkillCallCreateOnceDelayStoresRunAt(t *testing.T) {
+	baseDir := t.TempDir()
+	s := &Session{
+		BaseDir: baseDir,
+		Config:  &core.Config{AutonomyLevel: core.AutonomyFull},
+	}
+	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
+	before := time.Now().UTC().Add(90 * time.Second)
+
+	got, err := resolveSkillCall(context.Background(), core.SkillCall{
+		SkillName: "Skill",
+		Method:    "create",
+		Args: []json.RawMessage{
+			raw(`"remind"`),
+			raw(`"2분 뒤 알림"`),
+			raw(`"return \"ok\";"`),
+			raw(`"once"`),
+			raw(`"2m"`),
+		},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Skill.create result = %s", got)
+	}
+
+	skill, _, err := core.LoadSkillFrom(baseDir, "remind")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(remind): %v", err)
+	}
+	if skill.Trigger.Type != "once" {
+		t.Fatalf("trigger type = %q, want once", skill.Trigger.Type)
+	}
+	if skill.Trigger.Cron != "" {
+		t.Fatalf("once trigger cron = %q, want empty", skill.Trigger.Cron)
+	}
+	runAt, err := time.Parse(time.RFC3339, skill.Trigger.RunAt)
+	if err != nil {
+		t.Fatalf("run_at = %q, want RFC3339: %v", skill.Trigger.RunAt, err)
+	}
+	after := time.Now().UTC().Add(150 * time.Second)
+	if runAt.Before(before) || runAt.After(after) {
+		t.Fatalf("run_at = %s, want roughly 2m from now (%s..%s)", runAt, before, after)
+	}
+
+	sched := NewScheduler(&Session{Store: openTestStore(t), Config: &core.Config{}}, nil)
+	if sched.isDue(skill) {
+		t.Fatal("new delayed once skill should not be due before run_at")
 	}
 }
 

@@ -203,7 +203,7 @@ Example — once (one-shot delayed):
     Telegram.sendMessage("리마인더: 회의 시작!");
   ` + "`" + `, "once", "2m");
 
-CRITICAL: "schedule" = recurring (cron), "once" = one-shot (runs once then deleted).`
+CRITICAL: "schedule" recurs. "once" uses 5th arg as delay/RFC3339 run_at, then deletes.`
 
 // MemoryBlock guides memory usage for user preferences.
 const MemoryBlock = `## Memory & Learning

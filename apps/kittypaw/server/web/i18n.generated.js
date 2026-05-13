@@ -316,160 +316,250 @@
       "ja": "トークン",
       "en": "Tokens"
     },
-    "projects.archive": {
+    "kanban.addWorkspaceGuidance": {
+      "ko": "칸반 프로젝트를 만들기 전에 설정에서 작업공간을 추가하세요.",
+      "ja": "カンバンプロジェクトを作成する前に、設定でワークスペースを追加してください。",
+      "en": "Add a workspace in Settings before creating a Kanban project."
+    },
+    "kanban.addWorkspaceInSettings": {
+      "ko": "설정에서 작업공간 추가",
+      "ja": "設定でワークスペースを追加",
+      "en": "Add a workspace in Settings"
+    },
+    "kanban.allMilestones": {
+      "ko": "모든 마일스톤",
+      "ja": "すべてのマイルストーン",
+      "en": "All milestones"
+    },
+    "kanban.archive": {
       "ko": "보관",
       "ja": "アーカイブ",
       "en": "Archive"
     },
-    "projects.board": {
-      "ko": "보드",
-      "ja": "ボード",
-      "en": "Board"
+    "kanban.archiveTaskConfirm": {
+      "ko": "이 작업을 보관할까요?",
+      "ja": "このタスクをアーカイブしますか？",
+      "en": "Archive this task?"
     },
-    "projects.createProject": {
-      "ko": "프로젝트 만들기",
-      "ja": "プロジェクトを作成",
-      "en": "Create Project"
+    "kanban.assignee": {
+      "ko": "담당자",
+      "ja": "担当者",
+      "en": "Assignee"
     },
-    "projects.drivers": {
-      "ko": "드라이버",
-      "ja": "ドライバー",
-      "en": "Drivers"
-    },
-    "projects.empty": {
-      "ko": "비어 있음",
-      "ja": "空です",
-      "en": "Empty"
-    },
-    "projects.jobs": {
-      "ko": "작업 실행",
-      "ja": "ジョブ",
-      "en": "Jobs"
-    },
-    "projects.newProject": {
-      "ko": "새 프로젝트",
-      "ja": "新規プロジェクト",
-      "en": "New Project"
-    },
-    "projects.newTicket": {
-      "ko": "새 티켓",
-      "ja": "新規チケット",
-      "en": "New Ticket"
-    },
-    "projects.noFolderSelected": {
-      "ko": "선택한 폴더 없음",
-      "ja": "フォルダー未選択",
-      "en": "No folder selected"
-    },
-    "projects.noFolders": {
-      "ko": "폴더 없음",
-      "ja": "フォルダーはありません",
-      "en": "No folders"
-    },
-    "projects.noPath": {
-      "ko": "경로 없음",
-      "ja": "パスなし",
-      "en": "No path"
-    },
-    "projects.planJob": {
-      "ko": "Job 계획",
-      "ja": "ジョブを計画",
-      "en": "Plan Job"
-    },
-    "projects.priority": {
-      "ko": "우선순위",
-      "ja": "優先度",
-      "en": "Priority"
-    },
-    "projects.projectKey": {
-      "ko": "키",
-      "ja": "キー",
-      "en": "Key"
-    },
-    "projects.projectName": {
-      "ko": "이름",
-      "ja": "名前",
-      "en": "Name"
-    },
-    "projects.projectChat": {
-      "ko": "프로젝트 채팅",
-      "ja": "プロジェクトチャット",
-      "en": "Project Chat"
-    },
-    "projects.requestFailed": {
-      "ko": "요청 실패",
-      "ja": "リクエストに失敗しました",
-      "en": "Request failed"
-    },
-    "projects.selectProjectFolder": {
-      "ko": "프로젝트 폴더를 선택하세요.",
-      "ja": "プロジェクトフォルダーを選択してください。",
-      "en": "Select a project folder."
-    },
-    "projects.status": {
-      "ko": "상태",
-      "ja": "ステータス",
-      "en": "Status"
-    },
-    "projects.status.backlog": {
-      "ko": "백로그",
-      "ja": "バックログ",
-      "en": "Backlog"
-    },
-    "projects.status.blocked": {
+    "kanban.block": {
       "ko": "막힘",
-      "ja": "ブロック中",
-      "en": "Blocked"
+      "ja": "ブロック",
+      "en": "Block"
     },
-    "projects.status.done": {
-      "ko": "완료",
-      "ja": "完了",
-      "en": "Done"
-    },
-    "projects.status.draft": {
-      "ko": "초안",
-      "ja": "下書き",
-      "en": "Draft"
-    },
-    "projects.status.in_progress": {
-      "ko": "진행 중",
-      "ja": "進行中",
-      "en": "In Progress"
-    },
-    "projects.status.ready": {
-      "ko": "준비됨",
-      "ja": "準備完了",
-      "en": "Ready"
-    },
-    "projects.status.review": {
-      "ko": "검토",
-      "ja": "レビュー",
-      "en": "Review"
-    },
-    "projects.ticket": {
-      "ko": "티켓",
-      "ja": "チケット",
-      "en": "Ticket"
-    },
-    "projects.ticketBody": {
+    "kanban.body": {
       "ko": "본문",
       "ja": "本文",
       "en": "Body"
     },
-    "projects.ticketChat": {
-      "ko": "티켓 채팅",
-      "ja": "チケットチャット",
-      "en": "Ticket Chat"
+    "kanban.cancel": {
+      "ko": "취소",
+      "ja": "キャンセル",
+      "en": "Cancel"
     },
-    "projects.ticketTitle": {
+    "kanban.cancelReason": {
+      "ko": "취소 사유",
+      "ja": "キャンセル理由",
+      "en": "Cancel reason"
+    },
+    "kanban.claim": {
+      "ko": "맡기",
+      "ja": "担当する",
+      "en": "Claim"
+    },
+    "kanban.comment": {
+      "ko": "댓글 작성",
+      "ja": "コメント",
+      "en": "Comment"
+    },
+    "kanban.comments": {
+      "ko": "댓글",
+      "ja": "コメント",
+      "en": "Comments"
+    },
+    "kanban.complete": {
+      "ko": "완료",
+      "ja": "完了",
+      "en": "Complete"
+    },
+    "kanban.createProject": {
+      "ko": "프로젝트 만들기",
+      "ja": "プロジェクトを作成",
+      "en": "Create Project"
+    },
+    "kanban.empty": {
+      "ko": "비어 있음",
+      "ja": "空です",
+      "en": "Empty"
+    },
+    "kanban.finished": {
+      "ko": "완료",
+      "ja": "終了",
+      "en": "finished"
+    },
+    "kanban.heartbeat": {
+      "ko": "하트비트",
+      "ja": "ハートビート",
+      "en": "Heartbeat"
+    },
+    "kanban.milestone": {
+      "ko": "마일스톤",
+      "ja": "マイルストーン",
+      "en": "Milestone"
+    },
+    "kanban.name": {
+      "ko": "이름",
+      "ja": "名前",
+      "en": "Name"
+    },
+    "kanban.newTask": {
+      "ko": "새 작업",
+      "ja": "新規タスク",
+      "en": "New Task"
+    },
+    "kanban.noComments": {
+      "ko": "댓글 없음",
+      "ja": "コメントはありません",
+      "en": "No comments"
+    },
+    "kanban.noProjects": {
+      "ko": "프로젝트 없음",
+      "ja": "プロジェクトはありません",
+      "en": "No projects"
+    },
+    "kanban.noRuns": {
+      "ko": "실행 기록 없음",
+      "ja": "実行履歴はありません",
+      "en": "No runs"
+    },
+    "kanban.none": {
+      "ko": "없음",
+      "ja": "なし",
+      "en": "None"
+    },
+    "kanban.optional": {
+      "ko": "선택 사항",
+      "ja": "任意",
+      "en": "optional"
+    },
+    "kanban.priority": {
+      "ko": "우선순위",
+      "ja": "優先度",
+      "en": "Priority"
+    },
+    "kanban.reason": {
+      "ko": "사유",
+      "ja": "理由",
+      "en": "Reason"
+    },
+    "kanban.reclaim": {
+      "ko": "다시 맡기",
+      "ja": "再担当",
+      "en": "Reclaim"
+    },
+    "kanban.reclaimReason": {
+      "ko": "다시 맡는 사유",
+      "ja": "再担当理由",
+      "en": "Reclaim reason"
+    },
+    "kanban.requestFailed": {
+      "ko": "요청 실패",
+      "ja": "リクエストに失敗しました",
+      "en": "Request failed"
+    },
+    "kanban.runs": {
+      "ko": "실행",
+      "ja": "実行",
+      "en": "Runs"
+    },
+    "kanban.selectWorkspaceFirst": {
+      "ko": "먼저 작업공간을 선택하세요.",
+      "ja": "先にワークスペースを選択してください。",
+      "en": "Select a workspace first."
+    },
+    "kanban.slug": {
+      "ko": "슬러그",
+      "ja": "スラッグ",
+      "en": "Slug"
+    },
+    "kanban.started": {
+      "ko": "시작",
+      "ja": "開始",
+      "en": "started"
+    },
+    "kanban.status": {
+      "ko": "상태",
+      "ja": "ステータス",
+      "en": "Status"
+    },
+    "kanban.status.blocked": {
+      "ko": "막힘",
+      "ja": "ブロック中",
+      "en": "Blocked"
+    },
+    "kanban.status.done": {
+      "ko": "완료",
+      "ja": "完了",
+      "en": "Done"
+    },
+    "kanban.status.ready": {
+      "ko": "준비됨",
+      "ja": "準備完了",
+      "en": "Ready"
+    },
+    "kanban.status.running": {
+      "ko": "진행 중",
+      "ja": "実行中",
+      "en": "Running"
+    },
+    "kanban.status.todo": {
+      "ko": "할 일",
+      "ja": "Todo",
+      "en": "Todo"
+    },
+    "kanban.status.triage": {
+      "ko": "분류",
+      "ja": "トリアージ",
+      "en": "Triage"
+    },
+    "kanban.summary": {
+      "ko": "요약",
+      "ja": "概要",
+      "en": "Summary"
+    },
+    "kanban.task": {
+      "ko": "작업",
+      "ja": "タスク",
+      "en": "Task"
+    },
+    "kanban.title": {
+      "ko": "칸반",
+      "ja": "カンバン",
+      "en": "Kanban"
+    },
+    "kanban.titleField": {
       "ko": "제목",
       "ja": "タイトル",
       "en": "Title"
     },
-    "projects.title": {
-      "ko": "프로젝트",
-      "ja": "プロジェクト",
-      "en": "Projects"
+    "kanban.unassigned": {
+      "ko": "미지정",
+      "ja": "未割り当て",
+      "en": "Unassigned"
+    },
+    "kanban.unblock": {
+      "ko": "막힘 해제",
+      "ja": "ブロック解除",
+      "en": "Unblock"
+    },
+    "kanban.workspace": {
+      "ko": "작업공간",
+      "ja": "ワークスペース",
+      "en": "Workspace"
     },
     "nav.dashboard": {
       "ko": "대시보드",
@@ -485,6 +575,11 @@
       "ko": "스킬",
       "ja": "スキル",
       "en": "Skills"
+    },
+    "settings.addWorkspace": {
+      "ko": "작업공간 추가",
+      "ja": "ワークスペースを追加",
+      "en": "Add workspace"
     },
     "settings.alias": {
       "ko": "별칭",
@@ -561,6 +656,11 @@
       "ja": "パスなし",
       "en": "No path"
     },
+    "settings.noWorkspaces": {
+      "ko": "등록된 작업공간이 없습니다.",
+      "ja": "登録済みのワークスペースはありません。",
+      "en": "No workspaces configured."
+    },
     "settings.notConfigured": {
       "ko": "설정되지 않음",
       "ja": "未設定",
@@ -581,6 +681,16 @@
       "ja": "リレーは利用できません。",
       "en": "Relay not available"
     },
+    "settings.removeWorkspaceConfirm": {
+      "ko": "\"{name}\" 작업공간을 제거할까요?",
+      "ja": "ワークスペース「{name}」を削除しますか？",
+      "en": "Remove workspace \"{name}\"?"
+    },
+    "settings.selectWorkspacePath": {
+      "ko": "작업공간 경로를 선택하세요.",
+      "ja": "ワークスペースのパスを選択してください。",
+      "en": "Select a workspace path."
+    },
     "settings.selected": {
       "ko": "선택됨",
       "ja": "選択中",
@@ -595,6 +705,16 @@
       "ko": "위로",
       "ja": "上へ",
       "en": "Up"
+    },
+    "settings.workspace": {
+      "ko": "작업공간",
+      "ja": "ワークスペース",
+      "en": "Workspace"
+    },
+    "settings.workspaces": {
+      "ko": "작업공간",
+      "ja": "ワークスペース",
+      "en": "Workspaces"
     },
     "skills.available": {
       "ko": "사용 가능",
@@ -661,6 +781,11 @@
       "ja": "ギャラリーを読み込めませんでした: {error}",
       "en": "Failed to load gallery: {error}"
     },
+    "skills.failures": {
+      "ko": "실패",
+      "ja": "失敗",
+      "en": "Failures"
+    },
     "skills.install": {
       "ko": "설치",
       "ja": "インストール",
@@ -686,10 +811,20 @@
       "ja": "インストール中...",
       "en": "Installing..."
     },
+    "skills.lastRun": {
+      "ko": "마지막 실행",
+      "ja": "最終実行",
+      "en": "Last"
+    },
     "skills.loading": {
       "ko": "스킬을 불러오는 중...",
       "ja": "スキルを読み込み中...",
       "en": "Loading skills..."
+    },
+    "skills.nextRun": {
+      "ko": "다음 실행",
+      "ja": "次回実行",
+      "en": "Next"
     },
     "skills.noAdditionalPackages": {
       "ko": "추가 패키지가 없습니다.",
@@ -700,6 +835,11 @@
       "ko": "패키지",
       "ja": "パッケージ",
       "en": "package"
+    },
+    "skills.runAt": {
+      "ko": "실행 시각",
+      "ja": "実行時刻",
+      "en": "Run at"
     },
     "skills.saveConfiguration": {
       "ko": "구성 저장",

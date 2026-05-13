@@ -400,6 +400,10 @@ messages:
     ko: "불러오지 못했습니다: {error}"
     ja: "読み込めませんでした: {error}"
     en: "Failed to load: {error}"
+  skills.failures:
+    ko: "실패"
+    ja: "失敗"
+    en: "Failures"
   skills.installed:
     ko: "설치됨"
     ja: "インストール済み"
@@ -460,6 +464,14 @@ messages:
     ko: "설치 중..."
     ja: "インストール中..."
     en: "Installing..."
+  skills.lastRun:
+    ko: "마지막 실행"
+    ja: "最終実行"
+    en: "Last"
+  skills.nextRun:
+    ko: "다음 실행"
+    ja: "次回実行"
+    en: "Next"
   skills.installFailed:
     ko: "설치 실패: {error}"
     ja: "インストールに失敗しました: {error}"
@@ -508,6 +520,10 @@ messages:
     ko: "크론"
     ja: "Cron"
     en: "Cron"
+  skills.runAt:
+    ko: "실행 시각"
+    ja: "実行時刻"
+    en: "Run at"
   kanban.title:
     ko: "칸반"
     ja: "カンバン"

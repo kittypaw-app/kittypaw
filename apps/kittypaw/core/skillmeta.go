@@ -176,7 +176,7 @@ var SkillRegistry = []SkillMeta{
 	{Name: "Skill", Methods: []SkillMethodMeta{
 		{Name: "list", Signature: "Skill.list()"},
 		{Name: "run", Signature: "Skill.run(name[, params]) — execute an installed skill/package. Pass structured params declared by package.toml, e.g. Skill.run(\"weather-now\", {location:{label,lat,lon}})."},
-		{Name: "create", Signature: "Skill.create(name, desc, code, triggerType, schedule)"},
+		{Name: "create", Signature: "Skill.create(name, desc, code, triggerType, scheduleOrRunAt) — for triggerType \"schedule\", pass cron/every; for \"once\", pass a delay like \"2m\" or RFC3339 run_at."},
 		{Name: "disable", Signature: "Skill.disable(name)"},
 		{Name: "uninstall", Signature: "Skill.uninstall(name) — remove an installed package or user-created skill by exact id/name. Destructive; call only when the user explicitly asks to remove/uninstall/delete it."},
 		{Name: "rollback", Signature: "Skill.rollback(name)"},

@@ -145,6 +145,20 @@ func TestLocalWebModulesUseI18nKeys(t *testing.T) {
 	}
 }
 
+func TestSkillsGalleryRendersScheduleStatusFields(t *testing.T) {
+	src := readWebAssetForI18nTest(t, "web/skills.js")
+	for _, token := range []string{
+		"skill.next_run",
+		"skill.last_run",
+		"skill.failure_count",
+		"_skillScheduleMetaHTML",
+	} {
+		if !strings.Contains(src, token) {
+			t.Fatalf("web/skills.js missing schedule status token %s", token)
+		}
+	}
+}
+
 func TestLocalWebModulesAvoidGlobalRendererCollision(t *testing.T) {
 	chat := readWebAssetForI18nTest(t, "web/chat.js")
 	skills := readWebAssetForI18nTest(t, "web/skills.js")

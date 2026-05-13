@@ -147,9 +147,27 @@ const Skills = {
     html += '<div class="gallery-card-desc">' + esc(desc) + '</div>';
     html += '<div class="gallery-card-meta">';
     html += '<span>' + esc(skillsT('skills.skillType', null, 'skill')) + '</span>';
-    if (trigger) html += '<span>' + esc(trigger) + '</span>';
+    html += this._skillScheduleMetaHTML(skill);
     html += '</div></div>';
     return html;
+  },
+
+  _skillScheduleMetaHTML(skill) {
+    let html = '';
+    const trigger = skill.trigger || '';
+    if (trigger) html += '<span>' + esc(trigger) + '</span>';
+    if (skill.cron) html += '<span>' + esc(skillsT('skills.cron', null, 'Cron')) + ': ' + esc(skill.cron) + '</span>';
+    if (skill.run_at) html += '<span>' + esc(skillsT('skills.runAt', null, 'Run at')) + ': ' + esc(this._formatScheduleTime(skill.run_at)) + '</span>';
+    if (skill.next_run) html += '<span>' + esc(skillsT('skills.nextRun', null, 'Next')) + ': ' + esc(this._formatScheduleTime(skill.next_run)) + '</span>';
+    if (skill.last_run) html += '<span>' + esc(skillsT('skills.lastRun', null, 'Last')) + ': ' + esc(this._formatScheduleTime(skill.last_run)) + '</span>';
+    if (skill.failure_count > 0) html += '<span>' + esc(skillsT('skills.failures', null, 'Failures')) + ': ' + esc(String(skill.failure_count)) + '</span>';
+    return html;
+  },
+
+  _formatScheduleTime(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
   },
 
   _cardHTML(entry, installed) {
@@ -188,6 +206,11 @@ const Skills = {
     html += '<div class="gallery-detail-meta">';
     html += '<span class="gallery-type-badge">' + esc(skillsT('skills.skillType', null, 'skill')) + '</span>';
     if (skill.trigger) html += '<span>' + esc(skillsT('skills.trigger', null, 'Trigger')) + ': ' + esc(skill.trigger) + '</span>';
+    if (skill.cron) html += '<span>' + esc(skillsT('skills.cron', null, 'Cron')) + ': ' + esc(skill.cron) + '</span>';
+    if (skill.run_at) html += '<span>' + esc(skillsT('skills.runAt', null, 'Run at')) + ': ' + esc(this._formatScheduleTime(skill.run_at)) + '</span>';
+    if (skill.next_run) html += '<span>' + esc(skillsT('skills.nextRun', null, 'Next')) + ': ' + esc(this._formatScheduleTime(skill.next_run)) + '</span>';
+    if (skill.last_run) html += '<span>' + esc(skillsT('skills.lastRun', null, 'Last')) + ': ' + esc(this._formatScheduleTime(skill.last_run)) + '</span>';
+    if (skill.failure_count > 0) html += '<span>' + esc(skillsT('skills.failures', null, 'Failures')) + ': ' + esc(String(skill.failure_count)) + '</span>';
     html += '<span>v' + esc(String(skill.version || 1)) + '</span>';
     html += '</div>';
     if (skill.description) {
