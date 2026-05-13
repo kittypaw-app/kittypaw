@@ -16,6 +16,7 @@ type blockingDispatchProvider struct {
 	content string
 	started chan struct{}
 	release chan struct{}
+	done    chan error
 	once    sync.Once
 }
 
@@ -24,6 +25,7 @@ func newBlockingDispatchProvider(content string) *blockingDispatchProvider {
 		content: content,
 		started: make(chan struct{}),
 		release: make(chan struct{}),
+		done:    make(chan error, 1),
 	}
 }
 
@@ -33,6 +35,10 @@ func (p *blockingDispatchProvider) Generate(ctx context.Context, _ []core.LlmMes
 	case <-p.release:
 		return &llm.Response{Content: p.content}, nil
 	case <-ctx.Done():
+		select {
+		case p.done <- ctx.Err():
+		default:
+		}
 		return nil, ctx.Err()
 	}
 }
@@ -153,5 +159,58 @@ func TestDispatchLoop_ChannelRunTimeoutSendsFailureResponse(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for timeout failure response")
+	}
+}
+
+func TestRemoveAccountCancelsInFlightChannelWorker(t *testing.T) {
+	root := t.TempDir()
+	provider := newBlockingDispatchProvider("too late")
+	deps := buildAccountDeps(t, root, "alice", &core.Config{})
+	deps.Provider = provider
+	srv := New([]*AccountDeps{deps}, "test")
+	srv.channelTurnTimeout = -1
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv.spawner = NewChannelSpawner(ctx, srv.eventCh)
+	defer srv.spawner.StopAll()
+	telegram := newEmittingStub("telegram", "alice")
+	if err := srv.spawner.TrySpawn("alice", telegram, core.ChannelConfig{ChannelType: core.ChannelTelegram, Token: "alice-token"}); err != nil {
+		t.Fatalf("spawn telegram: %v", err)
+	}
+	go srv.dispatchLoop(ctx)
+
+	srv.eventCh <- dispatchTestEvent(t, core.EventTelegram, "alice", "alice-chat", "remove")
+	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider did not start")
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.RemoveAccount("alice")
+	}()
+
+	select {
+	case err := <-provider.done:
+		if err == nil {
+			t.Fatal("provider context error is nil, want cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveAccount did not cancel the in-flight channel worker")
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("RemoveAccount: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveAccount did not return after worker cancellation")
+	}
+	select {
+	case got := <-telegram.responses:
+		t.Fatalf("unexpected response after account removal: %+v", got)
+	case <-time.After(50 * time.Millisecond):
 	}
 }

@@ -110,6 +110,35 @@ func TestBrowserReadBackendRead(t *testing.T) {
 	}
 }
 
+func TestBrowserReadBackendSnapshotsOpenedTarget(t *testing.T) {
+	controller := &fakeBrowserReadController{}
+	backend, err := NewReadBackendWithBrowser(&core.WebConfig{ReadBackend: "browser"}, controller)
+	if err != nil {
+		t.Fatalf("NewReadBackendWithBrowser: %v", err)
+	}
+	if _, err := backend.Read(context.Background(), "https://example.com/rendered", ReadOptions{}); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(controller.calls) != 2 {
+		t.Fatalf("calls = %+v, want open and snapshot", controller.calls)
+	}
+	if controller.calls[1].Method != "snapshot" {
+		t.Fatalf("second call = %s, want snapshot", controller.calls[1].Method)
+	}
+	if len(controller.calls[1].Args) != 1 {
+		t.Fatalf("snapshot args = %+v, want target_id option", controller.calls[1].Args)
+	}
+	var opts struct {
+		TargetID string `json:"target_id"`
+	}
+	if err := json.Unmarshal(controller.calls[1].Args[0], &opts); err != nil {
+		t.Fatalf("decode snapshot opts: %v", err)
+	}
+	if opts.TargetID != "t1" {
+		t.Fatalf("snapshot target_id = %q, want opened target t1", opts.TargetID)
+	}
+}
+
 func TestAutoReadBackendFallsBackToFirecrawlWhenStaticWeak(t *testing.T) {
 	weakPage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

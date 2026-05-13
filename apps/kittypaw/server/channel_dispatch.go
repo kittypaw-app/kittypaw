@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jinto/kittypaw/channel"
@@ -14,6 +15,7 @@ import (
 const (
 	channelDispatchQueueSize      = 32
 	defaultChannelTurnTimeout     = 5 * time.Minute
+	channelWorkerStopTimeout      = 10 * time.Second
 	channelRunFailureResponse     = "처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 	channelQueueOverflowResponse  = "요청이 밀려 있습니다. 잠시 후 다시 시도해주세요."
 	channelDispatchWorkerScopeSep = "\x00"
@@ -29,7 +31,10 @@ type channelEventJob struct {
 }
 
 type channelEventWorker struct {
-	jobs chan channelEventJob
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+	jobs   chan channelEventJob
 }
 
 func (s *Server) enqueueChannelEvent(ctx context.Context, job channelEventJob) {
@@ -56,26 +61,36 @@ func (s *Server) channelWorker(ctx context.Context, key string) *channelEventWor
 	if worker := s.channelWorkers[key]; worker != nil {
 		return worker
 	}
-	worker := &channelEventWorker{jobs: make(chan channelEventJob, channelDispatchQueueSize)}
+	workerCtx, cancel := context.WithCancel(ctx)
+	worker := &channelEventWorker{
+		ctx:    workerCtx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+		jobs:   make(chan channelEventJob, channelDispatchQueueSize),
+	}
 	s.channelWorkers[key] = worker
-	go s.runChannelWorker(ctx, key, worker)
+	go s.runChannelWorker(key, worker)
 	return worker
 }
 
-func (s *Server) runChannelWorker(ctx context.Context, key string, worker *channelEventWorker) {
+func (s *Server) runChannelWorker(key string, worker *channelEventWorker) {
 	defer func() {
 		s.channelWorkersMu.Lock()
 		if s.channelWorkers[key] == worker {
 			delete(s.channelWorkers, key)
 		}
 		s.channelWorkersMu.Unlock()
+		close(worker.done)
 	}()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-worker.ctx.Done():
 			return
 		case job := <-worker.jobs:
-			s.processChannelEvent(ctx, key, job)
+			if worker.ctx.Err() != nil {
+				return
+			}
+			s.processChannelEvent(worker.ctx, key, job)
 		}
 	}
 }
@@ -89,6 +104,9 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 	}
 
 	response, runErr, panicked := s.runChannelSession(runCtx, job.session, job.event, job.runOpts)
+	if ctx.Err() != nil {
+		return
+	}
 	if panicked {
 		s.sendOrQueueChannelFailure(ctx, job, channelRunFailureResponse)
 		return
@@ -177,4 +195,36 @@ func (s *Server) channelTurnTimeoutDuration() time.Duration {
 
 func channelWorkerKey(event core.Event) string {
 	return fmt.Sprintf("%s%s%s", event.AccountID, channelDispatchWorkerScopeSep, event.Type)
+}
+
+func (s *Server) isAccountRemovalInProgress(accountID string) bool {
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+	return s.removingAccount != nil && s.removingAccount[accountID]
+}
+
+func (s *Server) stopChannelWorkersForAccount(accountID string) error {
+	prefix := accountID + channelDispatchWorkerScopeSep
+	s.channelWorkersMu.Lock()
+	workers := make([]*channelEventWorker, 0)
+	for key, worker := range s.channelWorkers {
+		if strings.HasPrefix(key, prefix) {
+			workers = append(workers, worker)
+		}
+	}
+	s.channelWorkersMu.Unlock()
+
+	for _, worker := range workers {
+		worker.cancel()
+	}
+	timer := time.NewTimer(channelWorkerStopTimeout)
+	defer timer.Stop()
+	for _, worker := range workers {
+		select {
+		case <-worker.done:
+		case <-timer.C:
+			return fmt.Errorf("timed out waiting for channel workers for account %q", accountID)
+		}
+	}
+	return nil
 }

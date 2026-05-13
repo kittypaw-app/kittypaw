@@ -643,6 +643,13 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				// Drop was already logged + counted by AccountRouter.
 				continue
 			}
+			if s.isAccountRemovalInProgress(event.AccountID) {
+				slog.Warn("channel event: account removal in progress, dropping event",
+					"type", event.Type,
+					"account", event.AccountID,
+				)
+				continue
+			}
 
 			// AC-T7: chat_id ownership check. Route() matched AccountID to a
 			// Session, but a compromised/leaked bot token could still inject

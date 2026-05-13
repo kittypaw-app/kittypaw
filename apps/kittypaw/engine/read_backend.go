@@ -193,9 +193,16 @@ func (b *BrowserReadBackend) Read(ctx context.Context, targetURL string, _ ReadO
 		result.Error = errText
 		return result, nil
 	}
+	targetID := browserToolTargetID(openResult)
+	if targetID == "" {
+		result.Error = "browser open missing target_id"
+		return result, nil
+	}
+	snapshotOpts, _ := json.Marshal(map[string]string{"target_id": targetID})
 	snapshotResult, err := b.Executor.Execute(ctx, core.SkillCall{
 		SkillName: "Browser",
 		Method:    "snapshot",
+		Args:      []json.RawMessage{snapshotOpts},
 	})
 	if err != nil {
 		result.Error = err.Error()
@@ -375,6 +382,16 @@ func browserToolError(raw string) string {
 		return ""
 	}
 	return strings.TrimSpace(resp.Error)
+}
+
+func browserToolTargetID(raw string) string {
+	var resp struct {
+		TargetID string `json:"target_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.TargetID)
 }
 
 func firstNonEmptyString(values ...string) string {

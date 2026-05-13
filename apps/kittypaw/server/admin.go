@@ -205,14 +205,24 @@ func (s *Server) RemoveAccount(id string) error {
 		s.accountMu.Unlock()
 		return fmt.Errorf("%w: %q", ErrAccountNotActive, id)
 	}
+	if s.removingAccount == nil {
+		s.removingAccount = make(map[string]bool)
+	}
+	s.removingAccount[id] = true
 
 	if s.spawner != nil {
 		if err := s.spawner.Reconcile(id, nil); err != nil {
 			slog.Error("account_remove_reconcile_failed",
 				"account", id, "error", err)
+			delete(s.removingAccount, id)
 			s.accountMu.Unlock()
 			return fmt.Errorf("drain channels: %w", err)
 		}
+	}
+	if err := s.stopChannelWorkersForAccount(id); err != nil {
+		delete(s.removingAccount, id)
+		s.accountMu.Unlock()
+		return fmt.Errorf("drain channel workers: %w", err)
 	}
 
 	td := s.accountDeps[id]
@@ -220,10 +230,6 @@ func (s *Server) RemoveAccount(id string) error {
 	if s.schedulers != nil {
 		scheduler = s.schedulers.Detach(id)
 	}
-	if s.removingAccount == nil {
-		s.removingAccount = make(map[string]bool)
-	}
-	s.removingAccount[id] = true
 	scrubLiveTeamSpaceMembership(s.accountList, id)
 	s.accounts.Remove(id)
 	for i, peer := range s.accountList {

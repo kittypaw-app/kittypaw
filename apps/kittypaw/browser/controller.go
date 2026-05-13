@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -332,11 +333,17 @@ func (c *Controller) tabs(ctx context.Context) ([]tabInfo, error) {
 	return tabs, nil
 }
 
-func (c *Controller) snapshot(ctx context.Context, _ map[string]any) (SnapshotResult, error) {
+func (c *Controller) snapshot(ctx context.Context, opts map[string]any) (SnapshotResult, error) {
 	if err := c.ensureStarted(ctx); err != nil {
 		return SnapshotResult{}, err
 	}
-	value, err := c.evaluateValue(ctx, snapshotScript)
+	targetID := targetIDFromOptions(opts)
+	if targetID == "" {
+		c.mu.Lock()
+		targetID = c.activeTargetID
+		c.mu.Unlock()
+	}
+	value, err := c.evaluateValueForTarget(ctx, targetID, snapshotScript)
 	if err != nil {
 		return SnapshotResult{}, err
 	}
@@ -348,9 +355,7 @@ func (c *Controller) snapshot(ctx context.Context, _ map[string]any) (SnapshotRe
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return SnapshotResult{}, err
 	}
-	c.mu.Lock()
-	snap.TargetID = c.activeTargetID
-	c.mu.Unlock()
+	snap.TargetID = targetID
 	snap.Text = truncateRunes(snap.Text, defaultTextLimit)
 	if len(snap.Elements) > defaultElementsLimit {
 		snap.Elements = snap.Elements[:defaultElementsLimit]
@@ -745,7 +750,11 @@ type runtimeEvalResponse struct {
 }
 
 func (c *Controller) evaluateValue(ctx context.Context, expression string) (any, error) {
-	sessionID, err := c.sessionForTarget(ctx, "")
+	return c.evaluateValueForTarget(ctx, "", expression)
+}
+
+func (c *Controller) evaluateValueForTarget(ctx context.Context, targetID, expression string) (any, error) {
+	sessionID, err := c.sessionForTarget(ctx, targetID)
 	if err != nil {
 		return nil, err
 	}
@@ -764,6 +773,18 @@ func (c *Controller) evaluateValue(ctx context.Context, expression string) (any,
 		return out.Result.Description, nil
 	}
 	return nil, nil
+}
+
+func targetIDFromOptions(opts map[string]any) string {
+	for _, key := range []string{"target_id", "targetId"} {
+		switch value := opts[key].(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 type elementCenter struct {
