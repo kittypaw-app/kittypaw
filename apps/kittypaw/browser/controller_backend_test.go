@@ -117,6 +117,80 @@ func TestControllerBackendEvaluateUsesRuntime(t *testing.T) {
 	}
 }
 
+func TestControllerBackendRefActionsUseSnapshotTarget(t *testing.T) {
+	conn := newFakeCDPConn()
+	c := NewController(ControllerOptions{Config: testBrowserConfig(), BaseDir: t.TempDir()})
+	c.client = newCDPClient(conn)
+	c.targets = map[string]string{
+		"target-active": "session-active",
+		"target-snap":   "session-snap",
+	}
+	c.activeTargetID = "target-active"
+	defer c.client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	snapshotDone := make(chan error, 1)
+	go func() {
+		_, err := c.snapshot(ctx, map[string]any{"target_id": "target-snap"})
+		snapshotDone <- err
+	}()
+
+	req := readCDPRequest(t, conn)
+	if req.Method != "Runtime.evaluate" || req.SessionID != "session-snap" {
+		t.Fatalf("snapshot request = %#v", req)
+	}
+	conn.reads <- []byte(`{"id":1,"result":{"result":{"type":"object","value":{"url":"https://example.com","title":"Example","text":"","elements":[{"role":"button","text":"Go","selector":"#go"}]}}}}`)
+	if err := <-snapshotDone; err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	clickDone := make(chan error, 1)
+	go func() {
+		_, err := c.click(ctx, "e1")
+		clickDone <- err
+	}()
+
+	req = readCDPRequest(t, conn)
+	if req.Method != "Runtime.evaluate" || req.SessionID != "session-snap" {
+		t.Fatalf("click point request = %#v", req)
+	}
+	conn.reads <- []byte(`{"id":2,"result":{"result":{"type":"object","value":{"x":10,"y":20}}}}`)
+
+	req = readCDPRequest(t, conn)
+	if req.Method != "Input.dispatchMouseEvent" || req.SessionID != "session-snap" {
+		t.Fatalf("click press request = %#v", req)
+	}
+	conn.reads <- []byte(`{"id":3,"result":{}}`)
+
+	req = readCDPRequest(t, conn)
+	if req.Method != "Input.dispatchMouseEvent" || req.SessionID != "session-snap" {
+		t.Fatalf("click release request = %#v", req)
+	}
+	conn.reads <- []byte(`{"id":4,"result":{}}`)
+
+	if err := <-clickDone; err != nil {
+		t.Fatalf("click: %v", err)
+	}
+
+	typeDone := make(chan error, 1)
+	go func() {
+		_, err := c.typeText(ctx, "e1", "hello")
+		typeDone <- err
+	}()
+
+	req = readCDPRequest(t, conn)
+	if req.Method != "Runtime.evaluate" || req.SessionID != "session-snap" {
+		t.Fatalf("type request = %#v", req)
+	}
+	conn.reads <- []byte(`{"id":5,"result":{"result":{"type":"object","value":{"success":true}}}}`)
+
+	if err := <-typeDone; err != nil {
+		t.Fatalf("typeText: %v", err)
+	}
+}
+
 func testBrowserConfig() core.BrowserConfig {
 	return core.BrowserConfig{Enabled: true, TimeoutSeconds: 1}
 }

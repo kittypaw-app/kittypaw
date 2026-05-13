@@ -12,10 +12,12 @@ import (
 
 // Staff holds the loaded identity data for one staff member.
 type Staff struct {
-	ID     string // staff directory name
-	Nick   string // display name from config
-	Soul   string // SOUL.md content
-	UserMD string // USER.md content, optional
+	ID            string   // staff directory name
+	Nick          string   // display name from config or meta.json
+	Soul          string   // SOUL.md content
+	UserMD        string   // USER.md content, optional
+	Model         string   // optional named model override
+	AllowedSkills []string // optional skill allowlist; empty means all skills
 }
 
 // PresetInfo describes a built-in staff identity preset.
@@ -105,6 +107,11 @@ func LoadStaff(base, name string) (*Staff, error) {
 
 	if userData, err := os.ReadFile(filepath.Join(staffDir, "USER.md")); err == nil {
 		staff.UserMD = string(userData)
+	}
+	if meta, err := ReadStaffMetaFile(base, name); err == nil {
+		staff.Nick = meta.DisplayName
+		staff.Model = meta.Model
+		staff.AllowedSkills = append([]string(nil), meta.AllowedSkills...)
 	}
 
 	return staff, nil

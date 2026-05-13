@@ -60,14 +60,15 @@ type Controller struct {
 	startMu   sync.Mutex
 	mu        sync.Mutex
 
-	chromePath     string
-	candidatePaths []string
-	proc           *chromeProcess
-	client         *cdpClient
-	browserVersion string
-	activeTargetID string
-	targets        map[string]string
-	elementRefs    map[string]string
+	chromePath          string
+	candidatePaths      []string
+	proc                *chromeProcess
+	client              *cdpClient
+	browserVersion      string
+	activeTargetID      string
+	targets             map[string]string
+	elementRefs         map[string]string
+	elementRefsTargetID string
 }
 
 func NewController(opts ControllerOptions) *Controller {
@@ -368,6 +369,7 @@ func (c *Controller) snapshot(ctx context.Context, opts map[string]any) (Snapsho
 	}
 	c.mu.Lock()
 	c.elementRefs = refs
+	c.elementRefsTargetID = targetID
 	c.mu.Unlock()
 	return snap, nil
 }
@@ -376,12 +378,12 @@ func (c *Controller) click(ctx context.Context, refOrSelector string) (map[strin
 	if err := c.ensureStarted(ctx); err != nil {
 		return nil, err
 	}
-	selector := c.resolveSelector(refOrSelector)
-	point, err := c.elementPoint(ctx, selector)
+	selector, targetID := c.resolveSelector(refOrSelector)
+	point, err := c.elementPoint(ctx, targetID, selector)
 	if err != nil {
 		return nil, err
 	}
-	sessionID, err := c.sessionForTarget(ctx, "")
+	sessionID, err := c.sessionForTarget(ctx, targetID)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +409,7 @@ func (c *Controller) typeText(ctx context.Context, refOrSelector, text string) (
 	if err := c.ensureStarted(ctx); err != nil {
 		return nil, err
 	}
-	selector := c.resolveSelector(refOrSelector)
+	selector, targetID := c.resolveSelector(refOrSelector)
 	text = truncateRunes(text, defaultTypeTextLimit)
 	selectorJSON, _ := json.Marshal(selector)
 	textJSON, _ := json.Marshal(text)
@@ -424,7 +426,7 @@ func (c *Controller) typeText(ctx context.Context, refOrSelector, text string) (
   el.dispatchEvent(new Event("change", {bubbles: true}));
   return {success: true};
 })()`, selectorJSON, textJSON, textJSON)
-	value, err := c.evaluateValue(ctx, script)
+	value, err := c.evaluateValueForTarget(ctx, targetID, script)
 	if err != nil {
 		return nil, err
 	}
@@ -534,6 +536,10 @@ func (c *Controller) close(ctx context.Context, targetID string) error {
 	if c.activeTargetID == targetID {
 		c.activeTargetID = ""
 	}
+	if c.elementRefsTargetID == targetID {
+		c.elementRefs = nil
+		c.elementRefsTargetID = ""
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -546,6 +552,8 @@ func (c *Controller) Close() error {
 	c.proc = nil
 	c.activeTargetID = ""
 	c.targets = nil
+	c.elementRefs = nil
+	c.elementRefsTargetID = ""
 	c.mu.Unlock()
 
 	var firstErr error
@@ -792,7 +800,7 @@ type elementCenter struct {
 	Y float64
 }
 
-func (c *Controller) elementPoint(ctx context.Context, selector string) (elementCenter, error) {
+func (c *Controller) elementPoint(ctx context.Context, targetID, selector string) (elementCenter, error) {
 	selectorJSON, _ := json.Marshal(selector)
 	script := fmt.Sprintf(`(() => {
   const el = document.querySelector(%s);
@@ -801,7 +809,7 @@ func (c *Controller) elementPoint(ctx context.Context, selector string) (element
   const rect = el.getBoundingClientRect();
   return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
 })()`, selectorJSON)
-	value, err := c.evaluateValue(ctx, script)
+	value, err := c.evaluateValueForTarget(ctx, targetID, script)
 	if err != nil {
 		return elementCenter{}, err
 	}
@@ -823,15 +831,15 @@ func (c *Controller) elementPoint(ctx context.Context, selector string) (element
 	return elementCenter{X: out.X, Y: out.Y}, nil
 }
 
-func (c *Controller) resolveSelector(refOrSelector string) string {
+func (c *Controller) resolveSelector(refOrSelector string) (string, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.elementRefs != nil {
 		if selector := c.elementRefs[refOrSelector]; selector != "" {
-			return selector
+			return selector, c.elementRefsTargetID
 		}
 	}
-	return refOrSelector
+	return refOrSelector, ""
 }
 
 func screenshotFormatArg(args []json.RawMessage) (string, error) {

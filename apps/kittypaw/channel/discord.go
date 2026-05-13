@@ -18,6 +18,7 @@ import (
 const (
 	discordGatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
 	discordAPIBase    = "https://discord.com/api/v10"
+	discordMaxMessage = 1900
 )
 
 // --- Discord Gateway DTOs ---
@@ -82,6 +83,8 @@ func NewDiscord(accountID, botToken string) *DiscordChannel {
 }
 
 func (d *DiscordChannel) Name() string { return "discord" }
+
+func (d *DiscordChannel) MaxResponseLength() int { return discordMaxMessage }
 
 // Start connects to the Discord Gateway and listens for MESSAGE_CREATE events.
 func (d *DiscordChannel) Start(ctx context.Context, eventCh chan<- core.Event) error {

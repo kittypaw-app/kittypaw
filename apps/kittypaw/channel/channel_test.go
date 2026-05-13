@@ -128,6 +128,23 @@ func TestFromConfigWebDefaultAddr(t *testing.T) {
 	}
 }
 
+func TestWebSocketChannelDocumentedAsDeprecated(t *testing.T) {
+	src, err := os.ReadFile("websocket.go")
+	if err != nil {
+		t.Fatalf("read websocket channel: %v", err)
+	}
+	body := string(src)
+	for _, token := range []string{
+		"Deprecated: use the server built-in /ws or /chat/ws endpoints instead.",
+		"legacy/test channel",
+		"does not implement the product WebSocket auth, heartbeat, turn_id, conversation_id, or permission flow",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("websocket channel missing deprecation token %q", token)
+		}
+	}
+}
+
 func TestFromConfigKakao(t *testing.T) {
 	ch, err := FromConfig("test-account", core.ChannelConfig{
 		ChannelType: core.ChannelKakaoTalk,
@@ -518,6 +535,47 @@ func TestResolveCallbackDuplicate(t *testing.T) {
 		}
 	default:
 		t.Error("expected value from first click")
+	}
+}
+
+func TestResolveCallbackRejectsDifferentRequester(t *testing.T) {
+	tc := NewTelegram("test-account", "fake-token")
+	reqID := "test-req-requester"
+	ch := make(chan bool, 1)
+	tc.pending.Store(reqID, telegramPendingConfirmation{
+		decision:    ch,
+		requesterID: "111",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tc.resolveCallback(ctx, &telegramCallbackQuery{
+		ID:   "cb-wrong",
+		From: &telegramUser{ID: 222},
+		Data: "a:" + reqID,
+	})
+	select {
+	case got := <-ch:
+		t.Fatalf("unexpected callback decision from different requester: %v", got)
+	default:
+	}
+	if _, ok := tc.pending.Load(reqID); !ok {
+		t.Fatal("pending confirmation was removed after a different requester clicked")
+	}
+
+	tc.resolveCallback(ctx, &telegramCallbackQuery{
+		ID:   "cb-right",
+		From: &telegramUser{ID: 111},
+		Data: "a:" + reqID,
+	})
+	select {
+	case ok := <-ch:
+		if !ok {
+			t.Fatal("expected approve from original requester")
+		}
+	default:
+		t.Fatal("expected callback decision from original requester")
 	}
 }
 

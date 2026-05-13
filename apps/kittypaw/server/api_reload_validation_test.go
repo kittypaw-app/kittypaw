@@ -37,14 +37,44 @@ func writeReloadConfig(t *testing.T, cfg core.Config) {
 // plus a pointer the caller can dereference to read the call count.
 func newReloadTestServer(t *testing.T, live *core.Config, peers []*core.Account) (*Server, *int32) {
 	t.Helper()
+	configDir, err := core.ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir: %v", err)
+	}
+	accountsRoot := filepath.Join(configDir, "accounts")
+	deps := make([]*AccountDeps, 0, len(peers)+1)
+	defaultID := DefaultAccountID
+	seenDefault := false
+	for _, peer := range peers {
+		if peer == nil {
+			continue
+		}
+		cfg := peer.Config
+		if cfg == nil {
+			cfg = &core.Config{}
+		}
+		id := peer.ID
+		if id == "" {
+			id = DefaultAccountID
+		}
+		if id == DefaultAccountID {
+			seenDefault = true
+		}
+		deps = append(deps, buildReloadAccountDeps(t, accountsRoot, id, cfg))
+	}
+	if len(deps) == 0 {
+		deps = append(deps, buildReloadAccountDeps(t, accountsRoot, DefaultAccountID, live))
+		seenDefault = true
+	}
+	if !seenDefault && len(deps) == 1 {
+		defaultID = deps[0].Account.ID
+	}
+
 	var callN int32
-	srv := &Server{
-		config:      live,
-		accountList: peers,
-		reloadReconcile: func(_ string, _ []core.ChannelConfig) error {
-			atomic.AddInt32(&callN, 1)
-			return nil
-		},
+	srv := NewWithServerConfig(deps, "test", core.TopLevelServerConfig{DefaultAccount: defaultID})
+	srv.reloadReconcile = func(_ string, _ []core.ChannelConfig) error {
+		atomic.AddInt32(&callN, 1)
+		return nil
 	}
 	return srv, &callN
 }
@@ -222,13 +252,13 @@ func TestHandleReload_SerializesWithAddAccount(t *testing.T) {
 
 	barrier := make(chan struct{})
 	started := make(chan struct{})
-	srv := &Server{
-		config: &cfg,
-		reloadReconcile: func(_ string, _ []core.ChannelConfig) error {
-			close(started)
-			<-barrier
-			return nil
-		},
+	srv, _ := newReloadTestServer(t, &cfg, []*core.Account{
+		{ID: DefaultAccountID, Config: &cfg},
+	})
+	srv.reloadReconcile = func(_ string, _ []core.ChannelConfig) error {
+		close(started)
+		<-barrier
+		return nil
 	}
 	ts := httptest.NewServer(http.HandlerFunc(srv.handleReload))
 	defer ts.Close()
@@ -321,16 +351,11 @@ func TestHandleReload_SingleNonDefaultAccount(t *testing.T) {
 	liveCfg := core.DefaultConfig()
 	liveCfg.LLM.APIKey = "old-key"
 	var gotReconcileAccount string
-	srv := &Server{
-		config:          &liveCfg,
-		accountRegistry: core.NewAccountRegistry(filepath.Join(root, "accounts"), "alice"),
-		accountList: []*core.Account{
-			{ID: "alice", BaseDir: accountDir, Config: &liveCfg},
-		},
-		reloadReconcile: func(accountID string, _ []core.ChannelConfig) error {
-			gotReconcileAccount = accountID
-			return nil
-		},
+	deps := buildReloadAccountDeps(t, filepath.Join(root, "accounts"), "alice", &liveCfg)
+	srv := NewWithServerConfig([]*AccountDeps{deps}, "test", core.TopLevelServerConfig{DefaultAccount: "alice"})
+	srv.reloadReconcile = func(accountID string, _ []core.ChannelConfig) error {
+		gotReconcileAccount = accountID
+		return nil
 	}
 
 	ts := httptest.NewServer(http.HandlerFunc(srv.handleReload))

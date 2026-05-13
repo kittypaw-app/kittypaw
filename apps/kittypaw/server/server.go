@@ -45,7 +45,8 @@ type Server struct {
 	channelWorkers     map[string]*channelEventWorker
 	channelTurnTimeout time.Duration
 	accountDeps        map[string]*AccountDeps // retained close-targets (Store+MCP) for RemoveAccount; populated on successful AddAccount
-	removingAccount    map[string]bool         // account IDs detached from routing but still draining scheduler/deps
+	removingAccountMu  sync.RWMutex
+	removingAccount    map[string]bool // account IDs detached from routing but still draining scheduler/deps
 	localAuth          *core.LocalAuthStore
 	webSessionKey      []byte
 	masterAPIKey       string
@@ -385,6 +386,8 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			r.Post("/llm", s.handleSettingsLLM)
 			r.Post("/telegram", s.handleSettingsTelegram)
 			r.Post("/telegram/chat-id", s.handleSettingsTelegramChatID)
+			r.Get("/staff-routes", s.handleSettingsStaffRoutes)
+			r.Post("/staff-routes", s.handleSettingsStaffRouteUpdate)
 			r.Get("/directories", s.handleSettingsDirectoriesBrowse)
 			r.Get("/workspaces", s.handleSettingsWorkspacesList)
 			r.Post("/workspaces", s.handleSettingsWorkspacesCreate)
@@ -452,6 +455,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Get("/conversations", s.handleConversationsList)
 				r.Post("/conversations", s.handleConversationsCreate)
 				r.Get("/conversations/{id}", s.handleConversationInfo)
+				r.Patch("/conversations/{id}", s.handleConversationUpdate)
 				r.Get("/conversations/{id}/messages", s.handleConversationMessages)
 
 				// Config
@@ -553,11 +557,31 @@ func (s *Server) getConfig() *core.Config {
 	return s.config
 }
 
+func (s *Server) defaultSession() *engine.Session {
+	if s.accounts != nil {
+		if sess := s.accounts.Session(s.defaultAccountID()); sess != nil {
+			return sess
+		}
+	}
+	return s.session
+}
+
+func (s *Server) defaultPackageManager() *core.PackageManager {
+	if td := s.accountDepsForID(s.defaultAccountID()); td != nil && td.PkgMgr != nil {
+		return td.PkgMgr
+	}
+	return s.pkgManager
+}
+
 // ProcessEvent runs a single event through the engine session and returns
 // the runner response. This is used by the channel dispatch loop to bridge
 // inbound channel messages to the runner engine.
 func (s *Server) ProcessEvent(ctx context.Context, event core.Event) (string, error) {
-	return s.session.Run(ctx, event, nil)
+	sess := s.defaultSession()
+	if sess == nil {
+		return "", fmt.Errorf("default session unavailable")
+	}
+	return sess.Run(ctx, event, nil)
 }
 
 // StartChannels creates the ChannelSpawner, reconciles each account's
@@ -607,8 +631,8 @@ func (s *Server) StartChannels(ctx context.Context) error {
 	return nil
 }
 
-// dispatchLoop reads events from the shared eventCh, routes them to the
-// account-scoped engine session, and returns responses via the spawner.
+// dispatchLoop reads events from the shared eventCh, routes chat events to an
+// account/source-scoped worker queue, and returns responses via the spawner.
 //
 // Events with an empty or unknown AccountID are dropped by the AccountRouter
 // (no default fallback) to avoid cross-account privacy leaks — see C1 in
@@ -672,6 +696,16 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				)
 				continue
 			}
+			if !core.UserBelongsToAccount(session.Config, payload.SessionID) {
+				s.accounts.RecordMismatch(event.AccountID)
+				slog.Warn("account_user_authorization_mismatch",
+					"account", event.AccountID,
+					"chat_id", payload.ChatID,
+					"session_id", payload.SessionID,
+					"type", event.Type,
+				)
+				continue
+			}
 
 			slog.Info("processing channel event",
 				"type", event.Type,
@@ -680,14 +714,15 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				"from", payload.FromName,
 			)
 
-			// Build RunOptions with Confirmer-based permission callback if available.
-			var runOpts *engine.RunOptions
+			// Build base RunOptions with Confirmer-based permission callback if available.
+			// Chat active-model overrides are folded by the worker after dequeue.
+			var baseRunOpts *engine.RunOptions
 			ch, chOK := s.spawner.GetChannel(event.AccountID, event.Type)
 			if chOK {
 				if confirmer, ok := ch.(channel.Confirmer); ok {
 					evType := string(event.Type)
 					chatID := payload.ChatID
-					runOpts = &engine.RunOptions{
+					baseRunOpts = &engine.RunOptions{
 						OnPermission: func(pCtx context.Context, desc, res string) (bool, error) {
 							s.logPermissionEvent("requested", evType, chatID, desc, res)
 
@@ -695,7 +730,13 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 							permCtx, cancel := context.WithTimeout(pCtx, timeout)
 							defer cancel()
 
-							ok, err := confirmer.AskConfirmation(permCtx, chatID, desc, res)
+							var ok bool
+							var err error
+							if requester, supported := ch.(channel.RequesterConfirmer); supported {
+								ok, err = requester.AskConfirmationForRequester(permCtx, chatID, payload.SessionID, desc, res)
+							} else {
+								ok, err = confirmer.AskConfirmation(permCtx, chatID, desc, res)
+							}
 							var decision string
 							switch {
 							case err != nil:
@@ -712,30 +753,40 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				}
 			}
 
-			// Chat-path /model override fallback: when the user has set
-			// `/model <id>` and this dispatched event has no explicit
-			// per-event ModelOverride, use the chat-set override. Schedule
-			// path (engine/schedule.go) does NOT call ApplyActiveModel and
-			// keeps its per-job model.
-			runOpts = session.ApplyActiveModel(runOpts)
-
 			s.enqueueChannelEvent(ctx, channelEventJob{
-				event:   event,
-				payload: payload,
-				session: session,
-				runOpts: runOpts,
-				ch:      ch,
-				chOK:    chOK,
+				event:       event,
+				payload:     payload,
+				session:     session,
+				baseRunOpts: baseRunOpts,
+				ch:          ch,
+				chOK:        chOK,
 			})
 		}
 	}
 }
 
 func sendChannelResponse(ctx context.Context, ch channel.Channel, chatID string, outbound core.OutboundResponse, replyToMessageID string) error {
+	if outbound.Image == nil {
+		if limit := responseTextLimit(ch); limit > 0 && len(outbound.Text) > limit {
+			for _, chunk := range core.SplitChunks(outbound.Text, limit) {
+				if err := ch.SendResponse(ctx, chatID, chunk, replyToMessageID); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
 	if rich, ok := ch.(channel.RichResponder); ok {
 		return rich.SendRichResponse(ctx, chatID, outbound, replyToMessageID)
 	}
 	return ch.SendResponse(ctx, chatID, outbound.Text, replyToMessageID)
+}
+
+func responseTextLimit(ch channel.Channel) int {
+	if limiter, ok := ch.(channel.ResponseLimiter); ok {
+		return limiter.MaxResponseLength()
+	}
+	return 0
 }
 
 // deliverTeamSpacePush routes an EventTeamSpacePush to the target account's channel
@@ -900,7 +951,7 @@ func (s *Server) retryPendingResponses(ctx context.Context) {
 					// Channel absent — do NOT drop. Leave in queue for next tick.
 					continue
 				}
-				if err := ch.SendResponse(ctx, p.ChatID, p.Response, ""); err != nil {
+				if err := sendChannelResponse(ctx, ch, p.ChatID, core.OutboundResponse{Text: p.Response}, ""); err != nil {
 					slog.Warn("retry: send failed",
 						"id", p.ID, "retry", p.RetryCount, "error", err)
 					if kept, rErr := s.store.IncrementResponseRetry(p.ID); rErr != nil {
@@ -964,8 +1015,8 @@ func (s *Server) ListenAndServe(addr string) error {
 		}
 
 		// Close MCP server connections (CommandTransport handles 5s → SIGTERM).
-		if s.session.McpRegistry != nil {
-			s.session.McpRegistry.Shutdown()
+		if sess := s.defaultSession(); sess != nil && sess.McpRegistry != nil {
+			sess.McpRegistry.Shutdown()
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

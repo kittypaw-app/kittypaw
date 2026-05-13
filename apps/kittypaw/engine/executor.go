@@ -108,6 +108,12 @@ func needsPermission(skillName, method string, cfg *core.Config) bool {
 func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, permFn PermissionCallback) (string, error) {
 	slog.Debug("resolving skill call", "skill", call.SkillName, "method", call.Method)
 
+	if staffID, allowed := staffAllowsSkill(ctx, call.SkillName); !allowed {
+		return jsonResult(map[string]any{
+			"error": fmt.Sprintf("%s.%s is not allowed for staff %s", call.SkillName, call.Method, staffID),
+		})
+	}
+
 	// Central permission gate — applies to ALL skills uniformly.
 	if needsPermission(call.SkillName, call.Method, s.Config) {
 		desc := fmt.Sprintf("%s.%s", call.SkillName, call.Method)
@@ -2467,7 +2473,7 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 		if err := json.Unmarshal(call.Args[0], &id); err != nil {
 			return jsonResult(map[string]any{"error": "invalid staff id argument"})
 		}
-		canonicalID, err := setConversationStaff(s.BaseDir, s.Store, id)
+		canonicalID, err := setConversationStaff(s.BaseDir, s.Store, ConversationIDFromContext(ctx), id)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}

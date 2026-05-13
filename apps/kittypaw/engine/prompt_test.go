@@ -108,6 +108,7 @@ func TestParseAtMention(t *testing.T) {
 		{"@bot hello", "bot", "hello", true},
 		{"@my-runner do something", "my-runner", "do something", true},
 		{"@agent_1", "agent_1", "", true},
+		{"@개발PM 일정 정리", "개발PM", "일정 정리", true},
 		{"hello @bot", "", "hello @bot", false},       // not at start
 		{"@", "", "@", false},                         // bare @
 		{"", "", "", false},                           // empty
@@ -122,6 +123,27 @@ func TestParseAtMention(t *testing.T) {
 			t.Errorf("ParseAtMention(%q) = (%q, %q, %v), want (%q, %q, %v)",
 				tt.text, id, rest, ok, tt.wantID, tt.wantRest, tt.wantMatch)
 		}
+	}
+}
+
+func TestBuildPrompt_StaffAllowedSkillsFiltersPromptTools(t *testing.T) {
+	staff := &core.Staff{
+		ID:            "reader",
+		Soul:          "Read only",
+		AllowedSkills: []string{"Memory"},
+	}
+	state := &core.ConversationState{SystemPrompt: "sys"}
+	msgs := BuildPrompt(state, "hi", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", staff, "", "", nil, "")
+	system := msgs[0].Content
+
+	if !strings.Contains(system, "Memory.") {
+		t.Fatalf("prompt should include allowed Memory skill:\n%s", system)
+	}
+	if strings.Contains(system, "File.") {
+		t.Fatalf("prompt should not include disallowed File skill:\n%s", system)
+	}
+	if strings.Contains(system, "Skill.run") {
+		t.Fatalf("prompt should not include Skill.run guidance when Skill is disallowed:\n%s", system)
 	}
 }
 

@@ -82,7 +82,7 @@ var slashCommandRegistry = []slashCommand{
 	},
 	{
 		Name:    "/staff",
-		Usage:   "/staff <current|list|show|use|hire|cancel>",
+		Usage:   "/staff <current|list|show|use|routes|route|hire|cancel>",
 		Summary: "staff 상태 조회 및 전환",
 		Risk:    "mixed",
 		History: true,
@@ -91,11 +91,13 @@ var slashCommandRegistry = []slashCommand{
 			"/staff list",
 			"/staff show <staff-id>",
 			"/staff use <staff-id>",
+			"/staff routes",
+			"/staff route <conversation-id> <staff-id>",
 			"/staff hire <역할>",
 			"/staff cancel",
 		},
-		Handler: func(_ context.Context, args []string, s *Session) slashCommandResult {
-			return slashCommandResult{Text: handleStaffCommand(args, s), RecordHistory: staffCommandRecordsHistory(args)}
+		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+			return slashCommandResult{Text: handleStaffCommand(ctx, args, s), RecordHistory: staffCommandRecordsHistory(args)}
 		},
 	},
 	{
@@ -322,7 +324,7 @@ func staffCommandRecordsHistory(args []string) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
-	case "current", "list", "show":
+	case "current", "list", "show", "routes":
 		return false
 	default:
 		return true
@@ -431,7 +433,7 @@ func handleSession(ctx context.Context, s *Session) string {
 	}
 
 	sb.WriteString("staff: ")
-	sb.WriteString(handleStaffCurrent(s))
+	sb.WriteString(handleStaffCurrent(ctx, s))
 	sb.WriteByte('\n')
 
 	summary, err := s.Store.ConversationSummaryForConversation(conversationID)
@@ -965,14 +967,14 @@ func formatModelInfo(current string, models []core.ModelConfig, s *Session) stri
 	return sb.String()
 }
 
-func handleStaffCommand(args []string, s *Session) string {
+func handleStaffCommand(ctx context.Context, args []string, s *Session) string {
 	if len(args) == 0 {
-		return handleStaffOverview(s)
+		return handleStaffOverview(ctx, s)
 	}
 	subcmd := strings.ToLower(strings.TrimSpace(args[0]))
 	switch subcmd {
 	case "current":
-		return handleStaffCurrent(s)
+		return handleStaffCurrent(ctx, s)
 	case "list":
 		return handleStaffList(s)
 	case "show":
@@ -984,7 +986,14 @@ func handleStaffCommand(args []string, s *Session) string {
 		if len(args) < 2 {
 			return "사용법: /staff use <staff-id>"
 		}
-		return handleStaffUse(strings.Join(args[1:], " "), s)
+		return handleStaffUse(ctx, strings.Join(args[1:], " "), s)
+	case "routes":
+		return handleStaffRoutes(s)
+	case "route":
+		if len(args) < 3 {
+			return "사용법: /staff route <conversation-id> <staff-id|clear>"
+		}
+		return handleStaffRoute(args[1], strings.Join(args[2:], " "), s)
 	case "hire":
 		if len(args) < 2 {
 			return "사용법: /staff hire <역할>"
@@ -994,20 +1003,20 @@ func handleStaffCommand(args []string, s *Session) string {
 		return handleStaffCancel(s)
 	default:
 		// Backward-compatible form: /staff <id> means /staff use <id>.
-		return handleStaffUse(strings.Join(args, " "), s)
+		return handleStaffUse(ctx, strings.Join(args, " "), s)
 	}
 }
 
-func handleStaffOverview(s *Session) string {
+func handleStaffOverview(ctx context.Context, s *Session) string {
 	var sb strings.Builder
-	sb.WriteString(handleStaffCurrent(s))
+	sb.WriteString(handleStaffCurrent(ctx, s))
 	sb.WriteString("\n\n")
 	sb.WriteString(handleStaffList(s))
-	sb.WriteString("\n\n명령어: /staff current | list | show <id> | use <id> | hire <역할> | cancel")
+	sb.WriteString("\n\n명령어: /staff current | list | show <id> | use <id> | routes | route <conversation-id> <id> | hire <역할> | cancel")
 	return sb.String()
 }
 
-func handleStaffCurrent(s *Session) string {
+func handleStaffCurrent(ctx context.Context, s *Session) string {
 	if s == nil || s.Config == nil {
 		return "현재 staff 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -1017,9 +1026,14 @@ func handleStaffCurrent(s *Session) string {
 		current = "default"
 	}
 	if s.Store != nil {
+		conversationID := commandConversationID(ctx, s)
+		base, _ := core.ResolveBaseDir(s.BaseDir)
+		if val, ok := conversationDefaultStaff(base, s.Store, conversationID); ok {
+			return fmt.Sprintf("current staff: %s (conversation:%s)", val, conversationID)
+		}
 		if val, ok, err := s.Store.ConversationStaff(); err == nil && ok && val != "" {
 			current = val
-			source = "conversation"
+			source = "legacy-account"
 		}
 	}
 	return fmt.Sprintf("current staff: %s (%s)", current, source)
@@ -1073,15 +1087,84 @@ func handleStaffShow(idOrAlias string, s *Session) string {
 		record.ID, displayName, record.Description, strings.Join(record.Aliases, ", "), yesNo(record.HasSoul))
 }
 
-func handleStaffUse(idOrAlias string, s *Session) string {
+func handleStaffUse(ctx context.Context, idOrAlias string, s *Session) string {
 	if s == nil || s.Store == nil {
 		return "staff 변경을 위한 저장소가 준비되지 않았습니다."
 	}
-	id, err := setConversationStaff(s.BaseDir, s.Store, idOrAlias)
+	conversationID := commandConversationID(ctx, s)
+	id, err := setConversationStaff(s.BaseDir, s.Store, conversationID, idOrAlias)
 	if err != nil {
 		return fmt.Sprintf("staff 변경 실패: %s", err)
 	}
-	return fmt.Sprintf("기본 staff를 %q로 변경했습니다.", id)
+	return fmt.Sprintf("이 대화(%s)의 기본 staff를 %q로 변경했습니다.", conversationID, id)
+}
+
+func handleStaffRoutes(s *Session) string {
+	if s == nil || s.Store == nil {
+		return "staff route 조회를 위한 저장소가 준비되지 않았습니다."
+	}
+	conversations, err := s.Store.ListConversations(50)
+	if err != nil {
+		return fmt.Sprintf("staff route 조회 실패: %s", err)
+	}
+	if len(conversations) == 0 {
+		return "staff routes: 없음"
+	}
+	var sb strings.Builder
+	sb.WriteString("staff routes:\n")
+	for _, conv := range conversations {
+		if conv.DefaultStaffID == "" && conv.SourceChannel == "" && conv.ChatID == "" && conv.SourceSessionID == "" {
+			continue
+		}
+		staffID := conv.DefaultStaffID
+		if staffID == "" {
+			staffID = "(default)"
+		}
+		fmt.Fprintf(&sb, "- %s -> %s", conv.ID, staffID)
+		var details []string
+		if conv.SourceChannel != "" {
+			details = append(details, "source="+conv.SourceChannel)
+		}
+		if conv.ChatID != "" {
+			details = append(details, "chat="+conv.ChatID)
+		}
+		if conv.SourceSessionID != "" {
+			details = append(details, "session="+conv.SourceSessionID)
+		}
+		if len(details) > 0 {
+			sb.WriteString(" (")
+			sb.WriteString(strings.Join(details, ", "))
+			sb.WriteString(")")
+		}
+		sb.WriteByte('\n')
+	}
+	out := strings.TrimRight(sb.String(), "\n")
+	if out == "staff routes:" {
+		return "staff routes: 없음"
+	}
+	return out
+}
+
+func handleStaffRoute(conversationID, idOrAlias string, s *Session) string {
+	if s == nil || s.Store == nil {
+		return "staff route 변경을 위한 저장소가 준비되지 않았습니다."
+	}
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return "사용법: /staff route <conversation-id> <staff-id|clear>"
+	}
+	switch strings.ToLower(strings.TrimSpace(idOrAlias)) {
+	case "", "clear", "none", "default":
+		if _, err := s.Store.SetConversationDefaultStaff(conversationID, ""); err != nil {
+			return fmt.Sprintf("staff route 변경 실패: %s", err)
+		}
+		return fmt.Sprintf("대화(%s)의 staff route를 기본값으로 되돌렸습니다.", conversationID)
+	}
+	id, err := setConversationStaff(s.BaseDir, s.Store, conversationID, idOrAlias)
+	if err != nil {
+		return fmt.Sprintf("staff route 변경 실패: %s", err)
+	}
+	return fmt.Sprintf("대화(%s)의 기본 staff를 %q로 변경했습니다.", conversationID, id)
 }
 
 func handleStaffHire(role string, s *Session) string {

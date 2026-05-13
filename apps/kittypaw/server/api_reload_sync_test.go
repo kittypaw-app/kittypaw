@@ -42,14 +42,14 @@ func TestHandleReload_WaitsForReconcile(t *testing.T) {
 	started := make(chan struct{})
 	var callN int32
 
-	srv := &Server{
-		config: &cfg,
-		reloadReconcile: func(_ string, _ []core.ChannelConfig) error {
-			atomic.AddInt32(&callN, 1)
-			close(started)
-			<-barrier
-			return nil
-		},
+	srv, _ := newReloadTestServer(t, &cfg, []*core.Account{
+		{ID: DefaultAccountID, Config: &cfg},
+	})
+	srv.reloadReconcile = func(_ string, _ []core.ChannelConfig) error {
+		atomic.AddInt32(&callN, 1)
+		close(started)
+		<-barrier
+		return nil
 	}
 	handler := http.HandlerFunc(srv.handleReload)
 	ts := httptest.NewServer(handler)

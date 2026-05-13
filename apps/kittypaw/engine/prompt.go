@@ -392,13 +392,20 @@ func BuildPrompt(
 		sb.WriteString("\n\n")
 	}
 
+	allowedSkills := []string(nil)
+	if staff != nil {
+		allowedSkills = staff.AllowedSkills
+	}
+
 	// 7. Available skills (dynamic)
-	sb.WriteString(buildSkillsSection(baseDir))
+	sb.WriteString(buildSkillsSection(baseDir, allowedSkills))
 	sb.WriteString("\n\n")
 
 	// 8. Skill creation guide
-	sb.WriteString(SkillCreationBlock)
-	sb.WriteString("\n\n")
+	if skillAllowedByList(allowedSkills, "Skill") {
+		sb.WriteString(SkillCreationBlock)
+		sb.WriteString("\n\n")
+	}
 
 	// 9. Memory guide
 	sb.WriteString(MemoryBlock)
@@ -456,24 +463,37 @@ func BuildPrompt(
 
 // buildSkillsSection generates the available skills documentation
 // from the canonical core.SkillRegistry, plus installed user skills and packages.
-func buildSkillsSection(baseDir string) string {
+func buildSkillsSection(baseDir string, allowed ...[]string) string {
+	var allowedSkills []string
+	if len(allowed) > 0 {
+		allowedSkills = allowed[0]
+	}
 	lines := []string{"## Available skill globals"}
 	for _, skill := range core.SkillRegistry {
+		if !skillAllowedByList(allowedSkills, skill.Name) {
+			continue
+		}
 		var sigs []string
 		for _, m := range skill.Methods {
 			sigs = append(sigs, m.Signature)
 		}
 		lines = append(lines, "- "+strings.Join(sigs, ", "))
 	}
-	lines = append(lines, "- Relative File paths are inside the configured workspace. Use `File.write(\"memo.txt\", content)` to write `<workspace>/memo.txt`; use absolute paths only when the user gives one.")
-	lines = append(lines, "- Prefer `File.edit(path, old_text, new_text)` for targeted file changes. It fails without changing the file unless `old_text` appears exactly once.")
-	lines = append(lines, "- For user image-generation requests, call Image.generate(prompt) first. Do not claim image generation is unavailable, missing, or unconfigured unless Image.generate returns an error.")
-	lines = append(lines, "- Image.generate guard: `const img = Image.generate(prompt); if (img.error || !img.url) return \"이미지 생성 실패: \"+(img.error || \"결과 URL이 비어 있어요\"); return \"이미지를 생성했어요.\\n\\n![generated image](\"+img.url+\")\";` Use `img.url`; `img.imageUrl` is only a compatibility alias.")
-	lines = append(lines, "- For user-attached images listed in the event as `Attachments`, call `Vision.analyzeAttachment(attachmentId, prompt)`; never invent or expose a channel file URL.")
+	if skillAllowedByList(allowedSkills, "File") {
+		lines = append(lines, "- Relative File paths are inside the configured workspace. Use `File.write(\"memo.txt\", content)` to write `<workspace>/memo.txt`; use absolute paths only when the user gives one.")
+		lines = append(lines, "- Prefer `File.edit(path, old_text, new_text)` for targeted file changes. It fails without changing the file unless `old_text` appears exactly once.")
+	}
+	if skillAllowedByList(allowedSkills, "Image") {
+		lines = append(lines, "- For user image-generation requests, call Image.generate(prompt) first. Do not claim image generation is unavailable, missing, or unconfigured unless Image.generate returns an error.")
+		lines = append(lines, "- Image.generate guard: `const img = Image.generate(prompt); if (img.error || !img.url) return \"이미지 생성 실패: \"+(img.error || \"결과 URL이 비어 있어요\"); return \"이미지를 생성했어요.\\n\\n![generated image](\"+img.url+\")\";` Use `img.url`; `img.imageUrl` is only a compatibility alias.")
+	}
+	if skillAllowedByList(allowedSkills, "Vision") {
+		lines = append(lines, "- For user-attached images listed in the event as `Attachments`, call `Vision.analyzeAttachment(attachmentId, prompt)`; never invent or expose a channel file URL.")
+	}
 	lines = append(lines, "- console.log(...args) — Log output (for debugging)")
 
 	// Append installed user skills + packages (callable via Skill.run).
-	if baseDir != "" {
+	if baseDir != "" && skillAllowedByList(allowedSkills, "Skill") {
 		var runnable []string
 
 		// User-created skills.
@@ -513,17 +533,19 @@ func buildSkillsSection(baseDir string) string {
 	// matches, the runner can search the public registry and offer the user
 	// to install a missing skill. Two-turn protocol so the user gets ONE
 	// LLM-level confirm + ONE system approve gate (not three asks).
-	lines = append(lines, "\n### Skill auto-discovery (when no installed skill matches)")
-	lines = append(lines, "Turn N (user's first ask): call Skill.search(\"keywords\") and weave a single "+
-		"contextual offer into the response per CapabilityBlock — \"참고로 ... 스킬이 있는데 "+
-		"설치를 도와드릴까요?\". Do NOT call installFromRegistry yet.")
-	lines = append(lines, "Turn N+1 (user agrees: 네/yes/설치/install/...): in ONE JS block, "+
-		"(1) re-call Skill.search(\"<same keyword>\") to get the precise registry id (do NOT "+
-		"guess the id from the skill name — names get translated, ids do not), "+
-		"(2) call Skill.installFromRegistry(sk.results[0].id), "+
-		"(3) on success call Skill.run(sk.results[0].id) and return its .output. "+
-		"Do NOT echo the skill description back to the user. Do NOT ask \"설치하시겠어요?\" a "+
-		"second time — the prior turn's suffix was the only LLM-level confirm the user should see.")
+	if skillAllowedByList(allowedSkills, "Skill") {
+		lines = append(lines, "\n### Skill auto-discovery (when no installed skill matches)")
+		lines = append(lines, "Turn N (user's first ask): call Skill.search(\"keywords\") and weave a single "+
+			"contextual offer into the response per CapabilityBlock — \"참고로 ... 스킬이 있는데 "+
+			"설치를 도와드릴까요?\". Do NOT call installFromRegistry yet.")
+		lines = append(lines, "Turn N+1 (user agrees: 네/yes/설치/install/...): in ONE JS block, "+
+			"(1) re-call Skill.search(\"<same keyword>\") to get the precise registry id (do NOT "+
+			"guess the id from the skill name — names get translated, ids do not), "+
+			"(2) call Skill.installFromRegistry(sk.results[0].id), "+
+			"(3) on success call Skill.run(sk.results[0].id) and return its .output. "+
+			"Do NOT echo the skill description back to the user. Do NOT ask \"설치하시겠어요?\" a "+
+			"second time — the prior turn's suffix was the only LLM-level confirm the user should see.")
+	}
 
 	return strings.Join(lines, "\n")
 }
@@ -624,8 +646,8 @@ func sanitizeMCPField(s string, maxLen int) string {
 	return s
 }
 
-// ParseAtMention extracts @staff_id from the start of user text.
-// Returns (staffID, remainingText, matched).
+// ParseAtMention extracts @staff or @alias from the start of user text.
+// Returns (staffRef, remainingText, matched).
 func ParseAtMention(text string) (string, string, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "@") {
@@ -644,18 +666,17 @@ func ParseAtMention(text string) (string, string, bool) {
 		idEnd = len(rest)
 	}
 
-	staffID := rest[:idEnd]
-	if staffID == "" {
+	staffRef := rest[:idEnd]
+	if staffRef == "" {
 		return "", text, false
 	}
 
-	// Validate: alphanumeric + hyphen/underscore only
-	for _, r := range staffID {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+	for _, r := range staffRef {
+		if r == '@' || r == '/' || r == '\\' || r < 0x20 {
 			return "", text, false
 		}
 	}
 
 	remaining := strings.TrimSpace(rest[idEnd:])
-	return staffID, remaining, true
+	return staffRef, remaining, true
 }

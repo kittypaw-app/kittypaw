@@ -31,7 +31,7 @@ func (s *Server) requireProjectsAPIAccess(next http.Handler) http.Handler {
 			return
 		}
 
-		ctxValue := projectsRequestContext{Store: s.store, Session: s.session}
+		ctxValue := projectsRequestContext{Store: s.store, Session: s.defaultSession()}
 		if required {
 			acct, acctErr := s.requestAccount(r)
 			if acctErr == nil {
@@ -65,7 +65,7 @@ func (s *Server) projectsSession(r *http.Request) *engine.Session {
 	if ctxValue, ok := r.Context().Value(projectsStoreContextKey{}).(projectsRequestContext); ok && ctxValue.Session != nil {
 		return ctxValue.Session
 	}
-	return s.session
+	return s.defaultSession()
 }
 
 func (s *Server) handleProjectsList(w http.ResponseWriter, r *http.Request) {
@@ -623,7 +623,7 @@ func (s *Server) refreshProjectFileRoot(r *http.Request, project *store.Project)
 	if project == nil {
 		return
 	}
-	sess := s.session
+	sess := s.defaultSession()
 	live := s.liveIndexer
 	if required, err := s.apiAuthRequired(); err == nil && required {
 		if acct, acctErr := s.requestAccount(r); acctErr == nil {

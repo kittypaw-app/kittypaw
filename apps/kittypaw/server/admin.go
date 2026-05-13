@@ -61,7 +61,7 @@ func (s *Server) AddAccount(t *core.Account) error {
 	if existing := s.accounts.Session(t.ID); existing != nil {
 		return fmt.Errorf("%w: %q", ErrAccountAlreadyActive, t.ID)
 	}
-	if s.removingAccount != nil && s.removingAccount[t.ID] {
+	if s.isAccountRemovalInProgress(t.ID) {
 		return fmt.Errorf("%w: %q", ErrAccountAlreadyActive, t.ID)
 	}
 
@@ -190,10 +190,10 @@ func waitSchedulers(schedulers []*engine.Scheduler) {
 // Caller contract: ID must be a live account — unknown IDs return
 // ErrAccountNotActive so HTTP callers can respond 404 without retry.
 //
-// If the channel drain fails, RemoveAccount aborts BEFORE touching any
-// registry — the account stays runnable so the admin can retry after
-// investigating (AC-RM5). Reconcile is idempotent, so a subsequent call
-// picks up where the first left off.
+// If worker drain fails, RemoveAccount aborts before stopping channel
+// pollers or touching any registry — the account stays runnable so the admin
+// can retry after investigating (AC-RM5). Reconcile is idempotent, so a
+// subsequent call picks up where the first left off.
 func (s *Server) RemoveAccount(id string) error {
 	if err := core.ValidateAccountID(id); err != nil {
 		return err
@@ -205,24 +205,21 @@ func (s *Server) RemoveAccount(id string) error {
 		s.accountMu.Unlock()
 		return fmt.Errorf("%w: %q", ErrAccountNotActive, id)
 	}
-	if s.removingAccount == nil {
-		s.removingAccount = make(map[string]bool)
-	}
-	s.removingAccount[id] = true
+	s.setAccountRemovalInProgress(id, true)
 
+	if err := s.stopChannelWorkersForAccount(id); err != nil {
+		s.setAccountRemovalInProgress(id, false)
+		s.accountMu.Unlock()
+		return fmt.Errorf("drain channel workers: %w", err)
+	}
 	if s.spawner != nil {
 		if err := s.spawner.Reconcile(id, nil); err != nil {
 			slog.Error("account_remove_reconcile_failed",
 				"account", id, "error", err)
-			delete(s.removingAccount, id)
+			s.setAccountRemovalInProgress(id, false)
 			s.accountMu.Unlock()
 			return fmt.Errorf("drain channels: %w", err)
 		}
-	}
-	if err := s.stopChannelWorkersForAccount(id); err != nil {
-		delete(s.removingAccount, id)
-		s.accountMu.Unlock()
-		return fmt.Errorf("drain channel workers: %w", err)
 	}
 
 	td := s.accountDeps[id]
@@ -252,9 +249,7 @@ func (s *Server) RemoveAccount(id string) error {
 				"account", id, "error", err)
 		}
 	}
-	s.accountMu.Lock()
-	delete(s.removingAccount, id)
-	s.accountMu.Unlock()
+	s.setAccountRemovalInProgress(id, false)
 
 	slog.Info("account_deactivated", "account", id)
 	return nil

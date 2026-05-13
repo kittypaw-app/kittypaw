@@ -38,14 +38,14 @@ func TestAutoEntryNoRace(t *testing.T) {
 	writeConfigForTest(t, accountCfgDir, &cfg)
 
 	var reconciled atomic.Int64
-	srv := &Server{
-		config: &cfg,
-		reloadReconcile: func(_ string, _ []core.ChannelConfig) error {
-			// Bump the counter from inside Reconcile — the CLI path relies on
-			// this write being observable the moment Reload returns.
-			reconciled.Add(1)
-			return nil
-		},
+	srv, _ := newReloadTestServer(t, &cfg, []*core.Account{
+		{ID: DefaultAccountID, Config: &cfg},
+	})
+	srv.reloadReconcile = func(_ string, _ []core.ChannelConfig) error {
+		// Bump the counter from inside Reconcile — the CLI path relies on
+		// this write being observable the moment Reload returns.
+		reconciled.Add(1)
+		return nil
 	}
 	ts := httptest.NewServer(http.HandlerFunc(srv.handleReload))
 	defer ts.Close()

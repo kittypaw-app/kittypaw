@@ -76,6 +76,7 @@ type ConversationTurn struct {
 	Code           string      `json:"code,omitempty"`
 	Result         string      `json:"result,omitempty"`
 	ToolTraces     []ToolTrace `json:"tool_traces,omitempty"`
+	StaffID        string      `json:"staff_id,omitempty"`
 	Channel        string      `json:"channel,omitempty"`
 	ChannelUserID  string      `json:"channel_user_id,omitempty"`
 	ChatID         string      `json:"chat_id,omitempty"`

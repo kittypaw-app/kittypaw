@@ -16,7 +16,10 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
-const slackAPI = "https://slack.com/api/"
+const (
+	slackAPI              = "https://slack.com/api/"
+	slackMaxResponseChunk = 39000
+)
 
 // --- Slack API DTOs ---
 
@@ -66,6 +69,8 @@ func NewSlack(accountID, botToken, appToken string) *SlackChannel {
 }
 
 func (s *SlackChannel) Name() string { return "slack" }
+
+func (s *SlackChannel) MaxResponseLength() int { return slackMaxResponseChunk }
 
 // Start connects to Slack via Socket Mode and listens for message events.
 func (s *SlackChannel) Start(ctx context.Context, eventCh chan<- core.Event) error {

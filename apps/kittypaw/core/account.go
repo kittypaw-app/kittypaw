@@ -271,6 +271,26 @@ func ChatBelongsToAccount(cfg *Config, chatID string) bool {
 	return false
 }
 
+// UserBelongsToAccount reports whether userID is allowed to act within the
+// account. An account with no AllowedUserIDs configured is permissive for
+// backwards compatibility and one-to-one bot deployments.
+func UserBelongsToAccount(cfg *Config, userID string) bool {
+	allowed := cfgAllowedUserIDs(cfg)
+	if len(allowed) == 0 {
+		return true
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	for _, owned := range allowed {
+		if strings.TrimSpace(owned) == userID {
+			return true
+		}
+	}
+	return false
+}
+
 func cfgAllowedChatIDs(cfg *Config) []string {
 	if cfg == nil {
 		return nil
@@ -278,6 +298,17 @@ func cfgAllowedChatIDs(cfg *Config) []string {
 	out := append([]string(nil), cfg.AllowedChatIDs...)
 	for _, ch := range cfg.Channels {
 		out = append(out, ch.AllowedChatIDs...)
+	}
+	return out
+}
+
+func cfgAllowedUserIDs(cfg *Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	out := append([]string(nil), cfg.AllowedUserIDs...)
+	for _, ch := range cfg.Channels {
+		out = append(out, ch.AllowedUserIDs...)
 	}
 	return out
 }

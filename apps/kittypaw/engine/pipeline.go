@@ -906,7 +906,7 @@ func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *Session
 	if !accept {
 		return "알겠습니다. 현재 staff를 유지합니다.", nil
 	}
-	if _, err := setConversationStaff(sess.BaseDir, sess.Store, staffID); err != nil {
+	if _, err := setConversationStaff(sess.BaseDir, sess.Store, convKey, staffID); err != nil {
 		return fmt.Sprintf("staff 전환 실패: %s", err), nil
 	}
 	return fmt.Sprintf("이 대화에서 %s staff를 사용합니다.", staffID), nil

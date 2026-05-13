@@ -12,7 +12,7 @@ import (
 
 // GET /api/v1/staff - list staff with preset status.
 func (s *Server) handleStaffList(w http.ResponseWriter, _ *http.Request) {
-	base, err := core.ResolveBaseDir(s.session.BaseDir)
+	base, err := core.ResolveBaseDir(s.defaultSession().BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -74,7 +74,7 @@ func (s *Server) handleStaffCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	base, err := core.ResolveBaseDir(s.session.BaseDir)
+	base, err := core.ResolveBaseDir(s.defaultSession().BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleStaffActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	base, err := core.ResolveBaseDir(s.session.BaseDir)
+	base, err := core.ResolveBaseDir(s.defaultSession().BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

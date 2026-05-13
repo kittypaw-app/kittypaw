@@ -30,8 +30,53 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 32 {
-		t.Fatalf("expected 32 migrations, got %d", count)
+	if count != 33 {
+		t.Fatalf("expected 33 migrations, got %d", count)
+	}
+}
+
+func TestConversationDefaultStaffAndTurnAudit(t *testing.T) {
+	st := openTestStore(t)
+	conv, err := st.CreateConversation(CreateConversationRequest{
+		ScopeType: "general",
+		ScopeID:   "staff-route",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	updated, err := st.SetConversationDefaultStaff(conv.ID, "dev-pm")
+	if err != nil {
+		t.Fatalf("SetConversationDefaultStaff: %v", err)
+	}
+	if updated.DefaultStaffID != "dev-pm" {
+		t.Fatalf("DefaultStaffID = %q, want dev-pm", updated.DefaultStaffID)
+	}
+
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: conv.ID,
+		Role:           core.RoleAssistant,
+		Content:        "handled by dev pm",
+		StaffID:        "dev-pm",
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("AddConversationTurn: %v", err)
+	}
+
+	turns, err := st.ListConversationTurnsForConversation(conv.ID, 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForConversation: %v", err)
+	}
+	if len(turns) != 1 || turns[0].StaffID != "dev-pm" {
+		t.Fatalf("turns = %+v, want assistant staff audit dev-pm", turns)
+	}
+
+	state, err := st.LoadConversationStateForChat(conv.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationStateForChat: %v", err)
+	}
+	if len(state.Turns) != 1 || state.Turns[0].StaffID != "dev-pm" {
+		t.Fatalf("state turns = %+v, want staff audit dev-pm", state.Turns)
 	}
 }
 

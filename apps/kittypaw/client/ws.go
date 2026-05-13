@@ -25,8 +25,9 @@ var ErrServerSide = errors.New("server error")
 // emits a single Done frame per turn — token-level streaming was
 // removed in Phase 13.3 (no consumer was using it).
 type ChatOptions struct {
-	OnDone  func(fullText string, tokensUsed *int64)
-	OnError func(message string)
+	ConversationID string
+	OnDone         func(fullText string, tokensUsed *int64)
+	OnError        func(message string)
 }
 
 // ChatSession wraps a persistent WebSocket connection for multi-turn chat.
@@ -78,7 +79,12 @@ func (cs *ChatSession) Send(text string, opts ChatOptions) error {
 // first reaches the LLM, subsequent retries wait on its result. Empty
 // turnID is allowed for callers who explicitly opt out of idempotency.
 func (cs *ChatSession) SendTurn(text string, turnID string, opts ChatOptions) error {
-	chatMsg := core.WsClientMsg{Type: core.WsMsgChat, Text: text, TurnID: turnID}
+	chatMsg := core.WsClientMsg{
+		Type:           core.WsMsgChat,
+		Text:           text,
+		TurnID:         turnID,
+		ConversationID: opts.ConversationID,
+	}
 	data, err := json.Marshal(chatMsg)
 	if err != nil {
 		return fmt.Errorf("marshal chat msg: %w", err)

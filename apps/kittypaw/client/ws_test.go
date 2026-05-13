@@ -142,6 +142,53 @@ func TestDialChatUnauthorizedHasRestartGuidance(t *testing.T) {
 	}
 }
 
+func TestSendTurnIncludesConversationID(t *testing.T) {
+	msgCh := make(chan core.WsClientMsg, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx := r.Context()
+
+		sendMsg(ctx, conn, core.NewSessionMsg("s"))
+		_, raw, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		var msg core.WsClientMsg
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Errorf("unmarshal client msg: %v", err)
+			return
+		}
+		msgCh <- msg
+		sendMsg(ctx, conn, core.NewDoneMsgForTurn("turn-1", "ok", nil))
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cs, err := DialChat(ctx, wsURL, "")
+	if err != nil {
+		t.Fatalf("DialChat: %v", err)
+	}
+	defer cs.Close()
+	err = cs.SendTurn("hi", "turn-1", ChatOptions{ConversationID: "project:alpha"})
+	if err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	got := <-msgCh
+	if got.ConversationID != "project:alpha" {
+		t.Fatalf("ConversationID = %q, want project:alpha", got.ConversationID)
+	}
+	if got.TurnID != "turn-1" {
+		t.Fatalf("TurnID = %q, want turn-1", got.TurnID)
+	}
+}
+
 func sendMsg(ctx context.Context, conn *websocket.Conn, msg core.WsServerMsg) {
 	data, _ := json.Marshal(msg)
 	conn.Write(ctx, websocket.MessageText, data)

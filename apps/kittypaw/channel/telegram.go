@@ -165,6 +165,11 @@ type telegramFile struct {
 
 // --- TelegramChannel ---
 
+type telegramPendingConfirmation struct {
+	decision    chan bool
+	requesterID string
+}
+
 // TelegramChannel implements Channel and Confirmer using the Telegram Bot API.
 // It uses long polling via getUpdates and raw HTTP (no SDK).
 type TelegramChannel struct {
@@ -175,7 +180,7 @@ type TelegramChannel struct {
 	chatID    int64 // last chat_id for responses
 	offset    int64 // next update_id to request
 	mu        sync.Mutex
-	pending   sync.Map // requestID → chan bool (for permission dialog responses)
+	pending   sync.Map // requestID -> telegramPendingConfirmation
 
 	// typing indicator state — typingCancels[chatID] cancels the in-flight
 	// typingLoop for that chat. Started at message-receive (Start loop) and
@@ -200,6 +205,8 @@ func NewTelegram(accountID, botToken string) *TelegramChannel {
 }
 
 func (t *TelegramChannel) Name() string { return "telegram" }
+
+func (t *TelegramChannel) MaxResponseLength() int { return telegramMaxChunk }
 
 // LastChatID reports the most recent Telegram chat_id observed by this
 // channel. Setup/account pairing uses this when the daemon is already polling
@@ -910,9 +917,16 @@ func (t *TelegramChannel) getFilePath(ctx context.Context, fileID string) (strin
 // until the user clicks one or ctx expires. The timeout is controlled by the
 // caller via context.WithTimeout — this method only listens to ctx.Done().
 func (t *TelegramChannel) AskConfirmation(ctx context.Context, chatID, description, resource string) (bool, error) {
+	return t.AskConfirmationForRequester(ctx, chatID, "", description, resource)
+}
+
+func (t *TelegramChannel) AskConfirmationForRequester(ctx context.Context, chatID, requesterID, description, resource string) (bool, error) {
 	reqID := uuid.New().String()
 	ch := make(chan bool, 1)
-	t.pending.Store(reqID, ch)
+	t.pending.Store(reqID, telegramPendingConfirmation{
+		decision:    ch,
+		requesterID: strings.TrimSpace(requesterID),
+	})
 	defer t.pending.Delete(reqID)
 
 	chatIDInt, err := strconv.ParseInt(chatID, 10, 64)
@@ -934,11 +948,6 @@ func (t *TelegramChannel) AskConfirmation(ctx context.Context, chatID, descripti
 
 // resolveCallback handles a callback_query by looking up the requestID
 // in the pending map and sending the approval/denial to the waiting goroutine.
-//
-// NOTE: Currently does not verify query.From against the original requester.
-// This is acceptable for personal-runner 1:1 chats (design assumption).
-// If group-chat support is added, verify query.From.ID matches the requester
-// to prevent unauthorized approvals.
 func (t *TelegramChannel) resolveCallback(ctx context.Context, query *telegramCallbackQuery) {
 	// Always acknowledge the callback to remove the loading spinner.
 	t.answerCallbackQuery(ctx, query.ID)
@@ -953,20 +962,61 @@ func (t *TelegramChannel) resolveCallback(ctx context.Context, query *telegramCa
 	prefix := data[0]
 	reqID := data[2:]
 
-	val, ok := t.pending.LoadAndDelete(reqID)
+	val, ok := t.pending.Load(reqID)
 	if !ok {
 		// Stale or duplicate callback — the request already resolved or timed out.
 		slog.Debug("telegram: no pending permission for callback", "req_id", reqID)
 		return
 	}
+	pending, ok := telegramPendingFromValue(val)
+	if !ok {
+		slog.Warn("telegram: invalid pending permission entry", "req_id", reqID)
+		t.pending.Delete(reqID)
+		return
+	}
+	if !telegramCallbackRequesterMatches(pending.requesterID, query.From) {
+		slog.Warn("telegram: ignoring permission callback from non-requester", "req_id", reqID)
+		return
+	}
+	val, ok = t.pending.LoadAndDelete(reqID)
+	if !ok {
+		slog.Debug("telegram: no pending permission for callback", "req_id", reqID)
+		return
+	}
+	pending, ok = telegramPendingFromValue(val)
+	if !ok {
+		slog.Warn("telegram: invalid pending permission entry", "req_id", reqID)
+		return
+	}
 
-	ch := val.(chan bool)
 	switch prefix {
 	case 'a':
-		ch <- true
+		pending.decision <- true
 	default:
-		ch <- false
+		pending.decision <- false
 	}
+}
+
+func telegramPendingFromValue(val any) (telegramPendingConfirmation, bool) {
+	switch pending := val.(type) {
+	case telegramPendingConfirmation:
+		return pending, pending.decision != nil
+	case chan bool:
+		return telegramPendingConfirmation{decision: pending}, pending != nil
+	default:
+		return telegramPendingConfirmation{}, false
+	}
+}
+
+func telegramCallbackRequesterMatches(requesterID string, from *telegramUser) bool {
+	requesterID = strings.TrimSpace(requesterID)
+	if requesterID == "" {
+		return true
+	}
+	if from == nil || from.ID == 0 {
+		return false
+	}
+	return strconv.FormatInt(from.ID, 10) == requesterID
 }
 
 // sendInlineKeyboard sends a message with an inline keyboard for permission approval.

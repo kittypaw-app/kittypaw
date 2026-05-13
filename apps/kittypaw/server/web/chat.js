@@ -13,6 +13,7 @@ const Chat = {
   inputEl: null,
   sessionId: null,
   conversationID: '',
+  pendingTurn: null,
   currentBubble: null,
   reconnectAttempts: 0,
   maxReconnectAttempts: 10,
@@ -82,8 +83,10 @@ const Chat = {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.currentBubble = null;
-    this.busy = false;
+    if (!this.pendingTurn) {
+      this.currentBubble = null;
+      this.busy = false;
+    }
     this.permissionQueue = [];
     this.permissionActive = false;
 
@@ -101,7 +104,7 @@ const Chat = {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this._setStatus('connected', chatT('chat.connected', null, 'Connected'));
-      this.inputEl.disabled = false;
+      this.inputEl.disabled = !!this.pendingTurn;
     };
 
     this.ws.onmessage = (evt) => {
@@ -113,6 +116,7 @@ const Chat = {
     this.ws.onclose = () => {
       this.inputEl.disabled = true;
       this.sessionId = null;
+      if (this.pendingTurn) this.pendingTurn.sent = false;
       this._setStatus('disconnected', chatT('chat.disconnected', null, 'Disconnected'));
       this._scheduleReconnect();
     };
@@ -126,21 +130,26 @@ const Chat = {
     switch (msg.type) {
       case 'session':
         this.sessionId = msg.id;
+        this._sendPendingTurn();
         break;
 
       case 'done':
+        if (this.pendingTurn && msg.turn_id && msg.turn_id !== this.pendingTurn.id) return;
         if (this.currentBubble) {
           this._renderAssistantDone(this.currentBubble, msg);
           this.currentBubble.classList.remove('streaming');
           this.currentBubble = null;
           this._scrollToBottom();
         }
+        this.pendingTurn = null;
         this.busy = false;
         this.inputEl.disabled = false;
         this.inputEl.focus();
         break;
 
       case 'error':
+        if (this.pendingTurn && msg.turn_id && msg.turn_id !== this.pendingTurn.id) return;
+        this.pendingTurn = null;
         this._addSystemBubble(msg.message, 'error');
         this.busy = false;
         this.inputEl.disabled = false;
@@ -164,7 +173,49 @@ const Chat = {
     this._autoResize();
     this.inputEl.disabled = true;
 
-    this.ws.send(JSON.stringify({ type: 'chat', text, conversation_id: this.conversationID }));
+    this.pendingTurn = {
+      id: this._newTurnID(),
+      text,
+      conversationID: this.conversationID,
+      sent: false,
+    };
+    this._sendPendingTurn();
+  },
+
+  _sendPendingTurn() {
+    if (!this.pendingTurn || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.pendingTurn.sent) return;
+    try {
+      this.ws.send(JSON.stringify({
+        type: 'chat',
+        text: this.pendingTurn.text,
+        conversation_id: this.pendingTurn.conversationID,
+        turn_id: this.pendingTurn.id,
+      }));
+      this.pendingTurn.sent = true;
+    } catch {
+      this.pendingTurn.sent = false;
+    }
+  },
+
+  _newTurnID() {
+    const cryptoObj = window.crypto || window.msCrypto;
+    if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
+      return cryptoObj.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+      cryptoObj.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.floor(Math.random() * 16);
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
   },
 
   // ── UI helpers ────────────────────────────────────────

@@ -113,6 +113,50 @@ func TestResolveStaffName_SessionOverride(t *testing.T) {
 	}
 }
 
+func TestResolveStaffName_ConversationDefaultStaff(t *testing.T) {
+	cfg := core.DefaultConfig()
+	st := openTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "conv-bot", "", "conversation staff")
+	conv, err := st.CreateConversation(store.CreateConversationRequest{
+		ScopeType:      "general",
+		ScopeID:        "conv-bot-thread",
+		DefaultStaffID: "conv-bot",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	got := ResolveStaffName(&cfg, "web", conv.ID, "", st, baseDir)
+	if got != "conv-bot" {
+		t.Errorf("got %q, want conv-bot", got)
+	}
+}
+
+func TestResolveStaffName_ConversationDefaultBeatsLegacyAccountStaff(t *testing.T) {
+	cfg := core.DefaultConfig()
+	st := openTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "legacy-bot", "", "legacy staff")
+	seedActiveStaffFile(t, baseDir, "conv-bot", "", "conversation staff")
+	if err := st.SetConversationStaff("legacy-bot"); err != nil {
+		t.Fatalf("SetConversationStaff: %v", err)
+	}
+	conv, err := st.CreateConversation(store.CreateConversationRequest{
+		ScopeType:      "general",
+		ScopeID:        "conv-bot-thread",
+		DefaultStaffID: "conv-bot",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	got := ResolveStaffName(&cfg, "web", conv.ID, "", st, baseDir)
+	if got != "conv-bot" {
+		t.Errorf("got %q, want conv-bot", got)
+	}
+}
+
 func TestResolveStaffName_ChannelBinding(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.Staff = []core.StaffConfig{
@@ -191,8 +235,12 @@ func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
 	if !result.Success || result.Staff != "finance" || result.Error != "" {
 		t.Fatalf("result = %+v, want successful finance switch", result)
 	}
-	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "finance" {
-		t.Fatalf("conversation staff = %q ok=%v err=%v, want finance", got, ok, err)
+	conv, ok, err := st.Conversation("conv-1")
+	if err != nil || !ok {
+		t.Fatalf("Conversation(conv-1) ok=%v err=%v", ok, err)
+	}
+	if conv.DefaultStaffID != "finance" {
+		t.Fatalf("default staff = %q, want finance", conv.DefaultStaffID)
 	}
 }
 
@@ -382,6 +430,155 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	}
 	if turns[0].Channel != "web" || turns[0].ChannelUserID != "test-session" {
 		t.Fatalf("turn metadata = channel %q user %q", turns[0].Channel, turns[0].ChannelUserID)
+	}
+}
+
+func TestRunAtMentionResolvesAlias(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	base := t.TempDir()
+	seedActiveStaffFile(t, base, "dev-pm", "개발 PM", "DEV_PM_SOUL_MARKER", "개발PM")
+
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	provider := &promptCaptureProvider{response: `return "alias ok";`}
+	sess := &Session{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   base,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("@개발PM 일정 정리"), nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if out != "alias ok" {
+		t.Fatalf("out = %q, want alias ok", out)
+	}
+	if len(provider.messages) == 0 || !strings.Contains(provider.messages[0].Content, "dev-pm soul") {
+		t.Fatalf("prompt did not include alias staff soul: %+v", provider.messages)
+	}
+	turns, err := st.ListConversationTurns(10)
+	if err != nil {
+		t.Fatalf("ListConversationTurns: %v", err)
+	}
+	if len(turns) < 1 || turns[0].Content != "일정 정리" {
+		t.Fatalf("turns = %+v, want stripped alias mention text", turns)
+	}
+}
+
+func TestRunRecordsChosenStaffOnAssistantTurn(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	base := t.TempDir()
+	seedActiveStaffFile(t, base, "conv-bot", "", "conversation staff")
+	st := openTestStore(t)
+	conv, err := st.CreateConversation(store.CreateConversationRequest{
+		ScopeType:      "general",
+		ScopeID:        "web_chat:test-session",
+		DefaultStaffID: "conv-bot",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.UpsertConversationRoute(store.ConversationRoute{
+		RouteKey:       "web_chat:test-session",
+		ConversationID: conv.ID,
+		SourceChannel:  "web_chat",
+	}); err != nil {
+		t.Fatalf("UpsertConversationRoute: %v", err)
+	}
+
+	cfg := core.DefaultConfig()
+	provider := &promptCaptureProvider{response: `return "staff audit";`}
+	sess := &Session{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   base,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	out, err := sess.Run(context.Background(), webChatEvent("audit staff"), nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if out != "staff audit" {
+		t.Fatalf("out = %q, want staff audit", out)
+	}
+	turns, err := st.ListConversationTurnsForConversation(conv.ID, 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForConversation: %v", err)
+	}
+	if len(turns) < 2 {
+		t.Fatalf("turns = %+v, want user and assistant", turns)
+	}
+	assistant := turns[len(turns)-1]
+	if assistant.Role != core.RoleAssistant || assistant.StaffID != "conv-bot" {
+		t.Fatalf("assistant turn = %+v, want staff_id conv-bot", assistant)
+	}
+}
+
+func TestSlashStaffUseSetsCurrentConversationDefault(t *testing.T) {
+	st := openTestStore(t)
+	base := t.TempDir()
+	seedActiveStaffFile(t, base, "dev-pm", "", "development pm")
+	cfg := core.DefaultConfig()
+	sess := &Session{Store: st, Config: &cfg, BaseDir: base}
+	ctx := ContextWithConversationID(context.Background(), "general:web_chat:test-session")
+
+	got := handleStaffCommand(ctx, []string{"use", "dev-pm"}, sess)
+	if !strings.Contains(got, "dev-pm") {
+		t.Fatalf("handleStaffCommand = %q, want dev-pm", got)
+	}
+	conv, ok, err := st.Conversation("general:web_chat:test-session")
+	if err != nil || !ok {
+		t.Fatalf("Conversation ok=%v err=%v", ok, err)
+	}
+	if conv.DefaultStaffID != "dev-pm" {
+		t.Fatalf("DefaultStaffID = %q, want dev-pm", conv.DefaultStaffID)
+	}
+}
+
+func TestResolveSkillCallRejectsDisallowedStaffSkill(t *testing.T) {
+	cfg := core.DefaultConfig()
+	sess := &Session{Config: &cfg, Store: openTestStore(t), BaseDir: t.TempDir()}
+	ctx := ContextWithStaffPolicy(context.Background(), "reader", []string{"Memory"})
+
+	out, err := resolveSkillCall(ctx, core.SkillCall{SkillName: "File", Method: "read"}, sess, nil)
+	if err != nil {
+		t.Fatalf("resolveSkillCall error: %v", err)
+	}
+	if !strings.Contains(out, "not allowed for staff reader") {
+		t.Fatalf("out = %s, want staff policy rejection", out)
+	}
+}
+
+func TestProviderForStaffTurnUsesStaffModelUnlessOverriddenOrFallback(t *testing.T) {
+	defaultProvider := &promptCaptureProvider{response: `return "default";`}
+	staffProvider := &promptCaptureProvider{response: `return "staff";`}
+	staff := &core.Staff{ID: "writer", Model: "staff-fast"}
+	var resolved []string
+	resolve := func(model string) llm.Provider {
+		resolved = append(resolved, model)
+		return staffProvider
+	}
+
+	got := providerForStaffTurn(defaultProvider, staff, false, false, resolve)
+	if got != staffProvider || len(resolved) != 1 || resolved[0] != "staff-fast" {
+		t.Fatalf("providerForStaffTurn staff model = %T resolved=%v", got, resolved)
+	}
+	if got := providerForStaffTurn(defaultProvider, staff, true, false, resolve); got != defaultProvider {
+		t.Fatal("explicit model override should keep active provider")
+	}
+	if got := providerForStaffTurn(defaultProvider, staff, false, true, resolve); got != defaultProvider {
+		t.Fatal("fallback should keep active fallback provider")
 	}
 }
 
@@ -632,8 +829,10 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if meta.DisplayName != "개발 PM" {
 		t.Fatalf("DisplayName = %q, want 개발 PM", meta.DisplayName)
 	}
-	if _, ok, err := st.ConversationStaff(); err != nil || ok {
-		t.Fatalf("active staff before switch ok=%v err=%v, want unset", ok, err)
+	if conv, ok, err := st.Conversation(testWebChatConversationID); err != nil {
+		t.Fatalf("conversation before switch err=%v", err)
+	} else if ok && conv.DefaultStaffID != "" {
+		t.Fatalf("default staff before switch = %q, want unset", conv.DefaultStaffID)
 	}
 
 	out, err = sess.Run(context.Background(), webChatEvent("응"), nil)
@@ -643,8 +842,12 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	if !strings.Contains(out, "dev-pm") {
 		t.Fatalf("switch response = %q, want dev-pm", out)
 	}
-	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "dev-pm" {
-		t.Fatalf("conversation staff = %q ok=%v err=%v, want dev-pm", got, ok, err)
+	conv, ok, err := st.Conversation(testWebChatConversationID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation(%s) ok=%v err=%v", testWebChatConversationID, ok, err)
+	}
+	if conv.DefaultStaffID != "dev-pm" {
+		t.Fatalf("default staff = %q, want dev-pm", conv.DefaultStaffID)
 	}
 }
 
@@ -756,8 +959,12 @@ func TestStaffNaturalLanguageAcceptsCasualOptInAndSwitchConfirmation(t *testing.
 	if !strings.Contains(out, "dev-pm") {
 		t.Fatalf("switch response = %q, want dev-pm", out)
 	}
-	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "dev-pm" {
-		t.Fatalf("conversation staff = %q ok=%v err=%v, want dev-pm", got, ok, err)
+	conv, ok, err := st.Conversation(testWebChatConversationID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation(%s) ok=%v err=%v", testWebChatConversationID, ok, err)
+	}
+	if conv.DefaultStaffID != "dev-pm" {
+		t.Fatalf("default staff = %q, want dev-pm", conv.DefaultStaffID)
 	}
 }
 

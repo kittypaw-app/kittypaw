@@ -15,19 +15,20 @@ import (
 const (
 	channelDispatchQueueSize      = 32
 	defaultChannelTurnTimeout     = 5 * time.Minute
-	channelWorkerStopTimeout      = 10 * time.Second
 	channelRunFailureResponse     = "처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 	channelQueueOverflowResponse  = "요청이 밀려 있습니다. 잠시 후 다시 시도해주세요."
 	channelDispatchWorkerScopeSep = "\x00"
 )
 
+var channelWorkerStopTimeout = 10 * time.Second
+
 type channelEventJob struct {
-	event   core.Event
-	payload core.ChatPayload
-	session *engine.Session
-	runOpts *engine.RunOptions
-	ch      channel.Channel
-	chOK    bool
+	event       core.Event
+	payload     core.ChatPayload
+	session     *engine.Session
+	baseRunOpts *engine.RunOptions
+	ch          channel.Channel
+	chOK        bool
 }
 
 type channelEventWorker struct {
@@ -103,7 +104,10 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		defer cancel()
 	}
 
-	response, runErr, panicked := s.runChannelSession(runCtx, job.session, job.event, job.runOpts)
+	// Fold chat-path /model overrides after dequeue, not at enqueue time.
+	// A queued /model command must affect later jobs in this same worker.
+	runOpts := job.session.ApplyActiveModel(job.baseRunOpts)
+	response, runErr, panicked := s.runChannelSession(runCtx, job.session, job.event, runOpts)
 	if ctx.Err() != nil {
 		return
 	}
@@ -135,6 +139,17 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 	}
 
 	outbound := core.ParseOutboundResponse(response)
+	var pendingID int64
+	var pendingQueued bool
+	if job.event.Type != core.EventKakaoTalk {
+		id, qErr := s.store.EnqueueResponseWithID(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text)
+		if qErr != nil {
+			slog.Error("channel event: enqueue response before send failed", "error", qErr)
+		} else {
+			pendingID = id
+			pendingQueued = true
+		}
+	}
 	if err := sendChannelResponse(ctx, job.ch, job.payload.ChatID, outbound, job.payload.ReplyToMessageID); err != nil {
 		slog.Error("channel event: send response failed",
 			"type", job.event.Type,
@@ -142,10 +157,21 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 			"chat_id", job.payload.ChatID,
 			"error", err,
 		)
-		if job.event.Type != core.EventKakaoTalk {
+		if job.event.Type != core.EventKakaoTalk && !pendingQueued {
 			if qErr := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text); qErr != nil {
 				slog.Error("channel event: enqueue response failed", "error", qErr)
 			}
+		}
+		return
+	}
+	if pendingQueued {
+		if err := s.store.MarkResponseDelivered(pendingID); err != nil {
+			slog.Error("channel event: clear delivered outbox response failed",
+				"id", pendingID,
+				"account", job.event.AccountID,
+				"chat_id", job.payload.ChatID,
+				"error", err,
+			)
 		}
 	}
 }
@@ -194,13 +220,57 @@ func (s *Server) channelTurnTimeoutDuration() time.Duration {
 }
 
 func channelWorkerKey(event core.Event) string {
-	return fmt.Sprintf("%s%s%s", event.AccountID, channelDispatchWorkerScopeSep, event.Type)
+	return fmt.Sprintf("%s%s%s%s%s",
+		event.AccountID,
+		channelDispatchWorkerScopeSep,
+		event.Type,
+		channelDispatchWorkerScopeSep,
+		channelWorkerScope(event),
+	)
+}
+
+func channelWorkerScope(event core.Event) string {
+	payload, err := event.ParsePayload()
+	if err != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(payload.ConversationID); id != "" {
+		return id
+	}
+	switch event.Type {
+	case core.EventKakaoTalk, core.EventWebChat, core.EventDesktop:
+		return firstNonEmptyWorkerScope(payload.SessionID, payload.ChatID)
+	default:
+		return firstNonEmptyWorkerScope(payload.ChatID, payload.SessionID)
+	}
+}
+
+func firstNonEmptyWorkerScope(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (s *Server) isAccountRemovalInProgress(accountID string) bool {
-	s.accountMu.Lock()
-	defer s.accountMu.Unlock()
+	s.removingAccountMu.RLock()
+	defer s.removingAccountMu.RUnlock()
 	return s.removingAccount != nil && s.removingAccount[accountID]
+}
+
+func (s *Server) setAccountRemovalInProgress(accountID string, removing bool) {
+	s.removingAccountMu.Lock()
+	defer s.removingAccountMu.Unlock()
+	if s.removingAccount == nil {
+		s.removingAccount = make(map[string]bool)
+	}
+	if removing {
+		s.removingAccount[accountID] = true
+		return
+	}
+	delete(s.removingAccount, accountID)
 }
 
 func (s *Server) stopChannelWorkersForAccount(accountID string) error {

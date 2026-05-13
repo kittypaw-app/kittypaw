@@ -37,10 +37,31 @@ func TestChatWebModuleSendsConversationIDWhenMountedWithScope(t *testing.T) {
 	for _, token := range []string{
 		"mount(container, options = {})",
 		"this.conversationID = options.conversationID || ''",
-		"conversation_id: this.conversationID",
+		"conversationID: this.conversationID",
+		"conversation_id: this.pendingTurn.conversationID",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("chat module missing scoped conversation token %q", token)
+		}
+	}
+}
+
+func TestChatWebModuleSendsTurnIDAndReplaysPendingTurn(t *testing.T) {
+	src, err := os.ReadFile("web/chat.js")
+	if err != nil {
+		t.Fatalf("read web chat: %v", err)
+	}
+	body := string(src)
+	for _, token := range []string{
+		"pendingTurn: null",
+		"_newTurnID()",
+		"turn_id: this.pendingTurn.id",
+		"this.pendingTurn = {",
+		"this._sendPendingTurn();",
+		"if (this.pendingTurn && msg.turn_id && msg.turn_id !== this.pendingTurn.id) return;",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("chat module missing browser turn replay token %q", token)
 		}
 	}
 }

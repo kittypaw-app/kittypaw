@@ -76,6 +76,7 @@ max_tokens = 4096
 id = "telegram"
 type = "telegram"
 allowed_chat_ids = ["54076829"]
+allowed_user_ids = ["111222333"]
 
 [[channels]]
 id = "kakao"
@@ -122,6 +123,9 @@ access = "read_write"
 	}
 	if got := cfg.Channels[0].AllowedChatIDs; len(got) != 1 || got[0] != "54076829" {
 		t.Fatalf("AllowedChatIDs = %v", got)
+	}
+	if got := cfg.Channels[0].AllowedUserIDs; len(got) != 1 || got[0] != "111222333" {
+		t.Fatalf("AllowedUserIDs = %v", got)
 	}
 	if cfg.Channels[1].ID != "kakao" || cfg.Channels[1].ChannelType != ChannelKakaoTalk {
 		t.Fatalf("kakao channel = %#v", cfg.Channels[1])

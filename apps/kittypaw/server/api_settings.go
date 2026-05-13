@@ -211,6 +211,95 @@ func (s *Server) handleSettingsTelegramChatID(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handleSettingsStaffRoutes(w http.ResponseWriter, r *http.Request) {
+	acct, status, err := s.settingsAccount(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if acct.Deps == nil || acct.Deps.Store == nil || acct.Session == nil {
+		writeError(w, http.StatusInternalServerError, "account store unavailable")
+		return
+	}
+	conversations, err := acct.Deps.Store.ListConversations(100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	base, err := core.ResolveBaseDir(acct.Session.BaseDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	staff, err := core.ListStaffRecords(base)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if conversations == nil {
+		conversations = []store.ConversationRecord{}
+	}
+	if staff == nil {
+		staff = []core.StaffRecord{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conversations": conversations,
+		"staff":         staff,
+	})
+}
+
+func (s *Server) handleSettingsStaffRouteUpdate(w http.ResponseWriter, r *http.Request) {
+	acct, status, err := s.settingsAccount(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if acct.Deps == nil || acct.Deps.Store == nil || acct.Session == nil {
+		writeError(w, http.StatusInternalServerError, "account store unavailable")
+		return
+	}
+	var body struct {
+		ConversationID string `json:"conversation_id"`
+		DefaultStaffID string `json:"default_staff_id"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	conversationID := strings.TrimSpace(body.ConversationID)
+	if conversationID == "" {
+		writeError(w, http.StatusBadRequest, "conversation_id is required")
+		return
+	}
+	staffID := strings.TrimSpace(body.DefaultStaffID)
+	if staffID != "" {
+		base, err := core.ResolveBaseDir(acct.Session.BaseDir)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resolved, ok, err := core.ResolveStaffReference(base, staffID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusBadRequest, "staff not found")
+			return
+		}
+		staffID = resolved
+	}
+	conversation, err := acct.Deps.Store.SetConversationDefaultStaff(conversationID, staffID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conversation})
+}
+
 func (s *Server) handleSettingsWorkspacesList(w http.ResponseWriter, r *http.Request) {
 	acct, status, err := s.settingsAccount(r)
 	if err != nil {

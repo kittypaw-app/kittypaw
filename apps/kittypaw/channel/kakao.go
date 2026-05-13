@@ -14,6 +14,8 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
+const kakaoMaxResponseChunk = 900
+
 // --- Kakao relay DTOs ---
 
 // kakaoRelayMessage is a message frame from the relay WebSocket.
@@ -69,6 +71,8 @@ func NewKakao(accountID, wsURL string) *KakaoChannel {
 }
 
 func (k *KakaoChannel) Name() string { return "kakao_talk" }
+
+func (k *KakaoChannel) MaxResponseLength() int { return kakaoMaxResponseChunk }
 
 func (k *KakaoChannel) wsURL() string { return k.wsEndpoint }
 

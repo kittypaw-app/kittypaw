@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/store"
 )
 
 type telegramPairingTestChannel struct {
@@ -104,6 +105,66 @@ func TestSettingsTelegramUpdatesCompletedAccountConfig(t *testing.T) {
 	}
 	if got := written.AllowedChatIDs; len(got) != 1 || got[0] != "4242" {
 		t.Fatalf("admin chat IDs = %#v, want [4242]", got)
+	}
+}
+
+func TestSettingsStaffRoutesListAndUpdate(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.APIKey = "configured"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+	cookie := loginSessionCookie(t, srv, "alice", "pw")
+	deps := srv.accountDepsForID("alice")
+	seedServerActiveStaff(t, deps.Account.BaseDir, "dev-pm", "development pm")
+	conv, err := deps.Store.CreateConversation(store.CreateConversationRequest{
+		ScopeType:     "general",
+		ScopeID:       "settings-route",
+		SourceChannel: "slack",
+		ChatID:        "c123",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/staff-routes", nil)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings staff routes GET code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var listed struct {
+		Conversations []store.ConversationRecord `json:"conversations"`
+		Staff         []core.StaffRecord         `json:"staff"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(listed.Conversations) == 0 || len(listed.Staff) == 0 {
+		t.Fatalf("listed = %+v, want conversations and staff", listed)
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"conversation_id":  conv.ID,
+		"default_staff_id": "dev-pm",
+	})
+	if err != nil {
+		t.Fatalf("marshal update body: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/staff-routes", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings staff routes POST code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	updated, ok, err := deps.Store.Conversation(conv.ID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation ok=%v err=%v", ok, err)
+	}
+	if updated.DefaultStaffID != "dev-pm" {
+		t.Fatalf("DefaultStaffID = %q, want dev-pm", updated.DefaultStaffID)
 	}
 }
 

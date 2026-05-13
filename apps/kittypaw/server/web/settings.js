@@ -20,7 +20,10 @@ const Settings = {
 
   async _load(container) {
     try {
-      const s = await apiRaw('/api/setup/status');
+      const [s, staffRoutes] = await Promise.all([
+        apiRaw('/api/setup/status'),
+        apiRaw('/api/settings/staff-routes').catch(() => null),
+      ]);
       container.innerHTML = '';
 
       // --- Channels section ---
@@ -68,6 +71,10 @@ const Settings = {
       llmSection.appendChild(llmRow);
       llmRow.appendChild(this._actionButton(s.existing_provider ? settingsT('settings.change', null, 'Change') : settingsT('settings.connect', null, 'Connect'), () => this._showLLMForm(container, s)));
       container.appendChild(llmSection);
+
+      if (staffRoutes) {
+        container.appendChild(this._staffRoutesSection(container, staffRoutes));
+      }
     } catch (e) {
       container.innerHTML = `<div class="error-box">${esc(settingsT('settings.failedToLoad', { error: String(e) }, `Failed to load settings: ${String(e)}`))}</div>`;
     }
@@ -94,6 +101,93 @@ const Settings = {
     btn.textContent = label;
     btn.onclick = onClick;
     return btn;
+  },
+
+  _staffRoutesSection(container, data) {
+    const section = document.createElement('section');
+    section.className = 'settings-section';
+    section.innerHTML = '<h2>' + esc(settingsT('settings.staffRoutes', null, 'Staff Routes')) + '</h2>';
+    const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+    const routed = conversations
+      .filter(c => c.default_staff_id || c.source_channel || c.chat_id || c.source_session_id)
+      .slice(0, 12);
+    if (routed.length === 0) {
+      const row = this._channelRow(settingsT('settings.staffRoutesNone', null, 'No routed conversations'), false, null);
+      section.appendChild(row);
+    } else {
+      for (const conv of routed) {
+        const label = conv.title || conv.id;
+        const staff = conv.default_staff_id || settingsT('settings.defaultStaff', null, 'Default staff');
+        const detail = [staff, conv.source_channel, conv.chat_id || conv.source_session_id].filter(Boolean).join(' · ');
+        const row = this._channelRow(label, !!conv.default_staff_id, detail);
+        row.appendChild(this._actionButton(settingsT('settings.change', null, 'Change'), () => this._showStaffRoutesForm(container, data, conv.id)));
+        section.appendChild(row);
+      }
+    }
+    const actions = document.createElement('div');
+    actions.className = 'settings-actions';
+    actions.appendChild(this._actionButton(settingsT('settings.manageRoutes', null, 'Manage Routes'), () => this._showStaffRoutesForm(container, data, routed[0] && routed[0].id)));
+    section.appendChild(actions);
+    return section;
+  },
+
+  _showStaffRoutesForm(container, data, selectedID) {
+    const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+    const staff = Array.isArray(data.staff) ? data.staff : [];
+    const conversationOptions = conversations.map(conv => {
+      const label = conv.title ? `${conv.title} (${conv.id})` : conv.id;
+      return `<option value="${escHTMLAttr(conv.id)}">${esc(label)}</option>`;
+    }).join('');
+    const staffOptions = [
+      `<option value="">${esc(settingsT('settings.defaultStaff', null, 'Default staff'))}</option>`,
+      ...staff.map(record => {
+        const label = record.display_name ? `${record.display_name} (${record.id})` : record.id;
+        return `<option value="${escHTMLAttr(record.id)}">${esc(label)}</option>`;
+      }),
+    ].join('');
+    container.innerHTML = `
+      <section class="settings-section">
+        <h2>${esc(settingsT('settings.staffRoutes', null, 'Staff Routes'))}</h2>
+        <div class="settings-form">
+          <label>${esc(settingsT('settings.conversation', null, 'Conversation'))}</label>
+          <select class="input input--mono" id="settings-staff-route-conversation">${conversationOptions}</select>
+          <label>${esc(settingsT('settings.staff', null, 'Staff'))}</label>
+          <select class="input input--mono" id="settings-staff-route-staff">${staffOptions}</select>
+          <div class="settings-actions">
+            <button class="btn btn--primary btn--sm" id="settings-staff-route-save">${esc(settingsT('common.save', null, 'Save'))}</button>
+            <button class="btn btn--ghost btn--sm" id="settings-back">${esc(settingsT('common.cancel', null, 'Cancel'))}</button>
+          </div>
+          <div class="error-box mt-12" id="settings-form-error" hidden></div>
+        </div>
+      </section>`;
+    const conversationSelect = document.getElementById('settings-staff-route-conversation');
+    const staffSelect = document.getElementById('settings-staff-route-staff');
+    if (selectedID) conversationSelect.value = selectedID;
+    const syncStaff = () => {
+      const conv = conversations.find(c => c.id === conversationSelect.value);
+      staffSelect.value = conv && conv.default_staff_id ? conv.default_staff_id : '';
+    };
+    conversationSelect.onchange = syncStaff;
+    syncStaff();
+    document.getElementById('settings-back').onclick = () => this._load(container);
+    document.getElementById('settings-staff-route-save').onclick = async () => {
+      const button = document.getElementById('settings-staff-route-save');
+      const error = document.getElementById('settings-form-error');
+      button.disabled = true;
+      error.hidden = true;
+      try {
+        await this._postJSON('/api/settings/staff-routes', {
+          conversation_id: conversationSelect.value,
+          default_staff_id: staffSelect.value,
+        });
+        await this._load(container);
+      } catch (e) {
+        error.textContent = String(e.message || e);
+        error.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
+    };
   },
 
   _showLLMForm(container, status) {

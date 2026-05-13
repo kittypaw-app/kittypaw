@@ -18,6 +18,8 @@ type StaffMetaFile struct {
 	DisplayName             string   `json:"display_name,omitempty"`
 	Aliases                 []string `json:"aliases,omitempty"`
 	Description             string   `json:"description,omitempty"`
+	Model                   string   `json:"model,omitempty"`
+	AllowedSkills           []string `json:"allowed_skills,omitempty"`
 	CreatedFromConversation string   `json:"created_from_conversation,omitempty"`
 	CreatedAt               string   `json:"created_at,omitempty"`
 	ActivatedAt             string   `json:"activated_at,omitempty"`

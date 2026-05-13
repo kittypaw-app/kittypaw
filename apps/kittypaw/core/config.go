@@ -75,6 +75,7 @@ type Config struct {
 	Runners          []RunnerConfig      `toml:"runners"`
 	Channels         []ChannelConfig     `toml:"channels"`
 	AllowedChatIDs   []string            `toml:"-"`
+	AllowedUserIDs   []string            `toml:"-"`
 	FreeformFallback bool                `toml:"freeform_fallback"`
 	Models           []ModelConfig       `toml:"-"`
 	STT              STTConfig           `toml:"stt"`
@@ -328,6 +329,7 @@ type ChannelConfig struct {
 	ID             string      `toml:"id"`
 	ChannelType    ChannelType `toml:"type"`
 	AllowedChatIDs []string    `toml:"allowed_chat_ids"`
+	AllowedUserIDs []string    `toml:"allowed_user_ids"`
 	Credential     string      `toml:"credential"`
 	Token          string      `toml:"-"`
 	BindAddr       string      `toml:"bind_addr"`
@@ -606,6 +608,9 @@ func (c *Config) NormalizeRuntimeFields() {
 	}
 	if len(c.AllowedChatIDs) == 0 {
 		c.AllowedChatIDs = cfgAllowedChatIDs(c)
+	}
+	if len(c.AllowedUserIDs) == 0 {
+		c.AllowedUserIDs = cfgAllowedUserIDs(c)
 	}
 	if m := c.DefaultModel(); m != nil {
 		c.LLM.Provider = m.Provider

@@ -100,9 +100,11 @@ func TestServer_New_LegacySingleAccount_NoFanout(t *testing.T) {
 	}
 }
 
-func TestApplyAccountConfigForDefaultRefreshesSessionRuntimeDeps(t *testing.T) {
+func TestApplyAccountConfigForDefaultReplacesSessionRuntimeDeps(t *testing.T) {
 	root := t.TempDir()
 	cfg := core.DefaultConfig()
+	cfg.LLM.APIKey = "old-key"
+	cfg.Browser.Enabled = false
 	deps := buildAccountDeps(t, root, "alice", &cfg)
 	deps.ServiceTokenMgr = core.NewServiceTokenManager(deps.Secrets)
 	srv := New([]*AccountDeps{deps}, "test", "alice")
@@ -117,25 +119,38 @@ func TestApplyAccountConfigForDefaultRefreshesSessionRuntimeDeps(t *testing.T) {
 		t.Fatal("initial ProjectJobRuntime is nil")
 	}
 
-	oldSession.BrowserController = nil
-	oldSession.ServiceTokenMgr = nil
-	oldSession.ProjectJobRuntime = nil
-	deps.JobRuntime = nil
+	freshSecrets, err := core.LoadSecretsFrom(deps.Account.SecretsPath())
+	if err != nil {
+		t.Fatalf("load fresh secrets: %v", err)
+	}
+	if err := freshSecrets.Set("llm/anthropic", "api_key", "fresh-key"); err != nil {
+		t.Fatalf("save fresh llm secret: %v", err)
+	}
 
 	reloadCfg := core.DefaultConfig()
-	reloadCfg.LLM.APIKey = "reload-key"
+	reloadCfg.Browser.Enabled = true
 	srv.accountMu.Lock()
-	_, err := srv.applyAccountConfigLocked("alice", &reloadCfg)
+	_, err = srv.applyAccountConfigLocked("alice", &reloadCfg)
 	srv.accountMu.Unlock()
 	if err != nil {
 		t.Fatalf("applyAccountConfigLocked() error = %v", err)
 	}
 
-	if srv.session != oldSession {
-		t.Fatal("default account reload should preserve the existing session pointer")
+	if srv.session == oldSession {
+		t.Fatal("default account reload should replace the existing session pointer")
 	}
 	if srv.session.BrowserController == nil {
 		t.Fatal("default session BrowserController was not refreshed")
+	}
+	status, err := srv.session.BrowserController.Execute(context.Background(), core.SkillCall{
+		SkillName: "Browser",
+		Method:    "status",
+	})
+	if err != nil {
+		t.Fatalf("browser status: %v", err)
+	}
+	if !strings.Contains(status, `"enabled":true`) {
+		t.Fatalf("browser status = %s, want enabled true after config update", status)
 	}
 	if srv.session.ServiceTokenMgr == nil {
 		t.Fatal("default session ServiceTokenMgr was not refreshed")
@@ -145,6 +160,70 @@ func TestApplyAccountConfigForDefaultRefreshesSessionRuntimeDeps(t *testing.T) {
 	}
 	if srv.session.ProjectJobRuntime != deps.JobRuntime {
 		t.Fatal("default session ProjectJobRuntime does not match account deps runtime")
+	}
+	if srv.session.Config.LLM.APIKey != "fresh-key" {
+		t.Fatalf("default session LLM API key = %q, want fresh-key from disk secrets", srv.session.Config.LLM.APIKey)
+	}
+	if srv.session.Provider == nil {
+		t.Fatal("default session Provider was not refreshed")
+	}
+	if srv.session.Sandbox == oldSession.Sandbox {
+		t.Fatal("default session Sandbox was not refreshed")
+	}
+}
+
+func TestHandleReloadAppliesDefaultRuntimeDeps(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+
+	initial := core.DefaultConfig()
+	initial.Browser.Enabled = false
+	deps := buildAccountDeps(t, filepath.Join(root, "accounts"), "alice", &initial)
+	srv := NewWithServerConfig([]*AccountDeps{deps}, "test", core.TopLevelServerConfig{
+		DefaultAccount: "alice",
+	})
+	oldSession := srv.session
+	oldSandbox := oldSession.Sandbox
+
+	reloadCfg := core.DefaultConfig()
+	reloadCfg.LLM.APIKey = "reload-key"
+	reloadCfg.Sandbox.TimeoutSecs = 77
+	reloadCfg.Browser.Enabled = true
+	writeConfigForTest(t, filepath.Join(root, "accounts", "alice"), &reloadCfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/reload", nil)
+	rr := httptest.NewRecorder()
+	srv.handleReload(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("reload code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if srv.session == oldSession {
+		t.Fatal("reload should replace the default runtime session")
+	}
+	if srv.session.Provider == nil {
+		t.Fatal("reload did not refresh Provider")
+	}
+	if srv.session.Sandbox == oldSandbox {
+		t.Fatal("reload did not refresh Sandbox")
+	}
+	status, err := srv.session.BrowserController.Execute(context.Background(), core.SkillCall{
+		SkillName: "Browser",
+		Method:    "status",
+	})
+	if err != nil {
+		t.Fatalf("browser status: %v", err)
+	}
+	if !strings.Contains(status, `"enabled":true`) {
+		t.Fatalf("browser status = %s, want enabled true after reload", status)
+	}
+	if srv.config != srv.session.Config {
+		t.Fatal("server config and default session config should share the replaced config pointer")
+	}
+	if got := srv.accountDepsForID("alice").Account.Config.LLM.APIKey; got != "reload-key" {
+		t.Fatalf("deps config API key = %q, want reload-key", got)
+	}
+	if got := srv.accountRegistry.Get("alice").Config.LLM.APIKey; got != "reload-key" {
+		t.Fatalf("registry config API key = %q, want reload-key", got)
 	}
 }
 
@@ -272,6 +351,41 @@ func buildAccountDeps(t *testing.T, root, id string, cfg *core.Config) *AccountD
 		PkgMgr:      pkgMgr,
 		APITokenMgr: apiTokenMgr,
 		Secrets:     secrets,
+	}
+}
+
+func buildReloadAccountDeps(t *testing.T, root, id string, cfg *core.Config) *AccountDeps {
+	t.Helper()
+
+	baseDir := filepath.Join(root, id)
+	account := &core.Account{ID: id, BaseDir: baseDir, Config: cfg}
+	if err := account.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs %s: %v", id, err)
+	}
+
+	dbPath := filepath.Join(account.DataDir(), "kittypaw.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store %s: %v", dbPath, err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	secrets, err := core.LoadSecretsFrom(account.SecretsPath())
+	if err != nil {
+		t.Fatalf("load secrets %s: %v", account.SecretsPath(), err)
+	}
+	return &AccountDeps{
+		Account: account,
+		Store:   st,
+		Sandbox: sandbox.New(cfg.Sandbox),
+		BrowserController: browser.NewController(browser.ControllerOptions{
+			Config:  cfg.Browser,
+			BaseDir: baseDir,
+		}),
+		PkgMgr:          core.NewPackageManagerFrom(baseDir, secrets),
+		APITokenMgr:     core.NewAPITokenManager(baseDir, secrets),
+		ServiceTokenMgr: core.NewServiceTokenManager(secrets),
+		Secrets:         secrets,
 	}
 }
 

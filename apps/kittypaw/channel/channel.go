@@ -35,6 +35,13 @@ type RichResponder interface {
 	SendRichResponse(ctx context.Context, chatID string, response core.OutboundResponse, replyToMessageID string) error
 }
 
+// ResponseLimiter is an optional capability for channels with platform text
+// length limits. Server dispatchers use it to split long outbound text before
+// calling SendResponse.
+type ResponseLimiter interface {
+	MaxResponseLength() int
+}
+
 // Confirmer is an optional capability for channels that support interactive
 // permission dialogs. Channels implement this to enable approval prompts
 // for destructive operations (e.g., shell commands, git push).
@@ -44,4 +51,11 @@ type RichResponder interface {
 //	if confirmer, ok := ch.(channel.Confirmer); ok { ... }
 type Confirmer interface {
 	AskConfirmation(ctx context.Context, chatID, description, resource string) (bool, error)
+}
+
+// RequesterConfirmer is an optional stricter confirmation capability for group
+// chats. requesterID is the inbound ChatPayload.SessionID, usually the platform
+// user ID, and callbacks from other users must not resolve the prompt.
+type RequesterConfirmer interface {
+	AskConfirmationForRequester(ctx context.Context, chatID, requesterID, description, resource string) (bool, error)
 }

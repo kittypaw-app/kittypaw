@@ -167,6 +167,32 @@ func TestLoadStaff_WithUserMD(t *testing.T) {
 	}
 }
 
+func TestLoadStaff_WithRuntimePolicyMetadata(t *testing.T) {
+	base := t.TempDir()
+	if err := WriteStaffMetaFile(base, StaffMetaFile{
+		ID:            "bot",
+		DisplayName:   "Policy Bot",
+		Model:         "fast-model",
+		AllowedSkills: []string{"Memory", "Todo"},
+	}); err != nil {
+		t.Fatalf("WriteStaffMetaFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "staff", "bot", "SOUL.md"), []byte("policy soul"), 0o644); err != nil {
+		t.Fatalf("write SOUL: %v", err)
+	}
+
+	staff, err := LoadStaff(base, "bot")
+	if err != nil {
+		t.Fatalf("LoadStaff: %v", err)
+	}
+	if staff.Nick != "Policy Bot" || staff.Model != "fast-model" {
+		t.Fatalf("staff metadata = nick %q model %q", staff.Nick, staff.Model)
+	}
+	if len(staff.AllowedSkills) != 2 || staff.AllowedSkills[0] != "Memory" || staff.AllowedSkills[1] != "Todo" {
+		t.Fatalf("AllowedSkills = %#v, want Memory/Todo", staff.AllowedSkills)
+	}
+}
+
 func TestValidateStaffID_Invalid(t *testing.T) {
 	if err := ValidateStaffID("../evil"); err == nil {
 		t.Fatal("expected invalid StaffID error")

@@ -42,6 +42,35 @@ func TestChatBelongsToAccount_PermissiveUnconfigured(t *testing.T) {
 	}
 }
 
+func TestUserBelongsToAccount_StrictMatch(t *testing.T) {
+	cfg := &Config{AllowedUserIDs: []string{"u1", "u2"}}
+	if !UserBelongsToAccount(cfg, "u1") {
+		t.Error("user u1 should match AllowedUserIDs")
+	}
+	if !UserBelongsToAccount(cfg, "u2") {
+		t.Error("user u2 should match AllowedUserIDs")
+	}
+	if UserBelongsToAccount(cfg, "u9") {
+		t.Error("user u9 must NOT match configured AllowedUserIDs")
+	}
+	if UserBelongsToAccount(cfg, "") {
+		t.Error("empty user id must NOT match a configured account")
+	}
+}
+
+func TestUserBelongsToAccount_PermissiveUnconfigured(t *testing.T) {
+	cases := []*Config{
+		nil,
+		{AllowedUserIDs: nil},
+		{AllowedUserIDs: []string{}},
+	}
+	for i, cfg := range cases {
+		if !UserBelongsToAccount(cfg, "anything") {
+			t.Errorf("case %d: unconfigured account must be permissive", i)
+		}
+	}
+}
+
 // TestValidateAccountChannels_NoDuplicates confirms the happy path —
 // distinct tokens across accounts return nil.
 func TestValidateAccountChannels_NoDuplicates(t *testing.T) {

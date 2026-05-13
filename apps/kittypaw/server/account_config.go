@@ -6,6 +6,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/jinto/kittypaw/browser"
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/engine"
 	"github.com/jinto/kittypaw/llm"
@@ -94,9 +95,18 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 		return nil, fmt.Errorf("account %q dependencies unavailable", accountID)
 	}
 
+	secrets := td.Secrets
+	if td.Account.SecretsPath() != "" {
+		loaded, err := core.LoadSecretsFrom(td.Account.SecretsPath())
+		if err != nil {
+			return nil, fmt.Errorf("load account secrets: %w", err)
+		}
+		secrets = loaded
+	}
+
 	cfgCopy := *cfg
-	core.HydrateRuntimeSecrets(&cfgCopy, td.Secrets)
-	defaultModel, ok := cfgCopy.RuntimeDefaultModel(td.Secrets)
+	core.HydrateRuntimeSecrets(&cfgCopy, secrets)
+	defaultModel, ok := cfgCopy.RuntimeDefaultModel(secrets)
 	if !ok {
 		return nil, fmt.Errorf("create llm provider: no default model configured")
 	}
@@ -106,15 +116,23 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 	}
 	provider = engine.NewUsageRecordingProvider(provider, td.Store, defaultModel.Provider)
 	var fallback llm.Provider
-	if m, ok := cfgCopy.RuntimeFallbackModel(td.Secrets); ok {
+	if m, ok := cfgCopy.RuntimeFallbackModel(secrets); ok {
 		fallback, _ = llm.NewProviderFromModelConfig(m)
 		fallback = engine.NewUsageRecordingProvider(fallback, td.Store, m.Provider)
 	}
 
 	td.Account.Config = &cfgCopy
+	td.Secrets = secrets
 	td.Provider = provider
 	td.Fallback = fallback
 	td.Sandbox = sandbox.New(cfgCopy.Sandbox)
+	td.PkgMgr = core.NewPackageManagerFrom(td.Account.BaseDir, secrets)
+	td.APITokenMgr = core.NewAPITokenManager(td.Account.BaseDir, secrets)
+	td.ServiceTokenMgr = core.NewServiceTokenManager(secrets)
+	td.BrowserController = browser.NewController(browser.ControllerOptions{
+		Config:  cfgCopy.Browser,
+		BaseDir: td.Account.BaseDir,
+	})
 
 	for _, peer := range s.accountList {
 		if peer != nil && peer.ID == accountID {
@@ -129,29 +147,11 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 	oldSession := s.accounts.Session(accountID)
 	newSession := s.rebuildSessionForConfigLocked(td, oldSession)
 	var oldScheduler *engine.Scheduler
-	if accountID == s.defaultAccountID() && oldSession != nil {
-		oldSession.Provider = newSession.Provider
-		oldSession.FallbackProvider = newSession.FallbackProvider
-		oldSession.Sandbox = newSession.Sandbox
-		oldSession.Store = newSession.Store
-		oldSession.Config = newSession.Config
-		oldSession.McpRegistry = newSession.McpRegistry
-		oldSession.BrowserController = newSession.BrowserController
-		oldSession.BaseDir = newSession.BaseDir
-		oldSession.PackageManager = newSession.PackageManager
-		oldSession.APITokenMgr = newSession.APITokenMgr
-		oldSession.ServiceTokenMgr = newSession.ServiceTokenMgr
-		oldSession.ProjectJobRuntime = newSession.ProjectJobRuntime
-		oldSession.AccountID = newSession.AccountID
-		oldSession.AccountRegistry = newSession.AccountRegistry
-		oldSession.Fanout = newSession.Fanout
-		if err := oldSession.RefreshAllowedPaths(); err != nil {
-			slog.Warn("setup: failed to refresh allowed paths after config update",
-				"account", td.Account.ID, "error", err)
-		}
-		newSession = oldSession
-	}
 	s.accounts.Register(accountID, newSession)
+	if s.schedulers == nil {
+		s.schedulers = NewAccountSchedulers()
+	}
+	oldScheduler = s.schedulers.Replace(accountID, engine.NewScheduler(newSession, td.PkgMgr))
 	if accountID == s.defaultAccountID() {
 		s.configMu.Lock()
 		s.config = td.Account.Config
@@ -159,11 +159,6 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 		s.session = newSession
 		s.store = td.Store
 		s.pkgManager = td.PkgMgr
-	} else {
-		if s.schedulers == nil {
-			s.schedulers = NewAccountSchedulers()
-		}
-		oldScheduler = s.schedulers.Replace(accountID, engine.NewScheduler(newSession, td.PkgMgr))
 	}
 	return oldScheduler, nil
 }
@@ -213,6 +208,9 @@ func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Sess
 	}
 	if td.Account.Config.IsTeamSpaceAccount() {
 		sess.Fanout = core.NewChannelFanout(s.eventCh, s.accountRegistry, td.Account.ID)
+	}
+	if old != nil {
+		sess.SetActiveModel(old.GetActiveModel())
 	}
 
 	if roots := td.Account.Config.WorkspaceRoots(); len(roots) > 0 {

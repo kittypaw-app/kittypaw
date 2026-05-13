@@ -79,9 +79,9 @@ func (s *Session) GetActiveModel() string {
 }
 
 // ApplyActiveModel folds the chat-path /model override into RunOptions.
-// Caller contract: chat-path dispatchers (server.go:dispatchLoop chat case,
-// ws.go chat handler, chat_relay_dispatcher) MUST call this after building
-// RunOptions and before invoking Session.Run; the schedule path
+// Caller contract: chat-path dispatchers (server channel worker, ws.go chat
+// handler, chat_relay_dispatcher) MUST call this after building RunOptions and
+// before invoking Session.Run; the schedule path
 // (schedule.go:tickOnce / reflectionTick) MUST NOT call this — schedule
 // jobs always run with the configured default, never inheriting a chat-set
 // override.
@@ -617,6 +617,7 @@ func stripBranchControlMarker(response string) string {
 func (s *Session) recordPipelineTurn(event core.Event, eventText, response string) error {
 	convKey := conversationKeyForEvent(s, &event)
 	meta := conversationTurnSource(&event)
+	staffID := ResolveStaffName(s.Config, event.Type.ChannelName(), convKey, "", s.Store, s.BaseDir)
 	state, err := s.loadConversationStateForRun(convKey)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
@@ -638,6 +639,7 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 		ConversationID: convKey,
 		Role:           core.RoleUser,
 		Content:        eventText,
+		StaffID:        staffID,
 		Channel:        meta.Channel,
 		ChannelUserID:  meta.ChannelUserID,
 		ChatID:         meta.ChatID,
@@ -652,6 +654,7 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 		ConversationID: convKey,
 		Role:           core.RoleAssistant,
 		Content:        stripBranchControlMarker(response),
+		StaffID:        staffID,
 		Channel:        meta.Channel,
 		ChannelUserID:  meta.ChannelUserID,
 		ChatID:         meta.ChatID,
@@ -707,19 +710,21 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 	// Parse @mention routing
 	var mentionOverride string
 	eventText := rawEventText
-	if staffID, remaining, matched := ParseAtMention(rawEventText); matched {
+	if staffRef, remaining, matched := ParseAtMention(rawEventText); matched {
 		base, err := core.ResolveBaseDir(s.BaseDir)
 		if err != nil {
 			return "", fmt.Errorf("resolve staff base: %w", err)
 		}
-		if core.StaffHasSoul(base, staffID) {
+		if staffID, ok, err := core.ResolveStaffReference(base, staffRef); err != nil {
+			return "", fmt.Errorf("resolve staff reference: %w", err)
+		} else if ok {
 			slog.Info("@mention routing", "staff_id", staffID)
 			mentionOverride = staffID
 			eventText = remaining
 		} else {
-			response := fmt.Sprintf("staff %q를 찾지 못했습니다.", staffID)
-			if core.StaffHasDraft(base, staffID) {
-				response = fmt.Sprintf("staff %q는 아직 생성 중입니다. 먼저 생성 승인을 완료해 주세요.", staffID)
+			response := fmt.Sprintf("staff %q를 찾지 못했습니다.", staffRef)
+			if core.StaffHasDraft(base, staffRef) {
+				response = fmt.Sprintf("staff %q는 아직 생성 중입니다. 먼저 생성 승인을 완료해 주세요.", staffRef)
 			}
 			if err := s.recordPipelineTurn(event, rawEventText, response); err != nil {
 				slog.Warn("mention rejection turn record failed", "error", err)
@@ -733,11 +738,18 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 		topicNotice = topicShiftNotice()
 	}
 
+	// Resolve and load staff once per turn. The selected staff is audited on
+	// persisted turns and its runtime policy applies to prompt/tool execution.
+	staffID := ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store, s.BaseDir)
+	staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
+	runCtx := ContextWithStaffPolicy(ctx, staffID, staff.AllowedSkills)
+
 	// Add user turn
 	userTurn := core.ConversationTurn{
 		ConversationID: convKey,
 		Role:           core.RoleUser,
 		Content:        eventText,
+		StaffID:        staffID,
 		Channel:        meta.Channel,
 		ChannelUserID:  meta.ChannelUserID,
 		ChatID:         meta.ChatID,
@@ -770,6 +782,7 @@ func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventTe
 			ConversationID: convKey,
 			Role:           core.RoleAssistant,
 			Content:        response,
+			StaffID:        staffID,
 			Channel:        meta.Channel,
 			ChannelUserID:  meta.ChannelUserID,
 			ChatID:         meta.ChatID,
@@ -833,10 +846,6 @@ observeLoop:
 			// Build compaction config based on attempt and feature flags
 			compaction := s.compactionForAttempt(attempt)
 
-			// Resolve and load staff.
-			staffID := ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store, s.BaseDir)
-			staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
-
 			// Build prompt (observations are volatile — replaced each observe round)
 			messages := BuildPrompt(state, eventText, compaction, s.Config, channelName, staff, memoryContext, mcpToolsSection, observations, s.BaseDir)
 
@@ -867,7 +876,8 @@ observeLoop:
 			for _, m := range messages {
 				estTokens += EstimateTokens(m.Content)
 			}
-			tokenBudget := activeProvider.ContextWindow() - activeProvider.MaxTokens()
+			providerForAttempt := providerForStaffTurn(activeProvider, staff, modelOverridden, fallbackUsed, s.resolveProvider)
+			tokenBudget := providerForAttempt.ContextWindow() - providerForAttempt.MaxTokens()
 			if estTokens > tokenBudget && attempt < maxRetries-1 {
 				slog.Warn("prompt exceeds token budget, tightening compaction",
 					"est_tokens", estTokens, "budget", tokenBudget, "attempt", attempt)
@@ -902,7 +912,7 @@ observeLoop:
 
 			// Call LLM
 			var resp *llm.Response
-			resp, err = activeProvider.Generate(WithLLMCallKind(ctx, "chat"), messages)
+			resp, err = providerForAttempt.Generate(WithLLMCallKind(runCtx, "chat"), messages)
 
 			if err != nil {
 				// Handle retryable errors
@@ -946,11 +956,11 @@ observeLoop:
 			var resolver sandbox.SkillResolver
 			if s.Config.AutonomyLevel != core.AutonomyReadonly {
 				resolver = func(ctx context.Context, call core.SkillCall) (string, error) {
-					return resolveSkillCall(ctx, call, s, onPermission)
+					return resolveSkillCall(ContextWithStaffPolicy(ctx, staffID, staff.AllowedSkills), call, s, onPermission)
 				}
 			}
 
-			execResult, err := s.Sandbox.ExecuteWithResolverOpts(ctx, code, jsContext, resolver, s.sandboxOptions())
+			execResult, err := s.Sandbox.ExecuteWithResolverOpts(runCtx, code, jsContext, resolver, s.sandboxOptions())
 			if err != nil {
 				return "", fmt.Errorf("sandbox execute: %w", err)
 			}
@@ -976,6 +986,7 @@ observeLoop:
 					Content:        output,
 					Code:           code,
 					ToolTraces:     turnToolTraces,
+					StaffID:        staffID,
 					Channel:        meta.Channel,
 					ChannelUserID:  meta.ChannelUserID,
 					ChatID:         meta.ChatID,
@@ -1015,6 +1026,7 @@ observeLoop:
 					Code:           code,
 					Result:         FormatExecResult(execResult),
 					ToolTraces:     turnToolTraces,
+					StaffID:        staffID,
 					Channel:        meta.Channel,
 					ChannelUserID:  meta.ChannelUserID,
 					ChatID:         meta.ChatID,
@@ -1182,8 +1194,21 @@ func (s *Session) resolveProvider(model string) llm.Provider {
 	return NewUsageRecordingProvider(p, s.Store, mc.Provider)
 }
 
+func providerForStaffTurn(
+	active llm.Provider,
+	staff *core.Staff,
+	modelOverridden bool,
+	fallbackUsed bool,
+	resolve func(string) llm.Provider,
+) llm.Provider {
+	if modelOverridden || fallbackUsed || staff == nil || strings.TrimSpace(staff.Model) == "" || resolve == nil {
+		return active
+	}
+	return resolve(staff.Model)
+}
+
 // ResolveStaffName determines which staff member to use for this request.
-// Priority: mentionOverride > session override > channel binding > default.
+// Priority: mentionOverride > conversation default > legacy account override > channel binding > default.
 func ResolveStaffName(
 	config *core.Config,
 	channelType string,
@@ -1196,17 +1221,25 @@ func ResolveStaffName(
 	if mentionOverride != "" {
 		return mentionOverride
 	}
+	if config == nil {
+		return "default"
+	}
 
 	base, _ := core.ResolveBaseDir(baseDir)
 
-	// 2. Conversation staff from Staff.switch or /staff use.
+	// 2. Conversation-scoped default staff from the first-class conversation row.
+	if val, ok := conversationDefaultStaff(base, st, conversationID); ok {
+		return val
+	}
+
+	// 3. Legacy account-wide staff from older Staff.switch or /staff use paths.
 	if st != nil {
 		if val, ok, err := st.ConversationStaff(); err == nil && ok && val != "" && core.StaffHasSoul(base, val) {
 			return val
 		}
 	}
 
-	// 3. Channel binding from config.
+	// 4. Channel binding from config.
 	for _, sc := range config.Staff {
 		for _, ch := range sc.Channels {
 			if ch == channelType && core.StaffHasSoul(base, sc.ID) {
@@ -1215,7 +1248,7 @@ func ResolveStaffName(
 		}
 	}
 
-	// 4. Default staff.
+	// 5. Default staff.
 	if config.DefaultStaff != "" {
 		return config.DefaultStaff
 	}
@@ -1236,10 +1269,12 @@ func loadStaffForPrompt(staffID string, config *core.Config, baseDir string) *co
 		return &core.Staff{ID: staffID, Soul: core.Presets["default-assistant"].Soul}
 	}
 	// Enrich with nick from config.
-	for _, sc := range config.Staff {
-		if sc.ID == staffID {
-			staff.Nick = sc.Nick
-			break
+	if config != nil {
+		for _, sc := range config.Staff {
+			if sc.ID == staffID && sc.Nick != "" {
+				staff.Nick = sc.Nick
+				break
+			}
 		}
 	}
 	return staff

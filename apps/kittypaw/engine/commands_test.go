@@ -63,7 +63,7 @@ func TestHelpIsGeneratedFromRegisteredCommands(t *testing.T) {
 	}
 }
 
-func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
+func TestSlashStaffSwitchesConversationDefaultStaff(t *testing.T) {
 	st := openTestStore(t)
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "finance", "", "재무담당 스태프")
@@ -82,8 +82,12 @@ func TestSlashStaffSwitchesAccountConversationStaff(t *testing.T) {
 	if !strings.Contains(out, "finance") {
 		t.Fatalf("response should mention selected staff, got %q", out)
 	}
-	if got, ok, err := st.ConversationStaff(); err != nil || !ok || got != "finance" {
-		t.Fatalf("conversation staff = %q ok=%v err=%v, want finance", got, ok, err)
+	conv, ok, err := st.Conversation(store.DefaultConversationID)
+	if err != nil || !ok {
+		t.Fatalf("conversation ok=%v err=%v", ok, err)
+	}
+	if conv.DefaultStaffID != "finance" {
+		t.Fatalf("default staff = %q, want finance", conv.DefaultStaffID)
 	}
 }
 

@@ -20,9 +20,10 @@ type wsClient struct {
 	sessionID string
 }
 
-// WebSocketChannel implements Channel as a browser-based chat interface.
-// It listens on a bind address for incoming WebSocket upgrades, assigns
-// each connection a session ID, and bridges messages to/from the event system.
+// WebSocketChannel implements Channel as a legacy/test channel.
+//
+// Deprecated: use the server built-in /ws or /chat/ws endpoints instead.
+// This legacy/test channel is excluded from ChannelSpawner.Reconcile and does not implement the product WebSocket auth, heartbeat, turn_id, conversation_id, or permission flow.
 type WebSocketChannel struct {
 	accountID string
 	bindAddr  string
@@ -32,6 +33,8 @@ type WebSocketChannel struct {
 
 // NewWebSocket creates a WebSocketChannel listening on the given address.
 // accountID is stamped on every emitted Event for AccountRouter dispatch.
+//
+// Deprecated: use the server built-in /ws or /chat/ws endpoints instead.
 func NewWebSocket(accountID, bindAddr string) *WebSocketChannel {
 	return &WebSocketChannel{
 		accountID: accountID,

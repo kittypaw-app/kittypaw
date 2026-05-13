@@ -308,6 +308,61 @@ func (s *Server) handleConversationInfo(w http.ResponseWriter, r *http.Request) 
 }
 
 // ---------------------------------------------------------------------------
+// PATCH /api/v1/conversations/{id}
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleConversationUpdate(w http.ResponseWriter, r *http.Request) {
+	conversationID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if conversationID == "" {
+		writeError(w, http.StatusBadRequest, "conversation id is required")
+		return
+	}
+	var body struct {
+		DefaultStaffID *string `json:"default_staff_id"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.DefaultStaffID == nil {
+		writeError(w, http.StatusBadRequest, "default_staff_id is required")
+		return
+	}
+	staffID := strings.TrimSpace(*body.DefaultStaffID)
+	if staffID != "" {
+		sess := s.defaultSession()
+		if sess == nil {
+			writeError(w, http.StatusInternalServerError, "session unavailable")
+			return
+		}
+		base, err := core.ResolveBaseDir(sess.BaseDir)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resolved, ok, err := core.ResolveStaffReference(base, staffID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusBadRequest, "staff not found")
+			return
+		}
+		staffID = resolved
+	}
+	conversation, err := s.store.SetConversationDefaultStaff(conversationID, staffID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation": conversation})
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/conversations/{id}/messages
 // ---------------------------------------------------------------------------
 
@@ -347,7 +402,7 @@ func (s *Server) handleConversationMessages(w http.ResponseWriter, r *http.Reque
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
-	skills, err := core.LoadAllSkillsFrom(s.session.BaseDir)
+	skills, err := core.LoadAllSkillsFrom(s.defaultSession().BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -401,7 +456,7 @@ func (s *Server) handleSkillsRun(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(payload)
 	event := core.Event{Type: core.EventWebChat, Payload: raw}
 
-	output, err := s.session.Run(r.Context(), event, nil)
+	output, err := s.defaultSession().Run(r.Context(), event, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -425,7 +480,7 @@ func (s *Server) handleSkillsTeach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := engine.HandleTeach(r.Context(), body.Description, "api", s.session)
+	result, err := engine.HandleTeach(r.Context(), body.Description, "api", s.defaultSession())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -477,7 +532,7 @@ func (s *Server) handleTeachApprove(w http.ResponseWriter, r *http.Request) {
 		Trigger:     core.SkillTrigger{Type: trigger, Cron: body.Schedule},
 		Permissions: engine.DetectPermissions(body.Code),
 	}
-	if err := engine.ApproveSkill(s.session.BaseDir, result); err != nil {
+	if err := engine.ApproveSkill(s.defaultSession().BaseDir, result); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -494,7 +549,7 @@ func (s *Server) handleSkillsDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := core.DeleteSkillFrom(s.session.BaseDir, name); err != nil {
+	if err := core.DeleteSkillFrom(s.defaultSession().BaseDir, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -511,7 +566,7 @@ func (s *Server) handleSkillEnable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := core.EnableSkillFrom(s.session.BaseDir, name); err != nil {
+	if err := core.EnableSkillFrom(s.defaultSession().BaseDir, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -528,7 +583,7 @@ func (s *Server) handleSkillDisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := core.DisableSkillFrom(s.session.BaseDir, name); err != nil {
+	if err := core.DisableSkillFrom(s.defaultSession().BaseDir, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -545,7 +600,7 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	skill, code, err := core.LoadSkillFrom(s.session.BaseDir, name)
+	skill, code, err := core.LoadSkillFrom(s.defaultSession().BaseDir, name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -563,7 +618,7 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 	messages := []core.LlmMessage{
 		{Role: core.RoleUser, Content: prompt},
 	}
-	resp, err := s.session.Provider.Generate(engine.WithLLMCallKind(r.Context(), "skill.explain"), messages)
+	resp, err := s.defaultSession().Provider.Generate(engine.WithLLMCallKind(r.Context(), "skill.explain"), messages)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -625,7 +680,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(payload)
 	event := core.Event{Type: core.EventWebChat, Payload: raw}
 
-	output, err := s.session.Run(r.Context(), event, nil)
+	output, err := s.defaultSession().Run(r.Context(), event, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -638,19 +693,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleConfigCheck(w http.ResponseWriter, _ *http.Request) {
+	cfg := s.getConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"channels":       len(s.config.Channels),
-		"runners":        len(s.config.Runners),
-		"models":         len(s.config.Models),
-		"mcp_servers":    len(s.config.MCPServers),
-		"staff":          len(s.config.Staff),
-		"autonomy_level": string(s.config.AutonomyLevel),
+		"channels":       len(cfg.Channels),
+		"runners":        len(cfg.Runners),
+		"models":         len(cfg.Models),
+		"mcp_servers":    len(cfg.MCPServers),
+		"staff":          len(cfg.Staff),
+		"autonomy_level": string(cfg.AutonomyLevel),
 		"features": map[string]any{
-			"progressive_retry":  s.config.Features.ProgressiveRetry,
-			"context_compaction": s.config.Features.ContextCompaction,
-			"model_routing":      s.config.Features.ModelRouting,
-			"background_runners": s.config.Features.BackgroundRunners,
-			"daily_token_limit":  s.config.Features.DailyTokenLimit,
+			"progressive_retry":  cfg.Features.ProgressiveRetry,
+			"context_compaction": cfg.Features.ContextCompaction,
+			"model_routing":      cfg.Features.ModelRouting,
+			"background_runners": cfg.Features.BackgroundRunners,
+			"daily_token_limit":  cfg.Features.DailyTokenLimit,
 		},
 	})
 }
@@ -855,12 +911,13 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Swap the live config under configMu so HTTP handlers reading via
-	// getConfig() see a consistent snapshot. The session shares this
-	// pointer and picks up new values on the next Run().
-	s.configMu.Lock()
-	*s.config = *cfg
-	s.configMu.Unlock()
+	oldScheduler, err := s.applyAccountConfigLocked(defaultID, cfg)
+	if err != nil {
+		slog.Error("reload apply failed", "account", defaultID, "error", err)
+		s.accountMu.Unlock()
+		writeError(w, http.StatusInternalServerError, "reload apply failed: "+err.Error())
+		return
+	}
 	slog.Info("config reloaded")
 
 	result := map[string]any{"success": true}
@@ -872,6 +929,9 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.accountMu.Unlock()
+	if oldScheduler != nil {
+		oldScheduler.Wait()
+	}
 
 	if s.postReloadHook != nil {
 		if err := s.postReloadHook(r.Context()); err != nil {
@@ -950,7 +1010,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		// For native packages, install from temp dir.
 		if source.Format == core.SourceFormatNative {
 			defer os.RemoveAll(source.TempDir)
-			result, err = core.InstallSkillSource(s.session.BaseDir, source.TempDir, core.InstallOptions{
+			result, err = core.InstallSkillSource(s.defaultSession().BaseDir, source.TempDir, core.InstallOptions{
 				SourceURL: source.SourceURL,
 			})
 		} else {
@@ -965,7 +1025,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, wErr.Error())
 				return
 			}
-			result, err = core.InstallSkillSource(s.session.BaseDir, tmpDir, core.InstallOptions{
+			result, err = core.InstallSkillSource(s.defaultSession().BaseDir, tmpDir, core.InstallOptions{
 				MdExecutionMode: mdMode,
 				SourceURL:       source.SourceURL,
 			})
@@ -986,7 +1046,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "source path must be a directory")
 			return
 		}
-		result, err = core.InstallSkillSource(s.session.BaseDir, cleanPath, core.InstallOptions{
+		result, err = core.InstallSkillSource(s.defaultSession().BaseDir, cleanPath, core.InstallOptions{
 			MdExecutionMode: mdMode,
 		})
 	}
@@ -1032,7 +1092,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handlePackagesList(w http.ResponseWriter, _ *http.Request) {
-	packages, err := s.pkgManager.ListInstalled()
+	pkgManager := s.defaultPackageManager()
+	packages, err := pkgManager.ListInstalled()
 	if err != nil {
 		writeError(w, 500, "list packages: "+err.Error())
 		return
@@ -1046,7 +1107,7 @@ func (s *Server) handlePackagesList(w http.ResponseWriter, _ *http.Request) {
 
 	var result []pkgResp
 	for _, pkg := range packages {
-		vals, _ := s.pkgManager.GetConfig(pkg.Meta.ID)
+		vals, _ := pkgManager.GetConfig(pkg.Meta.ID)
 		schema := configFieldsToDTO(pkg.Config)
 		masked := maskSecrets(pkg.Config, vals)
 		result = append(result, pkgResp{
@@ -1072,19 +1133,20 @@ func (s *Server) handlePackageDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pkg, _, err := s.pkgManager.LoadPackage(id)
+	pkgManager := s.defaultPackageManager()
+	pkg, _, err := pkgManager.LoadPackage(id)
 	if err != nil {
 		writeError(w, 404, "package not found: "+err.Error())
 		return
 	}
 
-	vals, _ := s.pkgManager.GetConfig(id)
+	vals, _ := pkgManager.GetConfig(id)
 	schema := configFieldsToDTO(pkg.Config)
 	masked := maskSecrets(pkg.Config, vals)
 
 	// Read README if available.
 	var readme string
-	pkgDir, dirErr := core.PackagesDirFrom(s.session.BaseDir)
+	pkgDir, dirErr := core.PackagesDirFrom(s.defaultSession().BaseDir)
 	if dirErr == nil {
 		if data, readErr := os.ReadFile(filepath.Join(pkgDir, id, "README.md")); readErr == nil {
 			readme = string(data)
@@ -1123,7 +1185,8 @@ func (s *Server) handlePackageConfigSet(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Validate all keys exist before writing any.
-	pkg, _, err := s.pkgManager.LoadPackage(id)
+	pkgManager := s.defaultPackageManager()
+	pkg, _, err := pkgManager.LoadPackage(id)
 	if err != nil {
 		writeError(w, 404, "package not found: "+err.Error())
 		return
@@ -1141,7 +1204,7 @@ func (s *Server) handlePackageConfigSet(w http.ResponseWriter, r *http.Request) 
 	}
 
 	for k, v := range req.Values {
-		if err := s.pkgManager.SetConfig(id, k, v); err != nil {
+		if err := pkgManager.SetConfig(id, k, v); err != nil {
 			writeError(w, 500, "set config "+k+": "+err.Error())
 			return
 		}
@@ -1159,7 +1222,7 @@ func (s *Server) handlePackageUninstall(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "package id is required")
 		return
 	}
-	if err := s.pkgManager.Uninstall(id); err != nil {
+	if err := s.defaultPackageManager().Uninstall(id); err != nil {
 		writeError(w, 500, "uninstall: "+err.Error())
 		return
 	}
@@ -1201,7 +1264,8 @@ func (s *Server) handlePackageInstallFromRegistry(w http.ResponseWriter, r *http
 		return
 	}
 
-	pkg, err := s.pkgManager.InstallFromRegistry(rc, *entry)
+	pkgManager := s.defaultPackageManager()
+	pkg, err := pkgManager.InstallFromRegistry(rc, *entry)
 	if err != nil {
 		writeError(w, 500, "install failed: "+err.Error())
 		return
@@ -1209,7 +1273,7 @@ func (s *Server) handlePackageInstallFromRegistry(w http.ResponseWriter, r *http
 
 	// Set config values if provided.
 	for k, v := range req.Config {
-		if setErr := s.pkgManager.SetConfig(pkg.Meta.ID, k, v); setErr != nil {
+		if setErr := pkgManager.SetConfig(pkg.Meta.ID, k, v); setErr != nil {
 			slog.Warn("post-install config set failed", "package", pkg.Meta.ID, "key", k, "error", setErr)
 		}
 	}

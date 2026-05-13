@@ -114,6 +114,7 @@ type ConversationTurnRecord struct {
 	Code           string           `json:"code,omitempty"`
 	Result         string           `json:"result,omitempty"`
 	ToolTraces     []core.ToolTrace `json:"tool_traces,omitempty"`
+	StaffID        string           `json:"staff_id,omitempty"`
 	Channel        string           `json:"channel,omitempty"`
 	ChannelUserID  string           `json:"channel_user_id,omitempty"`
 	ChatID         string           `json:"chat_id,omitempty"`
@@ -567,6 +568,37 @@ func (s *Store) Conversation(conversationID string) (*ConversationRecord, bool, 
 	return rec, true, nil
 }
 
+// SetConversationDefaultStaff updates the staff routed by default for one conversation.
+func (s *Store) SetConversationDefaultStaff(conversationID, staffID string) (*ConversationRecord, error) {
+	conversationID = normalizeConversationID(conversationID)
+	staffID = strings.TrimSpace(staffID)
+	if conversationID == "" {
+		return nil, errors.New("conversation id is required")
+	}
+	if staffID != "" {
+		if err := core.ValidateStaffID(staffID); err != nil {
+			return nil, err
+		}
+	}
+	res, err := s.db.Exec(`
+		UPDATE conversations
+		SET default_staff_id = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		staffID, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, errors.New("conversation not found")
+	}
+	rec, _, err := s.Conversation(conversationID)
+	return rec, err
+}
+
 // ListConversations returns non-archived conversations ordered by activity.
 func (s *Store) ListConversations(limit int) ([]ConversationRecord, error) {
 	if limit <= 0 {
@@ -989,7 +1021,7 @@ func (s *Store) ListConversationTurns(limit int) ([]ConversationTurnRecord, erro
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		ORDER BY id DESC
 		LIMIT ?`, limit)
@@ -1023,7 +1055,7 @@ func (s *Store) ListConversationTurnsForChat(chatID string, limit int) ([]Conver
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE chat_id = ?
 		ORDER BY id DESC
@@ -1057,7 +1089,7 @@ func (s *Store) ListConversationTurnsForConversation(conversationID string, limi
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE conversation_id = ?
 		ORDER BY id DESC
@@ -1129,14 +1161,15 @@ func (s *Store) CompactConversationByID(conversationID string, keepRecent int) (
 func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn, conversationID string) error {
 	_, err := exec.Exec(`
 		INSERT INTO v2_conversation_turns
-			(conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalizeConversationID(conversationID),
 		string(turn.Role),
 		turn.Content,
 		nullString(turn.Code),
 		nullString(turn.Result),
 		nullString(toolTraceJSON(turn.ToolTraces)),
+		turn.StaffID,
 		turn.Channel,
 		turn.ChannelUserID,
 		turn.ChatID,
@@ -1177,7 +1210,7 @@ func (s *Store) listConversationTurnsAfterForConversation(conversationID string,
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE conversation_id = ? AND id > ?
 		ORDER BY id DESC
@@ -1231,7 +1264,7 @@ func conversationRecordsToTurns(records []ConversationTurnRecord) []core.Convers
 
 func (s *Store) listAllConversationTurnsForConversation(conversationID string) ([]ConversationTurnRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, conversation_id, role, content, code, result, tool_trace_json, channel, channel_user_id, chat_id, message_id, timestamp
+		SELECT id, conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp
 		FROM v2_conversation_turns
 		WHERE conversation_id = ?
 		ORDER BY id ASC`, normalizeConversationID(conversationID))
@@ -1267,6 +1300,7 @@ func scanConversationTurnRecord(scanner conversationTurnScanner) (ConversationTu
 		&code,
 		&result,
 		&toolTraceJSON,
+		&rec.StaffID,
 		&rec.Channel,
 		&rec.ChannelUserID,
 		&rec.ChatID,
@@ -1292,6 +1326,7 @@ func (r ConversationTurnRecord) Turn() core.ConversationTurn {
 		Code:           r.Code,
 		Result:         r.Result,
 		ToolTraces:     r.ToolTraces,
+		StaffID:        r.StaffID,
 		Channel:        r.Channel,
 		ChannelUserID:  r.ChannelUserID,
 		ChatID:         r.ChatID,
@@ -2628,14 +2663,28 @@ func (s *Store) QueryPermissionLog(limit int) ([]AuditRecord, error) {
 
 const maxPendingRetries = 5
 
-// EnqueueResponse saves a failed response for later retry, tagged with the
-// owning accountID so retryPendingResponses can route back to the correct
-// per-account channel instance.
+// EnqueueResponse saves a response for later retry, tagged with the owning
+// accountID so retryPendingResponses can route back to the correct per-account
+// channel instance.
 func (s *Store) EnqueueResponse(accountID, eventType, chatID, response string) error {
-	_, err := s.db.Exec(`
+	_, err := s.EnqueueResponseWithID(accountID, eventType, chatID, response)
+	return err
+}
+
+// EnqueueResponseWithID saves a response and returns the durable row id. Channel
+// dispatch uses this as a pre-send outbox row and deletes it after send success.
+func (s *Store) EnqueueResponseWithID(accountID, eventType, chatID, response string) (int64, error) {
+	res, err := s.db.Exec(`
 		INSERT INTO pending_responses (account_id, event_type, chat_id, response)
 		VALUES (?, ?, ?, ?)`, accountID, eventType, chatID, response)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // DequeuePendingResponses returns up to limit responses whose next_retry is in the past.

@@ -137,6 +137,41 @@ func TestConversationsAPICreatesGeneralConversation(t *testing.T) {
 	}
 }
 
+func TestConversationsAPIUpdatesDefaultStaffID(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	seedServerActiveStaff(t, srv.session.BaseDir, "dev-pm", "development pm")
+	conv, err := srv.store.CreateConversation(store.CreateConversationRequest{
+		ScopeType: "general",
+		ScopeID:   "staff-route",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	var updated struct {
+		Conversation struct {
+			ID             string `json:"id"`
+			DefaultStaffID string `json:"default_staff_id"`
+		} `json:"conversation"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPatch, "/api/v1/conversations/"+url.PathEscape(conv.ID), map[string]string{
+		"default_staff_id": "dev-pm",
+	}, http.StatusOK, &updated)
+	if updated.Conversation.ID != conv.ID || updated.Conversation.DefaultStaffID != "dev-pm" {
+		t.Fatalf("updated conversation = %+v, want dev-pm", updated.Conversation)
+	}
+}
+
+func seedServerActiveStaff(t *testing.T, base, id, soul string) {
+	t.Helper()
+	if err := core.WriteStaffDraft(base, core.StaffMetaFile{ID: id}, soul); err != nil {
+		t.Fatalf("WriteStaffDraft(%s): %v", id, err)
+	}
+	if err := core.ActivateStaffDraft(base, id); err != nil {
+		t.Fatalf("ActivateStaffDraft(%s): %v", id, err)
+	}
+}
+
 func TestConversationInfoIncludesRolloverMetadata(t *testing.T) {
 	srv := newProjectsAPITestServer(t)
 	parent, err := srv.store.CreateConversation(store.CreateConversationRequest{ScopeType: "general", ScopeID: "parent"})
