@@ -65,7 +65,7 @@ func notificationSent(ctx context.Context) bool {
 	return false
 }
 
-func deliveryTargetFromContextOrEvent(ctx context.Context, s *Session) core.DeliveryTarget {
+func deliveryTargetFromContextOrEvent(ctx context.Context, s *AccountRuntime) core.DeliveryTarget {
 	if target, ok := DeliveryTargetFromContext(ctx); ok {
 		if strings.TrimSpace(target.AccountID) == "" && s != nil {
 			target.AccountID = strings.TrimSpace(s.AccountID)
@@ -75,7 +75,7 @@ func deliveryTargetFromContextOrEvent(ctx context.Context, s *Session) core.Deli
 	return deliveryTargetFromEvent(ctx, s)
 }
 
-func durableDeliveryTargetFromContextOrEvent(ctx context.Context, s *Session) core.DeliveryTarget {
+func durableDeliveryTargetFromContextOrEvent(ctx context.Context, s *AccountRuntime) core.DeliveryTarget {
 	target := deliveryTargetFromContextOrEvent(ctx, s)
 	if !isNonDurableDeliveryChannel(target.Channel) {
 		return target
@@ -92,7 +92,7 @@ func isNonDurableDeliveryChannel(channel string) bool {
 	}
 }
 
-func configuredDurableDeliveryTarget(s *Session, accountID string) core.DeliveryTarget {
+func configuredDurableDeliveryTarget(s *AccountRuntime, accountID string) core.DeliveryTarget {
 	if s == nil || s.Config == nil {
 		return core.DeliveryTarget{}
 	}
@@ -113,7 +113,7 @@ func configuredDurableDeliveryTarget(s *Session, accountID string) core.Delivery
 	return core.DeliveryTarget{}
 }
 
-func deliveryTargetFromEvent(ctx context.Context, s *Session) core.DeliveryTarget {
+func deliveryTargetFromEvent(ctx context.Context, s *AccountRuntime) core.DeliveryTarget {
 	var target core.DeliveryTarget
 	if s != nil {
 		target.AccountID = strings.TrimSpace(s.AccountID)
@@ -132,7 +132,7 @@ func deliveryTargetFromEvent(ctx context.Context, s *Session) core.DeliveryTarge
 	var payload core.ChatPayload
 	if len(event.Payload) > 0 && json.Unmarshal(event.Payload, &payload) == nil {
 		target.ChatID = strings.TrimSpace(payload.ChatID)
-		target.ChannelUserID = strings.TrimSpace(payload.SessionID)
+		target.ChannelUserID = strings.TrimSpace(payload.SourceSessionID)
 		target.ReplyToMessage = strings.TrimSpace(payload.ReplyToMessageID)
 		if id := strings.TrimSpace(payload.ConversationID); id != "" {
 			target.ConversationID = id

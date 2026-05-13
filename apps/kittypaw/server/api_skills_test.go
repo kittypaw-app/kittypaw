@@ -12,7 +12,7 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.Server.APIKey = "api-key"
 	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
-	baseDir := srv.defaultSession().BaseDir
+	baseDir := srv.defaultRuntime().BaseDir
 
 	runAt := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
 	if err := core.SaveSkillTo(baseDir, &core.Skill{

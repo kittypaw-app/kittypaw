@@ -13,7 +13,7 @@ import (
 // ("scheduler.runSkill", "server.dispatchLoop") so structured logs
 // identify which layer caught the panic. Nil-safe on sess and
 // sess.Health for bare-struct test fixtures.
-func RecoverAccountPanic(sess *Session, site string, r any) {
+func RecoverAccountPanic(sess *AccountRuntime, site string, r any) {
 	account := ""
 	if sess != nil {
 		account = sess.AccountID
@@ -31,7 +31,7 @@ func RecoverAccountPanic(sess *Session, site string, r any) {
 
 // MarkAccountReady promotes Health back to Ready on clean completion so a
 // transient panic self-heals on the next successful iteration. Nil-safe.
-func MarkAccountReady(sess *Session) {
+func MarkAccountReady(sess *AccountRuntime) {
 	if sess == nil || sess.Health == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func MarkAccountReady(sess *Session) {
 // marks the account Degraded via RecoverAccountPanic; clean completion
 // promotes it back to Ready. Use from every worker goroutine where a
 // single panic should not wedge the account.
-func runWithAccountRecover(sess *Session, site string, fn func()) {
+func runWithAccountRecover(sess *AccountRuntime, site string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			RecoverAccountPanic(sess, site, r)

@@ -27,7 +27,7 @@ type exchangeRateDisplayPreference struct {
 
 type PreferenceConfirmationBranch struct{}
 
-func (b *PreferenceConfirmationBranch) Execute(_ context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *PreferenceConfirmationBranch) Execute(_ context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Store == nil {
 		return "", errBranchFallback
 	}
@@ -52,7 +52,7 @@ func (b *PreferenceConfirmationBranch) Execute(_ context.Context, sess *Session,
 	}
 }
 
-func loadPendingPreferenceConfirmation(sess *Session) (PendingPreferenceConfirmation, bool) {
+func loadPendingPreferenceConfirmation(sess *AccountRuntime) (PendingPreferenceConfirmation, bool) {
 	if sess == nil {
 		return PendingPreferenceConfirmation{}, false
 	}
@@ -70,7 +70,7 @@ func loadPendingPreferenceConfirmation(sess *Session) (PendingPreferenceConfirma
 	return PendingPreferenceConfirmation{}, false
 }
 
-func acceptPreferenceConfirmation(sess *Session, pending PendingPreferenceConfirmation) (string, error) {
+func acceptPreferenceConfirmation(sess *AccountRuntime, pending PendingPreferenceConfirmation) (string, error) {
 	switch pending.Key {
 	case exchangeRateDisplayPreferenceName:
 		pref, ok := parseExchangeRateDisplayPreference(pending.Value)
@@ -88,7 +88,7 @@ func acceptPreferenceConfirmation(sess *Session, pending PendingPreferenceConfir
 	}
 }
 
-func rejectPreferenceConfirmation(sess *Session, pending PendingPreferenceConfirmation) (string, error) {
+func rejectPreferenceConfirmation(sess *AccountRuntime, pending PendingPreferenceConfirmation) (string, error) {
 	_ = sess.Store.SetUserContext(preferenceRejectedPrefix+pending.Key, pending.Value, "user_rejection")
 	clearPendingPreference(sess, pending.Key)
 	switch pending.Key {
@@ -99,7 +99,7 @@ func rejectPreferenceConfirmation(sess *Session, pending PendingPreferenceConfir
 	}
 }
 
-func clearPendingPreference(sess *Session, key string) {
+func clearPendingPreference(sess *AccountRuntime, key string) {
 	if sess == nil {
 		return
 	}
@@ -111,7 +111,7 @@ func clearPendingPreference(sess *Session, key string) {
 	}
 }
 
-func loadExchangeRateDisplayPreference(sess *Session) (exchangeRateDisplayPreference, bool) {
+func loadExchangeRateDisplayPreference(sess *AccountRuntime) (exchangeRateDisplayPreference, bool) {
 	raw, ok := getUserContextValue(sess, preferencePrefix+exchangeRateDisplayPreferenceName)
 	if !ok {
 		return exchangeRateDisplayPreference{}, false
@@ -119,7 +119,7 @@ func loadExchangeRateDisplayPreference(sess *Session) (exchangeRateDisplayPrefer
 	return parseExchangeRateDisplayPreference(raw)
 }
 
-func exchangeRateDisplayPreferenceCandidate(sess *Session) (exchangeRateDisplayPreference, bool) {
+func exchangeRateDisplayPreferenceCandidate(sess *AccountRuntime) (exchangeRateDisplayPreference, bool) {
 	if _, ok := loadExchangeRateDisplayPreference(sess); ok {
 		return exchangeRateDisplayPreference{}, false
 	}
@@ -292,7 +292,7 @@ func formatScaledExchangeRateNumber(v float64) string {
 	return strings.TrimRight(strings.TrimRight(out, "0"), ".")
 }
 
-func maybeAppendExchangeRatePreferenceConfirmation(sess *Session, output string) string {
+func maybeAppendExchangeRatePreferenceConfirmation(sess *AccountRuntime, output string) string {
 	if sess == nil || sess.Store == nil || sess.Pipeline == nil {
 		return output
 	}
@@ -316,7 +316,7 @@ func marshalExchangeRateDisplayPreference(pref exchangeRateDisplayPreference) st
 	return string(data)
 }
 
-func getUserContextValue(sess *Session, key string) (string, bool) {
+func getUserContextValue(sess *AccountRuntime, key string) (string, bool) {
 	if sess == nil || sess.Store == nil || key == "" {
 		return "", false
 	}

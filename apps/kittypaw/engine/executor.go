@@ -120,7 +120,7 @@ func needsPermission(skillName, method string, cfg *core.Config) bool {
 }
 
 // resolveSkillCall dispatches a single skill call to the appropriate handler.
-func resolveSkillCall(ctx context.Context, call core.SkillCall, s *Session, permFn PermissionCallback) (string, error) {
+func resolveSkillCall(ctx context.Context, call core.SkillCall, s *AccountRuntime, permFn PermissionCallback) (string, error) {
 	slog.Debug("resolving skill call", "skill", call.SkillName, "method", call.Method)
 
 	if staffID, allowed := staffAllowsSkill(ctx, call.SkillName); !allowed {
@@ -254,7 +254,7 @@ const codeExecMaxOutputBytes = 8000
 // computation when uncertain about a number" — and the lockdown: no IO
 // surface, so a Code.exec call is guaranteed side-effect-free even if
 // the model writes adversarial code by mistake.
-func executeCode(_ context.Context, call core.SkillCall, _ *Session) (string, error) {
+func executeCode(_ context.Context, call core.SkillCall, _ *AccountRuntime) (string, error) {
 	if call.Method != "exec" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Code method: %s", call.Method)})
 	}
@@ -337,7 +337,7 @@ func truncateLogs(logs []string) []string {
 // against this value instead of a blanket bypass, preventing URL-swap attacks.
 const httpValidatedHostKey contextKey = "httpValidatedHost"
 
-func executeHTTP(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeHTTP(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "get", "post", "put", "delete", "patch", "head", "search", "fetch":
 	default:
@@ -496,7 +496,7 @@ func backendName(b SearchBackend) string {
 	}
 }
 
-func webFetch(ctx context.Context, targetURL string, s *Session) (string, error) {
+func webFetch(ctx context.Context, targetURL string, s *AccountRuntime) (string, error) {
 	var cfg *core.WebConfig
 	var browserExecutor browserSkillExecutor
 	if s != nil && s.Config != nil {
@@ -528,7 +528,7 @@ type fileToolScope struct {
 	workspaceIDs []string
 }
 
-func currentFileToolScope(ctx context.Context, s *Session) (fileToolScope, error) {
+func currentFileToolScope(ctx context.Context, s *AccountRuntime) (fileToolScope, error) {
 	scope := fileToolScope{}
 	if s == nil {
 		return scope, nil
@@ -623,7 +623,7 @@ func normalizeFileToolAllowedPaths(paths []string) ([]string, error) {
 	return allowed, nil
 }
 
-func executeFile(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeFile(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	// Index-based methods dispatch early — they don't take a file path.
 	switch call.Method {
 	case "search":
@@ -797,7 +797,7 @@ func executeFileEdit(resolvedPath, oldText, newText string) (string, error) {
 
 // --- File index methods ---
 
-func executeFileSearch(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeFileSearch(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if s.Indexer == nil {
 		return "", fmt.Errorf("workspace indexer not available")
 	}
@@ -846,7 +846,7 @@ func executeFileSearch(ctx context.Context, call core.SkillCall, s *Session) (st
 	return jsonResult(result)
 }
 
-func executeFileStats(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeFileStats(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if s.Indexer == nil {
 		return "", fmt.Errorf("workspace indexer not available")
 	}
@@ -869,7 +869,7 @@ func executeFileStats(ctx context.Context, call core.SkillCall, s *Session) (str
 	return jsonResult(result)
 }
 
-func executeFileReindex(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeFileReindex(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if s.Indexer == nil {
 		return "", fmt.Errorf("workspace indexer not available")
 	}
@@ -928,7 +928,7 @@ func executeFileReindex(ctx context.Context, call core.SkillCall, s *Session) (s
 // resolveForValidation → isPathAllowedResolved → size cap — then loads
 // the file bytes and delegates to QuerySummary, which owns caching,
 // singleflight dedup, guard-rails, and provider calls.
-func executeFileSummary(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeFileSummary(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if len(call.Args) == 0 {
 		return "", fmt.Errorf("path argument required")
 	}
@@ -1015,7 +1015,7 @@ func executeFileSummary(ctx context.Context, call core.SkillCall, s *Session) (s
 // resolveWorkspaceID finds the file index root whose root contains resolvedPath.
 // Roots are stored symlink-resolved where possible, so a simple prefix match
 // against the already-resolved input is sufficient.
-func resolveWorkspaceID(s *Session, resolvedPath string) (string, error) {
+func resolveWorkspaceID(s *AccountRuntime, resolvedPath string) (string, error) {
 	roots, err := s.Store.ListFileIndexRoots()
 	if err != nil {
 		return "", fmt.Errorf("list file index roots: %w", err)
@@ -1051,7 +1051,7 @@ func resolveFileToolPath(rawPath string, allowedPaths []string) (string, error) 
 
 // --- Storage ---
 
-func executeStorage(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeStorage(_ context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "get":
 		if len(call.Args) == 0 {
@@ -1105,7 +1105,7 @@ func executeStorage(_ context.Context, call core.SkillCall, s *Session) (string,
 
 // --- Shell ---
 
-func executeShell(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeShell(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "exec" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Shell method: %s", call.Method)})
 	}
@@ -1133,7 +1133,7 @@ func executeShell(ctx context.Context, call core.SkillCall, s *Session) (string,
 
 // --- Git ---
 
-func executeGit(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeGit(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	var args []string
 
 	switch call.Method {
@@ -1267,7 +1267,7 @@ func newSubLLMToolUseID() string {
 	return "toolu_" + hex.EncodeToString(b[:])
 }
 
-func executeLLM(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeLLM(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "generate" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Llm method: %s", call.Method)})
 	}
@@ -1296,7 +1296,7 @@ func executeLLM(ctx context.Context, call core.SkillCall, s *Session) (string, e
 
 // --- Memory ---
 
-func executeMemory(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "search":
 		if len(call.Args) == 0 {
@@ -1357,7 +1357,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *Session) (string, 
 
 // --- Todo ---
 
-func executeTodo(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeTodo(_ context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	ns := "todo"
 	switch call.Method {
 	case "list":
@@ -1449,7 +1449,7 @@ type projectsJobOptions struct {
 	Text          string `json:"text"`
 }
 
-func executeProjects(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeProjects(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if s.Store == nil {
 		return jsonResult(map[string]any{"error": "projects store not configured"})
 	}
@@ -1619,7 +1619,7 @@ func executeProjects(ctx context.Context, call core.SkillCall, s *Session) (stri
 	}
 }
 
-func executeProjectsCreateTicket(call core.SkillCall, s *Session) (string, error) {
+func executeProjectsCreateTicket(call core.SkillCall, s *AccountRuntime) (string, error) {
 	opts := projectsTicketOptionsArg(call, 0)
 	if strings.TrimSpace(opts.Project) == "" {
 		return jsonResult(map[string]any{"error": "project required"})
@@ -1643,7 +1643,7 @@ func executeProjectsCreateTicket(call core.SkillCall, s *Session) (string, error
 	return jsonResult(map[string]any{"ticket": ticket})
 }
 
-func executeProjectsMoveTicket(call core.SkillCall, s *Session) (string, error) {
+func executeProjectsMoveTicket(call core.SkillCall, s *AccountRuntime) (string, error) {
 	ticketID, err := projectsToolStringArg(call, 0, "ticket")
 	if err != nil {
 		return jsonResult(map[string]any{"error": err.Error()})
@@ -1660,7 +1660,7 @@ func executeProjectsMoveTicket(call core.SkillCall, s *Session) (string, error) 
 	return jsonResult(map[string]any{"ticket": ticket})
 }
 
-func executeProjectsCommentTicket(call core.SkillCall, s *Session) (string, error) {
+func executeProjectsCommentTicket(call core.SkillCall, s *AccountRuntime) (string, error) {
 	ticketID, err := projectsToolStringArg(call, 0, "ticket")
 	if err != nil {
 		return jsonResult(map[string]any{"error": err.Error()})
@@ -1677,7 +1677,7 @@ func executeProjectsCommentTicket(call core.SkillCall, s *Session) (string, erro
 	return jsonResult(map[string]any{"message": msg})
 }
 
-func executeProjectsCreateBriefDraft(call core.SkillCall, s *Session) (string, error) {
+func executeProjectsCreateBriefDraft(call core.SkillCall, s *AccountRuntime) (string, error) {
 	projectID, err := projectsToolStringArg(call, 0, "project")
 	if err != nil {
 		return jsonResult(map[string]any{"error": err.Error()})
@@ -1700,7 +1700,7 @@ func executeProjectsCreateBriefDraft(call core.SkillCall, s *Session) (string, e
 	return jsonResult(map[string]any{"draft": draft})
 }
 
-func executeProjectsUpdateBriefDraft(call core.SkillCall, s *Session) (string, error) {
+func executeProjectsUpdateBriefDraft(call core.SkillCall, s *AccountRuntime) (string, error) {
 	draftID, err := projectsToolStringArg(call, 0, "draft")
 	if err != nil {
 		return jsonResult(map[string]any{"error": err.Error()})
@@ -1732,7 +1732,7 @@ func executeProjectsUpdateBriefDraft(call core.SkillCall, s *Session) (string, e
 	return jsonResult(map[string]any{"draft": draft})
 }
 
-func executeProjectsPlanJob(call core.SkillCall, s *Session) (string, error) {
+func executeProjectsPlanJob(call core.SkillCall, s *AccountRuntime) (string, error) {
 	ticketID, err := projectsToolStringArg(call, 0, "ticket")
 	if err != nil {
 		return jsonResult(map[string]any{"error": err.Error()})
@@ -1827,7 +1827,7 @@ func executeEnv(call core.SkillCall) (string, error) {
 
 // --- Channel sends (Telegram, Slack, Discord) ---
 
-func executeTelegram(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeTelegram(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method == "sendVoice" {
 		return jsonResult(map[string]any{"error": "Telegram.sendVoice delivery is not implemented"})
 	}
@@ -1837,21 +1837,21 @@ func executeTelegram(ctx context.Context, call core.SkillCall, s *Session) (stri
 	return executePlatformSend(ctx, call, s, core.EventTelegram)
 }
 
-func executeSlack(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeSlack(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "send" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Slack method: %s", call.Method)})
 	}
 	return executePlatformSend(ctx, call, s, core.EventSlack)
 }
 
-func executeDiscord(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeDiscord(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "send" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Discord method: %s", call.Method)})
 	}
 	return executePlatformSend(ctx, call, s, core.EventDiscord)
 }
 
-func executeNotify(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeNotify(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "send" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Notify method: %s", call.Method)})
 	}
@@ -1885,7 +1885,7 @@ func executeNotify(ctx context.Context, call core.SkillCall, s *Session) (string
 	return jsonResult(map[string]any{"success": true})
 }
 
-func executePlatformSend(ctx context.Context, call core.SkillCall, s *Session, channel core.EventType) (string, error) {
+func executePlatformSend(ctx context.Context, call core.SkillCall, s *AccountRuntime, channel core.EventType) (string, error) {
 	if len(call.Args) == 0 {
 		return jsonResult(map[string]any{"error": "text required"})
 	}
@@ -1916,7 +1916,7 @@ func executePlatformSend(ctx context.Context, call core.SkillCall, s *Session, c
 
 // --- Skill Management ---
 
-func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "list":
 		skills, err := core.LoadAllSkillsFrom(s.BaseDir)
@@ -2135,7 +2135,7 @@ func resolveInstalledPackageID(pm *core.PackageManager, name string) (string, er
 
 // executeSkillSearch wraps RegistryClient.SearchEntries; empty query browses
 // the full index, keyword query narrows for the suffix-offer flow.
-func executeSkillSearch(query string, s *Session) (string, error) {
+func executeSkillSearch(query string, s *AccountRuntime) (string, error) {
 	const (
 		maxSuffixEntries = 5
 		maxBrowseEntries = 30
@@ -2179,7 +2179,7 @@ func executeSkillSearch(query string, s *Session) (string, error) {
 // who want a hard gate must list "Skill.installFromRegistry" under
 // [permissions] require_approval and use a channel that implements
 // channel.Confirmer (currently Telegram).
-func executeSkillInstallRegistry(_ context.Context, id string, s *Session) (string, error) {
+func executeSkillInstallRegistry(_ context.Context, id string, s *AccountRuntime) (string, error) {
 	if s.PackageManager == nil {
 		return jsonResult(map[string]any{"error": "package manager not configured"})
 	}
@@ -2253,11 +2253,11 @@ func formatOptionalScheduleTime(t *time.Time) string {
 
 // runSkillOrPackage executes a user-created skill or installed package by name.
 // User skills take priority over packages with the same name.
-func runSkillOrPackage(ctx context.Context, name string, s *Session) (string, error) {
+func runSkillOrPackage(ctx context.Context, name string, s *AccountRuntime) (string, error) {
 	return runSkillOrPackageWithParams(ctx, name, s, nil)
 }
 
-func runSkillOrPackageWithParams(ctx context.Context, name string, s *Session, params map[string]any) (string, error) {
+func runSkillOrPackageWithParams(ctx context.Context, name string, s *AccountRuntime, params map[string]any) (string, error) {
 	if len(params) > 0 {
 		ctx = ContextWithPackageParams(ctx, params)
 	}
@@ -2396,7 +2396,7 @@ func runSkillOrPackageWithParams(ctx context.Context, name string, s *Session, p
 	return jsonResult(map[string]any{"success": true, "output": output})
 }
 
-func runPromptModeSkill(ctx context.Context, name string, skill *core.Skill, body string, s *Session, params map[string]any) (string, error) {
+func runPromptModeSkill(ctx context.Context, name string, skill *core.Skill, body string, s *AccountRuntime, params map[string]any) (string, error) {
 	if s == nil || s.Provider == nil {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q requires an LLM provider", name)})
 	}
@@ -2432,7 +2432,7 @@ type promptModeToolBinding struct {
 	ArgNames  []string
 }
 
-func runPromptModeSkillWithTools(ctx context.Context, name string, messages []core.LlmMessage, tools []llm.Tool, bindings map[string]promptModeToolBinding, s *Session) (string, error) {
+func runPromptModeSkillWithTools(ctx context.Context, name string, messages []core.LlmMessage, tools []llm.Tool, bindings map[string]promptModeToolBinding, s *AccountRuntime) (string, error) {
 	for i := 0; i < promptModeMaxToolIterations; i++ {
 		resp, err := s.Provider.GenerateWithTools(WithLLMCallKind(ctx, "skill.prompt"), messages, tools)
 		if err != nil {
@@ -2523,7 +2523,7 @@ func promptModeToolUseBlocks(resp *llm.Response) []core.ContentBlock {
 	return out
 }
 
-func promptModeExecuteToolUse(ctx context.Context, toolUse core.ContentBlock, bindings map[string]promptModeToolBinding, s *Session) string {
+func promptModeExecuteToolUse(ctx context.Context, toolUse core.ContentBlock, bindings map[string]promptModeToolBinding, s *AccountRuntime) string {
 	binding, ok := bindings[toolUse.Name]
 	if !ok {
 		result, _ := jsonResult(map[string]any{"error": fmt.Sprintf("tool %q is not available to this skill", toolUse.Name)})
@@ -2647,8 +2647,8 @@ func buildPromptModeUserPrompt(ctx context.Context, name string, params map[stri
 			if payload.ChatID != "" {
 				fmt.Fprintf(&sb, "chat_id: %s\n", payload.ChatID)
 			}
-			if payload.SessionID != "" {
-				fmt.Fprintf(&sb, "session_id: %s\n", payload.SessionID)
+			if payload.SourceSessionID != "" {
+				fmt.Fprintf(&sb, "source_session_id: %s\n", payload.SourceSessionID)
 			}
 		}
 	}
@@ -2727,7 +2727,7 @@ func numberParam(v any) (float64, bool) {
 // {language}" instruction is appended to the prompt automatically. This means
 // packages never need to handle locale themselves — they just declare
 // context = ["locale"] in package.toml and the engine does the rest.
-func buildPackageResolver(_ context.Context, pkg *core.SkillPackage, s *Session, locale string) func(context.Context, core.SkillCall) (string, error) {
+func buildPackageResolver(_ context.Context, pkg *core.SkillPackage, s *AccountRuntime, locale string) func(context.Context, core.SkillCall) (string, error) {
 	allowed := make(map[string]bool, len(pkg.Permissions.Primitives))
 	for _, p := range pkg.Permissions.Primitives {
 		allowed[p] = true
@@ -2831,7 +2831,7 @@ func unwrapHTTPBody(jsonStr string) string {
 
 // --- Staff Management ---
 
-func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeStaff(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "list":
 		base, err := core.ResolveBaseDir(s.BaseDir)
@@ -2938,7 +2938,7 @@ func executeStaff(ctx context.Context, call core.SkillCall, s *Session) (string,
 
 // --- Stubs for complex skills ---
 
-func executeTTS(_ context.Context, _ core.SkillCall, _ *Session) (string, error) {
+func executeTTS(_ context.Context, _ core.SkillCall, _ *AccountRuntime) (string, error) {
 	// TODO: implement TTS via external API
 	return jsonResult(map[string]any{"error": "TTS not yet implemented"})
 }
@@ -2970,7 +2970,7 @@ func oauthProviderLabel(provider string) string {
 
 // executeImage and executeVision are in vision.go.
 
-func executeMCP(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeMCP(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if s.McpRegistry == nil {
 		return jsonResult(map[string]any{"error": "MCP not configured"})
 	}
@@ -3009,7 +3009,7 @@ func executeMCP(ctx context.Context, call core.SkillCall, s *Session) (string, e
 	}
 }
 
-func executeRunner(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeRunner(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "delegate":
 		// Runner.delegate(staffId, task, background)
@@ -3085,7 +3085,7 @@ func stripAwait(code string) string {
 // buildUserContext constructs the __context__.user object based on the fields
 // declared in the package's [permissions].context. Only requested fields are
 // included; omitted fields remain undefined in JS.
-func buildUserContext(requested []string, s *Session, event *core.Event) map[string]any {
+func buildUserContext(requested []string, s *AccountRuntime, event *core.Event) map[string]any {
 	if len(requested) == 0 {
 		return nil
 	}
@@ -3183,7 +3183,7 @@ func jsonResult(v any) (string, error) {
 // isPathAllowed resolves both the target path and the allowed paths, then
 // checks containment. Used by tests and callers with raw (unresolved) paths.
 // The production hot path in executeFile uses isPathAllowedResolved with
-// pre-resolved paths from the Session cache.
+// pre-resolved paths from the AccountRuntime cache.
 func isPathAllowed(path string, allowedPaths []string) bool {
 	if len(allowedPaths) == 0 {
 		return false

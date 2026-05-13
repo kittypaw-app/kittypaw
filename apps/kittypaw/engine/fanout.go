@@ -8,11 +8,11 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
-// executeFanout dispatches Fanout.send / Fanout.broadcast to Session.Fanout.
+// executeFanout dispatches Fanout.send / Fanout.broadcast to AccountRuntime.Fanout.
 // The sandbox-level binding is already gated on exposeFanout; the nil check
 // below is a second gate so a future sandbox refactor that accidentally
 // exposes the global still can't reach a nil receiver.
-func executeFanout(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeFanout(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if s.Fanout == nil {
 		return jsonResult(map[string]any{"error": "Fanout is not available for this account"})
 	}

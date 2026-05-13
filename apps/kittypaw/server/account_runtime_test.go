@@ -16,7 +16,7 @@ import (
 )
 
 // TestServer_New_WiresAccountFieldsPerAccount is the TDD lead for PR-1:
-// server.New must build one engine.Session per account with AccountID,
+// server.New must build one engine.AccountRuntime per account with AccountID,
 // AccountRegistry (shared pointer), and Fanout (team-space coordinator only) wired.
 // Until this test passes, Plan B's cross-account Share.read + Fanout
 // paths are dead code — see Plan C items C9/C11 in TASKS.md.
@@ -28,13 +28,13 @@ func TestServer_New_WiresAccountFieldsPerAccount(t *testing.T) {
 
 	srv := New([]*AccountDeps{familyDeps, aliceDeps}, "test")
 
-	famSess := srv.accounts.Session("family")
+	famSess := srv.accounts.Runtime("family")
 	if famSess == nil {
-		t.Fatal("team-space Session not registered on AccountRouter")
+		t.Fatal("team-space runtime not registered on AccountRouter")
 	}
-	aliceSess := srv.accounts.Session("alice")
+	aliceSess := srv.accounts.Runtime("alice")
 	if aliceSess == nil {
-		t.Fatal("alice Session not registered on AccountRouter")
+		t.Fatal("alice runtime not registered on AccountRouter")
 	}
 
 	// --- AccountID set on each session.
@@ -82,9 +82,9 @@ func TestServer_New_LegacySingleAccount_NoFanout(t *testing.T) {
 
 	srv := New([]*AccountDeps{defaultDeps}, "test")
 
-	sess := srv.accounts.Session(DefaultAccountID)
+	sess := srv.accounts.Runtime(DefaultAccountID)
 	if sess == nil {
-		t.Fatal("default Session not registered")
+		t.Fatal("default runtime not registered")
 	}
 	if sess.AccountID != DefaultAccountID {
 		t.Errorf("AccountID = %q, want %q", sess.AccountID, DefaultAccountID)
@@ -95,12 +95,12 @@ func TestServer_New_LegacySingleAccount_NoFanout(t *testing.T) {
 	if sess.AccountRegistry == nil {
 		t.Error("AccountRegistry must be non-nil even in single-account mode")
 	}
-	if ids := srv.accounts.Sessions(); len(ids) != 1 || ids[0] != DefaultAccountID {
-		t.Errorf("Sessions() = %v, want [%s]", ids, DefaultAccountID)
+	if ids := srv.accounts.AccountIDs(); len(ids) != 1 || ids[0] != DefaultAccountID {
+		t.Errorf("AccountIDs() = %v, want [%s]", ids, DefaultAccountID)
 	}
 }
 
-func TestApplyAccountConfigForDefaultReplacesSessionRuntimeDeps(t *testing.T) {
+func TestApplyAccountConfigForDefaultReplacesAccountRuntimeDeps(t *testing.T) {
 	root := t.TempDir()
 	cfg := core.DefaultConfig()
 	cfg.LLM.APIKey = "old-key"
@@ -108,14 +108,14 @@ func TestApplyAccountConfigForDefaultReplacesSessionRuntimeDeps(t *testing.T) {
 	deps := buildAccountDeps(t, root, "alice", &cfg)
 	deps.ServiceTokenMgr = core.NewServiceTokenManager(deps.Secrets)
 	srv := New([]*AccountDeps{deps}, "test", "alice")
-	oldSession := srv.session
-	if oldSession == nil {
-		t.Fatal("default session is nil")
+	oldRuntime := srv.runtime
+	if oldRuntime == nil {
+		t.Fatal("default runtime is nil")
 	}
-	if oldSession.BrowserController == nil {
+	if oldRuntime.BrowserController == nil {
 		t.Fatal("initial BrowserController is nil")
 	}
-	if oldSession.ProjectJobRuntime == nil {
+	if oldRuntime.ProjectJobRuntime == nil {
 		t.Fatal("initial ProjectJobRuntime is nil")
 	}
 
@@ -136,13 +136,13 @@ func TestApplyAccountConfigForDefaultReplacesSessionRuntimeDeps(t *testing.T) {
 		t.Fatalf("applyAccountConfigLocked() error = %v", err)
 	}
 
-	if srv.session == oldSession {
-		t.Fatal("default account reload should replace the existing session pointer")
+	if srv.runtime == oldRuntime {
+		t.Fatal("default account reload should replace the existing runtime pointer")
 	}
-	if srv.session.BrowserController == nil {
-		t.Fatal("default session BrowserController was not refreshed")
+	if srv.runtime.BrowserController == nil {
+		t.Fatal("default runtime BrowserController was not refreshed")
 	}
-	status, err := srv.session.BrowserController.Execute(context.Background(), core.SkillCall{
+	status, err := srv.runtime.BrowserController.Execute(context.Background(), core.SkillCall{
 		SkillName: "Browser",
 		Method:    "status",
 	})
@@ -152,23 +152,23 @@ func TestApplyAccountConfigForDefaultReplacesSessionRuntimeDeps(t *testing.T) {
 	if !strings.Contains(status, `"enabled":true`) {
 		t.Fatalf("browser status = %s, want enabled true after config update", status)
 	}
-	if srv.session.ServiceTokenMgr == nil {
-		t.Fatal("default session ServiceTokenMgr was not refreshed")
+	if srv.runtime.ServiceTokenMgr == nil {
+		t.Fatal("default runtime ServiceTokenMgr was not refreshed")
 	}
-	if srv.session.ProjectJobRuntime == nil {
-		t.Fatal("default session ProjectJobRuntime was not refreshed")
+	if srv.runtime.ProjectJobRuntime == nil {
+		t.Fatal("default runtime ProjectJobRuntime was not refreshed")
 	}
-	if srv.session.ProjectJobRuntime != deps.JobRuntime {
-		t.Fatal("default session ProjectJobRuntime does not match account deps runtime")
+	if srv.runtime.ProjectJobRuntime != deps.JobRuntime {
+		t.Fatal("default runtime ProjectJobRuntime does not match account deps runtime")
 	}
-	if srv.session.Config.LLM.APIKey != "fresh-key" {
-		t.Fatalf("default session LLM API key = %q, want fresh-key from disk secrets", srv.session.Config.LLM.APIKey)
+	if srv.runtime.Config.LLM.APIKey != "fresh-key" {
+		t.Fatalf("default runtime LLM API key = %q, want fresh-key from disk secrets", srv.runtime.Config.LLM.APIKey)
 	}
-	if srv.session.Provider == nil {
-		t.Fatal("default session Provider was not refreshed")
+	if srv.runtime.Provider == nil {
+		t.Fatal("default runtime Provider was not refreshed")
 	}
-	if srv.session.Sandbox == oldSession.Sandbox {
-		t.Fatal("default session Sandbox was not refreshed")
+	if srv.runtime.Sandbox == oldRuntime.Sandbox {
+		t.Fatal("default runtime Sandbox was not refreshed")
 	}
 }
 
@@ -182,8 +182,8 @@ func TestHandleReloadAppliesDefaultRuntimeDeps(t *testing.T) {
 	srv := NewWithServerConfig([]*AccountDeps{deps}, "test", core.TopLevelServerConfig{
 		DefaultAccount: "alice",
 	})
-	oldSession := srv.session
-	oldSandbox := oldSession.Sandbox
+	oldRuntime := srv.runtime
+	oldSandbox := oldRuntime.Sandbox
 
 	reloadCfg := core.DefaultConfig()
 	reloadCfg.LLM.APIKey = "reload-key"
@@ -197,16 +197,16 @@ func TestHandleReloadAppliesDefaultRuntimeDeps(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("reload code = %d body=%s", rr.Code, rr.Body.String())
 	}
-	if srv.session == oldSession {
-		t.Fatal("reload should replace the default runtime session")
+	if srv.runtime == oldRuntime {
+		t.Fatal("reload should replace the default runtime")
 	}
-	if srv.session.Provider == nil {
+	if srv.runtime.Provider == nil {
 		t.Fatal("reload did not refresh Provider")
 	}
-	if srv.session.Sandbox == oldSandbox {
+	if srv.runtime.Sandbox == oldSandbox {
 		t.Fatal("reload did not refresh Sandbox")
 	}
-	status, err := srv.session.BrowserController.Execute(context.Background(), core.SkillCall{
+	status, err := srv.runtime.BrowserController.Execute(context.Background(), core.SkillCall{
 		SkillName: "Browser",
 		Method:    "status",
 	})
@@ -216,8 +216,8 @@ func TestHandleReloadAppliesDefaultRuntimeDeps(t *testing.T) {
 	if !strings.Contains(status, `"enabled":true`) {
 		t.Fatalf("browser status = %s, want enabled true after reload", status)
 	}
-	if srv.config != srv.session.Config {
-		t.Fatal("server config and default session config should share the replaced config pointer")
+	if srv.config != srv.runtime.Config {
+		t.Fatal("server config and default runtime config should share the replaced config pointer")
 	}
 	if got := srv.accountDepsForID("alice").Account.Config.LLM.APIKey; got != "reload-key" {
 		t.Fatalf("deps config API key = %q, want reload-key", got)
@@ -236,8 +236,8 @@ func TestServerNewConfiguredDefaultAccount(t *testing.T) {
 		DefaultAccount: "bob",
 	})
 
-	if got := srv.accounts.Session("bob"); got == nil || got != srv.session {
-		t.Fatalf("default session = %p, want bob session %p", srv.session, got)
+	if got := srv.accounts.Runtime("bob"); got == nil || got != srv.runtime {
+		t.Fatalf("default runtime = %p, want bob runtime %p", srv.runtime, got)
 	}
 	if srv.accountRegistry.DefaultID() != "bob" {
 		t.Fatalf("registry default = %q, want bob", srv.accountRegistry.DefaultID())
@@ -304,8 +304,8 @@ func TestServerNewSingleNonDefaultAccountIsDefault(t *testing.T) {
 
 	srv := New([]*AccountDeps{aliceDeps}, "test")
 
-	if got := srv.accounts.Session("alice"); got == nil || got != srv.session {
-		t.Fatalf("default session = %p, want alice session %p", srv.session, got)
+	if got := srv.accounts.Runtime("alice"); got == nil || got != srv.runtime {
+		t.Fatalf("default runtime = %p, want alice session %p", srv.runtime, got)
 	}
 	if srv.accountRegistry.DefaultID() != "alice" {
 		t.Fatalf("registry default = %q, want alice", srv.accountRegistry.DefaultID())

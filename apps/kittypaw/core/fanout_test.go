@@ -29,7 +29,7 @@ func newFanoutFixture(t *testing.T, source string, members []string, peers ...st
 // The whole cross-account flow assumes team_space.push events arrive at the
 // AccountRouter carrying the *target* account's ID (not the sender's) —
 // reversing the direction would dispatch the push back into the team-space
-// Session, looping.
+// AccountRuntime, looping.
 func TestChannelFanout_SendEmitsEvent(t *testing.T) {
 	f, ch, _ := newFanoutFixture(t, "team", []string{"alice"}, "alice")
 
@@ -60,7 +60,7 @@ func TestChannelFanout_SendEmitsEvent(t *testing.T) {
 
 // TestChannelFanout_RejectsSelfTarget blocks the self-loop — if a team space
 // sends to itself, AccountRouter would dispatch the push into the team-space
-// Session, which would (if it has a skill handling team_space.push)
+// AccountRuntime, which would (if it has a skill handling team_space.push)
 // run again and potentially fanout again. Refuse at the boundary.
 func TestChannelFanout_RejectsSelfTarget(t *testing.T) {
 	f, _, _ := newFanoutFixture(t, "team", []string{"alice"}, "alice")

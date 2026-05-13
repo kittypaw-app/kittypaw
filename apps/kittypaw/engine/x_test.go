@@ -53,7 +53,7 @@ func TestExecuteXSearchRecentUsesBroker(t *testing.T) {
 	if err := apiMgr.SaveConnectBaseURL(core.DefaultAPIServerURL, ts.URL); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:      &core.Config{AutonomyLevel: core.AutonomyFull},
 		APITokenMgr: apiMgr,
 		AccountID:   "jinto",
@@ -115,7 +115,7 @@ func TestExecuteXHomeTimelineUsesBroker(t *testing.T) {
 	if err := apiMgr.SaveConnectBaseURL(core.DefaultAPIServerURL, ts.URL); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:      &core.Config{AutonomyLevel: core.AutonomyFull},
 		APITokenMgr: apiMgr,
 		AccountID:   "jinto",
@@ -155,7 +155,7 @@ func TestExecuteXHomeTimelineUsesBroker(t *testing.T) {
 }
 
 func TestExecuteXRequiresLogin(t *testing.T) {
-	sess := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, AccountID: "jinto"}
+	sess := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, AccountID: "jinto"}
 	query := json.RawMessage(`"kittypaw"`)
 	got, err := resolveSkillCall(context.Background(), core.SkillCall{
 		SkillName: "X",
@@ -189,7 +189,7 @@ func TestExecuteXBrokerForbiddenShowsConnectGuidance(t *testing.T) {
 	if err := apiMgr.SaveConnectBaseURL(core.DefaultAPIServerURL, ts.URL); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, APITokenMgr: apiMgr, AccountID: "jinto"}
+	sess := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, APITokenMgr: apiMgr, AccountID: "jinto"}
 
 	got, err := resolveSkillCall(context.Background(), core.SkillCall{
 		SkillName: "X",
@@ -223,7 +223,7 @@ func TestExecuteXBrokerCreditsDepletedIsNotServerGuidance(t *testing.T) {
 	if err := apiMgr.SaveConnectBaseURL(core.DefaultAPIServerURL, ts.URL); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, APITokenMgr: apiMgr, AccountID: "jinto"}
+	sess := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, APITokenMgr: apiMgr, AccountID: "jinto"}
 
 	got, err := resolveSkillCall(context.Background(), core.SkillCall{
 		SkillName: "X",

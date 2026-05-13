@@ -76,8 +76,8 @@ func (e *emittingStub) emit(text string) {
 // here would be a cross-account leak — the primary privacy risk the
 // AccountRouter is designed to prevent.
 func TestAccountIsolation_EndToEnd(t *testing.T) {
-	aliceSess := &engine.Session{BaseDir: "/tmp/alice"}
-	bobSess := &engine.Session{BaseDir: "/tmp/bob"}
+	aliceSess := &engine.AccountRuntime{BaseDir: "/tmp/alice"}
+	bobSess := &engine.AccountRuntime{BaseDir: "/tmp/bob"}
 
 	router := NewAccountRouter()
 	router.Register("alice", aliceSess)
@@ -165,11 +165,11 @@ func TestAccountIsolation_ChannelSpawner_SameTypeTwoAccounts(t *testing.T) {
 }
 
 // TestDispatchLoop_ChatIDMismatch_Drops enforces AC-T7: even after a
-// successful AccountID→Session route, the payload's chat_id must belong to
+// successful AccountID→runtime route, the payload's chat_id must belong to
 // that account's AllowedChatIDs. A mismatch is the exact bot-token-leak
 // scenario — alice's bot token gets stolen, the attacker crafts an update
 // carrying bob's chat_id to write bob's conversation into alice's store.
-// The event must be dropped before Session.Run and the mismatch counter
+// The event must be dropped before AccountRuntime.Run and the mismatch counter
 // must bump so ops can alert on `account_routing_mismatch_total{from=alice}`.
 func TestDispatchLoop_ChatIDMismatch_Drops(t *testing.T) {
 	root := t.TempDir()
@@ -253,7 +253,7 @@ func TestDispatchLoop_ChatIDMatch_NoMismatch(t *testing.T) {
 	}
 
 	// Route + ownership check in isolation — don't run dispatchLoop because
-	// a nil Provider would explode on Session.Run. The ownership gate lives
+	// a nil Provider would explode on AccountRuntime.Run. The ownership gate lives
 	// in dispatchLoop but is testable directly on the router + helper.
 	sess := srv.accounts.Route(core.Event{
 		Type:      core.EventTelegram,
@@ -301,9 +301,9 @@ func TestDispatchLoop_KakaoActionIDSkipsAdminChatOwnershipCheck(t *testing.T) {
 	go srv.dispatchLoop(ctx)
 
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:    "kakao-action-id",
-		Text:      "hello from kakao",
-		SessionID: "kakao-user-id",
+		ChatID:          "kakao-action-id",
+		Text:            "hello from kakao",
+		SourceSessionID: "kakao-user-id",
 	})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)

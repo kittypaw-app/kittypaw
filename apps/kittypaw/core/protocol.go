@@ -9,7 +9,7 @@ type WsClientMsg struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	// TurnID is a client-allocated UUID identifying a single user input.
 	// A retry of the same input must reuse the same TurnID — the server
-	// then dedupes via Session.RunTurn so the LLM is not invoked twice
+	// then dedupes via AccountRuntime.RunTurn so the LLM is not invoked twice
 	// and the user is not double-charged. Empty TurnID falls back to the
 	// legacy Run path (no idempotency).
 	TurnID string `json:"turn_id,omitempty"` // for "chat"

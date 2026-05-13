@@ -342,7 +342,7 @@ func telegramMessageEvent(accountID string, msg *telegramMessage, text string, a
 		ChatID:           chatIDStr,
 		Text:             text,
 		FromName:         fromName,
-		SessionID:        sessionID,
+		SourceSessionID:  sessionID,
 		Attachments:      attachments,
 		ReplyToMessageID: strconv.FormatInt(msg.MessageID, 10),
 	}

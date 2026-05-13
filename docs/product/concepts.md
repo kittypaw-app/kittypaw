@@ -50,7 +50,7 @@ KittyPaw install
 | Account | An isolated personal or team-space profile. Owns config, secrets, DB, skills, staff, channels, and workspaces. | `~/.kittypaw/accounts/<id>/` and that account's DB. | `apps/kittypaw` |
 | User | Human identity authenticated through hosted portal for cloud/relay services. | Portal OAuth user and local login token. | `apps/portal`, `apps/kittypaw` |
 | Device | A local daemon identity registered for hosted relay access. | Portal device credential and relay pairing state. | `apps/portal`, `apps/chat`, `apps/space` |
-| Model | A named LLM backend configuration usable by chat and runner execution. | Account `config.toml` model list and runtime session override. | `apps/kittypaw` |
+| Model | A named LLM backend configuration usable by chat and runner execution. | Account `config.toml` model list and active runtime override. | `apps/kittypaw` |
 | Workspace | A local filesystem root indexed and exposed to file tools. | Account `[workspace]` config and workspace DB/cache. | `apps/kittypaw` |
 | Skill | Installed or generated automation callable by the runner. | Skill files/packages under the account directory plus package metadata. | `apps/kittypaw` |
 | Tool global | Built-in JS API exposed to the runner, such as `Gmail`, `X`, `Kanban`, `Staff`, `Browser`. | `core.SkillRegistry` and executor dispatch. | `apps/kittypaw` |
@@ -142,7 +142,7 @@ Channels are not equivalent. Each channel has different delivery capabilities.
 
 | Channel | Inbound | Reply To Current Message | Proactive Outbound |
 | --- | --- | --- | --- |
-| Web chat | Yes | Yes | Session-bound only |
+| Web chat | Yes | Yes | Connection-bound only |
 | Telegram | Yes | Yes | Yes, with bot token and chat ID |
 | KakaoTalk OpenBuilder | Yes | Yes, through callback action ID | No through current callback relay |
 | Slack | Configured support | Configured support | Depends on configured token/channel |

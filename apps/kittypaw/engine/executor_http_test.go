@@ -24,7 +24,7 @@ func TestExecuteHTTP_HeadersSupport(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 
 	tests := []struct {
 		name       string
@@ -119,7 +119,7 @@ func TestExecuteHTTP_HostValidatedBypassesSSRF(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 
 	urlArg, _ := json.Marshal(ts.URL + "/test")
 	call := core.SkillCall{
@@ -163,7 +163,7 @@ func TestExecuteHTTP_WebSearchSkipsURLAllowedHosts(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.Web.SearchBackend = "no-such-backend"
 	cfg.Sandbox.AllowedHosts = []string{"example.com"}
-	s := &Session{Config: &cfg}
+	s := &AccountRuntime{Config: &cfg}
 
 	queryArg, _ := json.Marshal("AI news today")
 	call := core.SkillCall{
@@ -197,7 +197,7 @@ func TestPackageResolver_WebFetchKeepsStructuredResult(t *testing.T) {
 	defer ts.Close()
 
 	cfg := core.DefaultConfig()
-	s := &Session{Config: &cfg}
+	s := &AccountRuntime{Config: &cfg}
 	pkg := &core.SkillPackage{
 		Meta: core.PackageMeta{ID: "pkg-web-fetch"},
 		Permissions: core.PackagePermissions{
@@ -242,7 +242,7 @@ func TestPackageResolver_WebSearchKeepsStructuredResult(t *testing.T) {
 	cfg.Web.SearchBackend = "firecrawl"
 	cfg.Web.FirecrawlKey = "fc-test"
 	cfg.Web.FirecrawlURL = searchSrv.URL
-	s := &Session{Config: &cfg}
+	s := &AccountRuntime{Config: &cfg}
 	pkg := &core.SkillPackage{
 		Meta:        core.PackageMeta{ID: "pkg-web-search"},
 		Permissions: core.PackagePermissions{Primitives: []string{"Web"}},
@@ -276,7 +276,7 @@ func TestPackageResolver_HttpStillUnwrapsBody(t *testing.T) {
 	defer ts.Close()
 
 	cfg := core.DefaultConfig()
-	s := &Session{Config: &cfg}
+	s := &AccountRuntime{Config: &cfg}
 	pkg := &core.SkillPackage{
 		Meta: core.PackageMeta{ID: "pkg-http"},
 		Permissions: core.PackagePermissions{
@@ -406,7 +406,7 @@ func TestExecuteHTTP_WebFetchContractUnsupportedContentType(t *testing.T) {
 func executeWebFetchForTest(t *testing.T, targetURL string) map[string]any {
 	t.Helper()
 	cfg := core.DefaultConfig()
-	s := &Session{Config: &cfg}
+	s := &AccountRuntime{Config: &cfg}
 	urlArg, _ := json.Marshal(targetURL)
 	call := core.SkillCall{
 		SkillName: "Web",

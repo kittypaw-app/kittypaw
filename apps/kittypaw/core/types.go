@@ -32,7 +32,7 @@ const (
 	EventDiscord   EventType = "discord"
 	// EventTeamSpacePush is emitted by ChannelFanout when a team-space account
 	// pushes a message to a member account. AccountRouter dispatches to the
-	// target Session the same way it dispatches inbound chat events, so the
+	// target AccountRuntime the same way it dispatches inbound chat events, so the
 	// member runner can treat it as a normal observation.
 	EventTeamSpacePush EventType = "team_space.push"
 
@@ -96,16 +96,17 @@ type Event struct {
 
 // ChatPayload is the common structure inside Event.Payload.
 //
-// SessionID is transport/runtime metadata. ConversationID optionally selects
-// a first-class conversation/thread.
+// SourceSessionID is transport/runtime metadata serialized as "session_id" for
+// wire compatibility. ConversationID optionally selects a first-class
+// conversation/thread.
 type ChatPayload struct {
-	ChatID         string           `json:"chat_id"`
-	Text           string           `json:"text"`
-	FromName       string           `json:"from_name,omitempty"`
-	WorkspaceID    string           `json:"workspace_id,omitempty"`
-	SessionID      string           `json:"session_id,omitempty"`
-	ConversationID string           `json:"conversation_id,omitempty"`
-	Attachments    []ChatAttachment `json:"attachments,omitempty"`
+	ChatID          string           `json:"chat_id"`
+	Text            string           `json:"text"`
+	FromName        string           `json:"from_name,omitempty"`
+	WorkspaceID     string           `json:"workspace_id,omitempty"`
+	SourceSessionID string           `json:"session_id,omitempty"`
+	ConversationID  string           `json:"conversation_id,omitempty"`
+	Attachments     []ChatAttachment `json:"attachments,omitempty"`
 	// ReplyToMessageID is the platform-specific message ID of the inbound
 	// message. When set, channels that support reply-quoting (Telegram) will
 	// quote the original message in the response. Empty = plain send.

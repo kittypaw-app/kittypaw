@@ -14,7 +14,7 @@ func TestExecuteProjectsCreateShowTicketMoveCommentAndBriefCommit(t *testing.T) 
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	cfg.AutonomyLevel = core.AutonomyFull
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
@@ -82,7 +82,7 @@ func TestExecuteProjectsPlanJobAndRejectStart(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	cfg.AutonomyLevel = core.AutonomyFull
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
@@ -117,7 +117,7 @@ func TestExecuteKanbanToolIsUnknown(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	cfg.AutonomyLevel = core.AutonomyFull
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 	raw, err := resolveSkillCall(context.Background(), core.SkillCall{SkillName: "Kanban", Method: "show"}, sess, nil)
 	if err != nil {
 		t.Fatalf("resolveSkillCall(Kanban): %v", err)
@@ -127,7 +127,7 @@ func TestExecuteKanbanToolIsUnknown(t *testing.T) {
 	}
 }
 
-func resolveProjectsTool(t *testing.T, sess *Session, method string, args ...any) map[string]any {
+func resolveProjectsTool(t *testing.T, sess *AccountRuntime, method string, args ...any) map[string]any {
 	t.Helper()
 	rawArgs := make([]json.RawMessage, len(args))
 	for i, arg := range args {

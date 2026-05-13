@@ -350,7 +350,7 @@ func TestHandleTeach(t *testing.T) {
 		mock := &mockProvider{responses: []*llm.Response{
 			{Content: `const data = Http.get("https://api.weather.com"); Telegram.send(data); return "done";`},
 		}}
-		sess := &Session{Provider: mock}
+		sess := &AccountRuntime{Provider: mock}
 
 		result, err := HandleTeach(context.Background(), "send weather every morning", "test-chat", sess)
 		if err != nil {
@@ -371,7 +371,7 @@ func TestHandleTeach(t *testing.T) {
 	})
 
 	t.Run("empty description returns error", func(t *testing.T) {
-		sess := &Session{Provider: &mockProvider{}}
+		sess := &AccountRuntime{Provider: &mockProvider{}}
 		_, err := HandleTeach(context.Background(), "", "test-chat", sess)
 		if err == nil {
 			t.Fatal("expected error for empty description")
@@ -379,7 +379,7 @@ func TestHandleTeach(t *testing.T) {
 	})
 
 	t.Run("whitespace description returns error", func(t *testing.T) {
-		sess := &Session{Provider: &mockProvider{}}
+		sess := &AccountRuntime{Provider: &mockProvider{}}
 		_, err := HandleTeach(context.Background(), "   \n  ", "test-chat", sess)
 		if err == nil {
 			t.Fatal("expected error for whitespace description")
@@ -390,7 +390,7 @@ func TestHandleTeach(t *testing.T) {
 		mock := &mockProvider{responses: []*llm.Response{
 			{Content: "```javascript\nreturn 42;\n```"},
 		}}
-		sess := &Session{Provider: mock}
+		sess := &AccountRuntime{Provider: mock}
 
 		result, err := HandleTeach(context.Background(), "return forty two", "test-chat", sess)
 		if err != nil {
@@ -408,7 +408,7 @@ func TestHandleTeach(t *testing.T) {
 		mock := &mockProvider{responses: []*llm.Response{
 			{Content: `function foo( { return; }`},
 		}}
-		sess := &Session{Provider: mock}
+		sess := &AccountRuntime{Provider: mock}
 
 		result, err := HandleTeach(context.Background(), "broken code", "test-chat", sess)
 		if err != nil {

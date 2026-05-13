@@ -57,7 +57,7 @@ type BrowserController interface {
 	Close() error
 }
 
-// RunOptions holds per-call options for Session.Run. Callbacks are scoped to
+// RunOptions holds per-call options for AccountRuntime.Run. Callbacks are scoped to
 // a single Run invocation, avoiding shared mutable state across concurrent calls.
 type RunOptions struct {
 	OnPermission         PermissionCallback
@@ -69,7 +69,9 @@ type RunOptions struct {
 	Usage                *RunUsageResult
 }
 
-// RunUsageResult reports LLM usage charged during a Session.Run invocation.
+type runtimeAdmissionContextKey struct{}
+
+// RunUsageResult reports LLM usage charged during an AccountRuntime.Run invocation.
 type RunUsageResult struct {
 	TokenUsage      int64
 	BudgetExhausted bool
@@ -88,12 +90,12 @@ type DelegationRunOptions struct {
 
 // SetActiveModel records the user's `/model <id>` choice for subsequent chat
 // turns. Empty string clears the override (revert to config default).
-func (s *Session) SetActiveModel(id string) {
+func (s *AccountRuntime) SetActiveModel(id string) {
 	s.activeModelOverride.Store(&id)
 }
 
 // GetActiveModel returns the chat-set model override, or "" when none is set.
-func (s *Session) GetActiveModel() string {
+func (s *AccountRuntime) GetActiveModel() string {
 	if p := s.activeModelOverride.Load(); p != nil {
 		return *p
 	}
@@ -103,15 +105,15 @@ func (s *Session) GetActiveModel() string {
 // ApplyActiveModel folds the chat-path /model override into RunOptions.
 // Caller contract: chat-path dispatchers (server channel worker, ws.go chat
 // handler, chat_relay_dispatcher) MUST call this after building RunOptions and
-// before invoking Session.Run; the schedule path
+// before invoking AccountRuntime.Run; the schedule path
 // (schedule.go:tickOnce / reflectionTick) MUST NOT call this — schedule
 // jobs always run with the configured default, never inheriting a chat-set
 // override.
 //
 // Precedence: explicit RunOptions.ModelOverride wins over the chat
 // override. This keeps schedule.go's per-job model selection unchanged
-// even when a chat user has set a /model override in the same session.
-func (s *Session) ApplyActiveModel(opts *RunOptions) *RunOptions {
+// even when a chat user has set a /model override on the same runtime.
+func (s *AccountRuntime) ApplyActiveModel(opts *RunOptions) *RunOptions {
 	id := s.GetActiveModel()
 	if id == "" {
 		return opts
@@ -127,10 +129,10 @@ func (s *Session) ApplyActiveModel(opts *RunOptions) *RunOptions {
 	return &out
 }
 
-// Session holds the injected dependencies for processing events.
-// Create once, call Run() for each event. Session is safe for concurrent use;
+// AccountRuntime holds the injected dependencies for processing account events.
+// Create once per account, call Run() for each event. AccountRuntime is safe for concurrent use;
 // per-call state is passed via RunOptions.
-type Session struct {
+type AccountRuntime struct {
 	Provider          llm.Provider
 	FallbackProvider  llm.Provider
 	Sandbox           *sandbox.Sandbox
@@ -148,23 +150,24 @@ type Session struct {
 	ServiceTokenMgr   *core.ServiceTokenManager // nil when external OAuth services are not configured
 	ProjectJobRuntime *ProjectJobRuntime
 	Notifier          Notifier                 // nil when outbound delivery is not wired (bare engine tests/CLI)
+	Admission         *RuntimeAdmission        // nil disables account runtime admission (bare tests/CLI)
 	allowedPaths      atomic.Pointer[[]string] // cached workspace paths for isPathAllowed
 
 	// activeModelOverride: turn-level model swap from the chat REPL `/model`
 	// command. Read by chat-path handlers via GetActiveModel and forwarded
 	// into RunOptions.ModelOverride before Run is invoked. atomic.Pointer
-	// keeps this safe for the concurrent-use Session contract (line 66) —
+	// keeps this safe for the concurrent-use AccountRuntime contract —
 	// scheduler tick goroutines and dispatchLoop never read this field;
 	// the schedule path manufactures its own RunOptions (schedule.go:428).
 	// Reset to default on daemon restart (no config persistence).
 	activeModelOverride atomic.Pointer[string]
 
-	// AccountID is the account this Session belongs to. Empty only for
+	// AccountID is the account this runtime belongs to. Empty only for
 	// legacy single-account callers that haven't migrated to the account
 	// router yet. Share.read / Fanout.* use this as the *reader* identity
 	// when consulting the owner account's Share allowlist.
 	AccountID string
-	// AccountRegistry lets the Session look up peer accounts (for cross-
+	// AccountRegistry lets the runtime look up peer accounts (for cross-
 	// account reads + fanout) without coupling to server state. Nil in
 	// single-account mode; Share.read returns an "unavailable" error
 	// rather than panicking when the field is unset.
@@ -197,7 +200,7 @@ type Session struct {
 // JS globals (Share, Fanout) are exposed for this session. Centralized so
 // every sandbox callsite stays consistent — a personal session that wires
 // Share but not Fanout (or vice versa) would silently break the I5 invariant.
-func (s *Session) sandboxOptions() sandbox.Options {
+func (s *AccountRuntime) sandboxOptions() sandbox.Options {
 	return sandbox.Options{
 		ExposeFanout: s.Fanout != nil,
 		ExposeShare:  s.Config != nil && !s.Config.IsSharedAccount(),
@@ -206,7 +209,7 @@ func (s *Session) sandboxOptions() sandbox.Options {
 
 // AllowedPaths returns the cached list of file-visible project/folder roots.
 // Returns nil when no roots are registered (deny-all by default).
-func (s *Session) AllowedPaths() []string {
+func (s *AccountRuntime) AllowedPaths() []string {
 	if p := s.allowedPaths.Load(); p != nil {
 		return *p
 	}
@@ -215,7 +218,7 @@ func (s *Session) AllowedPaths() []string {
 
 // ClearAllowedPaths sets the cache to empty, denying all file operations.
 // Used as a fail-closed fallback when RefreshAllowedPaths fails after a delete.
-func (s *Session) ClearAllowedPaths() {
+func (s *AccountRuntime) ClearAllowedPaths() {
 	empty := []string{}
 	s.allowedPaths.Store(&empty)
 }
@@ -224,7 +227,7 @@ func (s *Session) ClearAllowedPaths() {
 // atomic cache. Paths are pre-resolved (Abs + EvalSymlinks) so isPathAllowedResolved
 // can do a fast prefix match without syscalls. Call after any project/folder CRUD.
 // Returns an error so callers (e.g., delete handler) can fail-closed.
-func (s *Session) RefreshAllowedPaths() error {
+func (s *AccountRuntime) RefreshAllowedPaths() error {
 	raw, err := s.Store.ListFileIndexRootPaths()
 	if err != nil {
 		slog.Error("failed to refresh allowed paths", "error", err)
@@ -265,7 +268,7 @@ func (s *Session) RefreshAllowedPaths() error {
 // guard catches the false-positive cases). Server restart wipes the
 // in-memory cache — true cross-restart idempotency is deferred to a
 // future store-backed phase.
-func (s *Session) RunTurn(ctx context.Context, turnID string, event core.Event, opts *RunOptions) (string, error) {
+func (s *AccountRuntime) RunTurn(ctx context.Context, turnID string, event core.Event, opts *RunOptions) (string, error) {
 	if turnID == "" {
 		return s.Run(ctx, event, opts)
 	}
@@ -294,9 +297,9 @@ func (s *Session) RunTurn(ctx context.Context, turnID string, event core.Event, 
 // runTurnOwner executes the owner side of a RunTurn — context
 // detachment, panic recovery, done-channel signaling, and TTL
 // scheduling. Split from RunTurn so unit tests can inject a synthetic
-// exec function without constructing a full Session. See RunTurn for
+// exec function without constructing a full AccountRuntime. See RunTurn for
 // the contract.
-func (s *Session) runTurnOwner(ctx context.Context, turnID string, state *turnState, exec func(context.Context) (string, error)) {
+func (s *AccountRuntime) runTurnOwner(ctx context.Context, turnID string, state *turnState, exec func(context.Context) (string, error)) {
 	ownerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), turnRunMaxTime)
 	defer cancel()
 
@@ -329,8 +332,58 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+func (s *AccountRuntime) acquireTurnAdmission(ctx context.Context, event core.Event) (context.Context, *RuntimeAdmissionLease, error) {
+	if s == nil || s.Admission == nil {
+		return ctx, nil, nil
+	}
+	if held, ok := ctx.Value(runtimeAdmissionContextKey{}).(*AccountRuntime); ok && held == s {
+		return ctx, nil, nil
+	}
+	lease, err := s.Admission.Acquire(ctx, RuntimeAdmissionRequest{
+		AccountID: s.AccountID,
+		ScopeKey:  admissionScopeForEvent(s, &event),
+		Class:     admissionClassForEvent(event),
+	})
+	if err != nil {
+		return ctx, nil, err
+	}
+	return context.WithValue(ctx, runtimeAdmissionContextKey{}, s), lease, nil
+}
+
+func admissionScopeForEvent(s *AccountRuntime, event *core.Event) string {
+	if event == nil {
+		return store.DefaultConversationID
+	}
+	if scope := conversationKeyForEvent(s, event); scope != "" {
+		return scope
+	}
+	return store.DefaultConversationID
+}
+
+func admissionClassForEvent(event core.Event) AdmissionClass {
+	payload, err := event.ParsePayload()
+	if err == nil {
+		sourceSessionID := strings.TrimSpace(payload.SourceSessionID)
+		if sourceSessionID == "scheduler" || strings.HasPrefix(sourceSessionID, "delegate-") || strings.TrimSpace(payload.ChatID) == "scheduler" {
+			return AdmissionBackground
+		}
+	}
+	if core.IsTeamSpacePushEvent(event.Type) {
+		return AdmissionBackground
+	}
+	return AdmissionForeground
+}
+
 // Run processes a single event through the runner loop.
-func (s *Session) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
+func (s *AccountRuntime) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
+	var admissionLease *RuntimeAdmissionLease
+	var err error
+	ctx, admissionLease, err = s.acquireTurnAdmission(ctx, event)
+	if err != nil {
+		return "", err
+	}
+	defer admissionLease.Release()
+
 	eventText := FormatEvent(&event)
 	ctx = ContextWithEvent(ctx, &event)
 	ctx = ContextWithConversationID(ctx, conversationKeyForEvent(s, &event))
@@ -450,11 +503,11 @@ The current user turn is short (≤30 chars) and may reference this data implici
 // suppressed before becoming eligible to surface again. Chosen to match
 // the "weekly reflection" cadence — a candidate seen Sunday will not
 // re-surface until at least the next Sunday, even if the user has many
-// chat sessions in between.
+// chat turns in between.
 const suggestionSilenceWindow = 7 * 24 * time.Hour
 
 // augmentSystemPromptWithSuggestion injects an active reflection
-// suggestion into the system prompt on the FIRST turn of a session,
+// suggestion into the system prompt on the first turn of a conversation,
 // then records the surface time so the same candidate stays silent for
 // suggestionSilenceWindow.
 //
@@ -464,7 +517,7 @@ const suggestionSilenceWindow = 7 * 24 * time.Hour
 // admin-API only. The injection is a soft instruction; the LLM decides
 // whether and how to surface the suggestion in its natural reply.
 //
-// "First turn of a session" is detected by the absence of any prior
+// "First turn of a conversation" is detected by the absence of any prior
 // assistant turn — the just-added user turn is already in state.Turns
 // at the call site. Mutates messages in place; no-op when there's no
 // leading system message, the turn is not the first, the store probe
@@ -569,7 +622,7 @@ func pickActiveSuggestion(st *store.Store) (label, hash string) {
 // Best-effort: any store error or missing candidate returns response
 // unchanged. surfaced_at is recorded on success so the same candidate
 // stays silent for suggestionSilenceWindow.
-func appendSuggestionForBranchResponse(s *Session, event core.Event, response string) string {
+func appendSuggestionForBranchResponse(s *AccountRuntime, event core.Event, response string) string {
 	if s == nil || s.Store == nil {
 		return response
 	}
@@ -641,7 +694,7 @@ func stripBranchControlMarker(response string) string {
 // at lines 215-246; the duplication is small and the alternative —
 // extracting a shared helper — would entangle the legacy loop with the
 // branch path more than is worth the saved lines.
-func (s *Session) recordPipelineTurn(event core.Event, eventText, response string) error {
+func (s *AccountRuntime) recordPipelineTurn(event core.Event, eventText, response string) error {
 	convKey := conversationKeyForEvent(s, &event)
 	meta := conversationTurnSource(&event)
 	staffID := ResolveStaffName(s.Config, event.Type.ChannelName(), convKey, "", s.Store, s.BaseDir)
@@ -694,7 +747,7 @@ func (s *Session) recordPipelineTurn(event core.Event, eventText, response strin
 	return s.Store.SaveConversationState(state)
 }
 
-func (s *Session) runAgentLoop(ctx context.Context, event core.Event, rawEventText string, opts *RunOptions) (string, error) {
+func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, rawEventText string, opts *RunOptions) (string, error) {
 	loopStart := time.Now()
 	channelName := event.Type.ChannelName()
 	resolution, err := resolveConversationForEvent(ctx, s, &event, s.Provider)
@@ -1230,7 +1283,7 @@ func toolTraceIDExists(traces []core.ToolTrace, id string) bool {
 	return false
 }
 
-func (s *Session) recordExecution(input, output string, resp *llm.Response, start time.Time, retries int, success bool, metadataJSON string) {
+func (s *AccountRuntime) recordExecution(input, output string, resp *llm.Response, start time.Time, retries int, success bool, metadataJSON string) {
 	summary := output
 	if len(summary) > 200 {
 		summary = summary[:200]
@@ -1258,7 +1311,7 @@ func (s *Session) recordExecution(input, output string, resp *llm.Response, star
 	}
 }
 
-func (s *Session) compactionForAttempt(attempt int) CompactionConfig {
+func (s *AccountRuntime) compactionForAttempt(attempt int) CompactionConfig {
 	if !s.Config.Features.ContextCompaction {
 		return CompactionConfig{RecentWindow: 20, MiddleWindow: 0, TruncateLen: 100}
 	}
@@ -1272,7 +1325,7 @@ func (s *Session) compactionForAttempt(attempt int) CompactionConfig {
 // Only named models from config ([[models]]) are accepted; arbitrary model IDs
 // are rejected to prevent unintended API key leakage to unknown models.
 // Falls back to the session's default provider when the model is unknown or invalid.
-func (s *Session) resolveProvider(model string) llm.Provider {
+func (s *AccountRuntime) resolveProvider(model string) llm.Provider {
 	if model == "" {
 		return s.Provider
 	}
@@ -1382,14 +1435,14 @@ type conversationTurnMetadata struct {
 	MessageID     string
 }
 
-func conversationKey(s *Session) string {
+func conversationKey(s *AccountRuntime) string {
 	if s != nil && s.AccountID != "" {
 		return s.AccountID
 	}
 	return "account"
 }
 
-func (s *Session) loadConversationStateForRun(convKey string) (*core.ConversationState, error) {
+func (s *AccountRuntime) loadConversationStateForRun(convKey string) (*core.ConversationState, error) {
 	if s == nil || s.Store == nil {
 		return nil, nil
 	}
@@ -1413,7 +1466,7 @@ func (s *Session) loadConversationStateForRun(convKey string) (*core.Conversatio
 	return s.Store.LoadConversationStateForChat(store.DefaultConversationID)
 }
 
-func conversationKeyForEvent(s *Session, event *core.Event) string {
+func conversationKeyForEvent(s *AccountRuntime, event *core.Event) string {
 	if s == nil || s.Store == nil {
 		return conversationKey(s)
 	}
@@ -1438,8 +1491,8 @@ func conversationKeyForEvent(s *Session, event *core.Event) string {
 	return store.DefaultConversationID
 }
 
-func existingConversationKeyFromPayload(s *Session, payload core.ChatPayload, includeConversationID bool) (string, bool, error) {
-	candidates := []string{payload.SessionID, payload.ChatID}
+func existingConversationKeyFromPayload(s *AccountRuntime, payload core.ChatPayload, includeConversationID bool) (string, bool, error) {
+	candidates := []string{payload.SourceSessionID, payload.ChatID}
 	if includeConversationID {
 		candidates = append([]string{payload.ConversationID}, candidates...)
 	}
@@ -1459,7 +1512,7 @@ func existingConversationKeyFromPayload(s *Session, payload core.ChatPayload, in
 	return "", false, nil
 }
 
-func conversationKeyExists(s *Session, conversationID string) (bool, error) {
+func conversationKeyExists(s *AccountRuntime, conversationID string) (bool, error) {
 	if _, ok, err := s.Store.ConversationScope(conversationID); err != nil {
 		return false, err
 	} else if ok {
@@ -1477,9 +1530,9 @@ func sourceConversationKey(eventType core.EventType, payload core.ChatPayload) s
 	stableID := strings.TrimSpace(payload.ChatID)
 	switch eventType {
 	case core.EventKakaoTalk, core.EventWebChat, core.EventDesktop:
-		stableID = firstNonEmptyConversationValue(payload.SessionID, payload.ChatID)
+		stableID = firstNonEmptyConversationValue(payload.SourceSessionID, payload.ChatID)
 	default:
-		stableID = firstNonEmptyConversationValue(payload.ChatID, payload.SessionID)
+		stableID = firstNonEmptyConversationValue(payload.ChatID, payload.SourceSessionID)
 	}
 	if stableID == "" || stableID == "api" || stableID == "scheduler" {
 		return ""
@@ -1540,8 +1593,8 @@ func conversationTurnSource(event *core.Event) conversationTurnMetadata {
 	}
 	meta.ChatID = payload.ChatID
 	meta.MessageID = payload.ReplyToMessageID
-	if payload.SessionID != "" {
-		meta.ChannelUserID = payload.SessionID
+	if payload.SourceSessionID != "" {
+		meta.ChannelUserID = payload.SourceSessionID
 	} else {
 		meta.ChannelUserID = payload.ChatID
 	}

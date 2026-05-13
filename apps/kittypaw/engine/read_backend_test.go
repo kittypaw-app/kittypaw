@@ -197,7 +197,7 @@ func TestExecuteHTTPWebFetchUsesConfiguredFirecrawlReadBackend(t *testing.T) {
 	cfg.Web.ReadBackend = "firecrawl"
 	cfg.Web.FirecrawlKey = "fc-test"
 	cfg.Web.FirecrawlURL = firecrawl.URL
-	s := &Session{Config: &cfg}
+	s := &AccountRuntime{Config: &cfg}
 	urlArg, _ := json.Marshal("https://example.com/article")
 	result, err := executeHTTP(context.Background(), core.SkillCall{
 		SkillName: "Web",
@@ -219,7 +219,7 @@ func TestExecuteHTTPWebFetchUsesConfiguredFirecrawlReadBackend(t *testing.T) {
 func TestExecuteHTTPWebFetchUsesConfiguredBrowserReadBackend(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.Web.ReadBackend = "browser"
-	s := &Session{Config: &cfg, BrowserController: &fakeBrowserReadController{}}
+	s := &AccountRuntime{Config: &cfg, BrowserController: &fakeBrowserReadController{}}
 	urlArg, _ := json.Marshal("https://example.com/rendered")
 	result, err := executeHTTP(context.Background(), core.SkillCall{
 		SkillName: "Web",
@@ -243,7 +243,7 @@ func TestExecuteHTTPWebFetchBrowserBackendHonorsBrowserOpenApproval(t *testing.T
 	cfg.AutonomyLevel = core.AutonomySupervised
 	cfg.Web.ReadBackend = "browser"
 	controller := &fakeBrowserReadController{}
-	s := &Session{Config: &cfg, BrowserController: controller}
+	s := &AccountRuntime{Config: &cfg, BrowserController: controller}
 	permissionCalls := 0
 	ctx := ContextWithPermissionCallback(context.Background(), func(_ context.Context, description, resource string) (bool, error) {
 		permissionCalls++

@@ -60,7 +60,7 @@ func mockResp(code string) *llm.Response {
 	}
 }
 
-func newTestSession(t *testing.T, responses ...*llm.Response) *Session {
+func newTestSession(t *testing.T, responses ...*llm.Response) *AccountRuntime {
 	t.Helper()
 
 	st, err := store.Open(":memory:")
@@ -71,7 +71,7 @@ func newTestSession(t *testing.T, responses ...*llm.Response) *Session {
 
 	cfg := core.DefaultConfig()
 
-	return &Session{
+	return &AccountRuntime{
 		Provider: &mockProvider{responses: responses},
 		Sandbox:  sandbox.New(cfg.Sandbox),
 		Store:    st,
@@ -96,9 +96,9 @@ func installTestPackage(t *testing.T, baseDir, tomlContent, jsContent string) *c
 
 func webChatEvent(text string) core.Event {
 	payload, _ := json.Marshal(core.ChatPayload{
-		ChatID:    "test-chat",
-		Text:      text,
-		SessionID: "test-session",
+		ChatID:          "test-chat",
+		Text:            text,
+		SourceSessionID: "test-session",
 	})
 	return core.Event{Type: core.EventWebChat, Payload: payload}
 }
@@ -219,7 +219,7 @@ func TestE2EErrorRetry(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: mock,
 		Sandbox:  sandbox.New(cfg.Sandbox),
 		Store:    st,
@@ -278,7 +278,7 @@ func TestE2EFileAccessGating(t *testing.T) {
 	})
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(code)}},
 		Sandbox:  sandbox.New(cfg.Sandbox),
 		Store:    st,
@@ -365,7 +365,7 @@ context = ["locale", "location"]
 	cfg.User.Latitude = 37.57
 	cfg.User.Longitude = 126.98
 
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       mock,
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Store:          st,
@@ -453,7 +453,7 @@ return JSON.stringify({
 	t.Cleanup(func() { st.Close() })
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Store:          st,
 		Config:         &cfg,
@@ -529,7 +529,7 @@ return JSON.stringify({
 	t.Cleanup(func() { st.Close() })
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Store:          st,
 		Config:         &cfg,

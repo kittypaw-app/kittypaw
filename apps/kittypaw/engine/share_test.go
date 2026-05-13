@@ -15,10 +15,10 @@ import (
 
 // newShareFixture stands up a two-account topology on disk (team-space owner +
 // alice reader) with a weather.json that team-space members can read.
-// The fixture returns a Session wired as alice so each test exercises
+// The fixture returns an AccountRuntime wired as alice so each test exercises
 // the same execution path the sandbox uses at runtime — the exported
 // executeShare is the only thing under test; everything else is plumbing.
-func newShareFixture(t *testing.T) (sess *Session, teamDir string) {
+func newShareFixture(t *testing.T) (sess *AccountRuntime, teamDir string) {
 	t.Helper()
 	root := t.TempDir()
 
@@ -45,7 +45,7 @@ func newShareFixture(t *testing.T) (sess *Session, teamDir string) {
 	})
 	reg.Register(&core.Account{ID: "alice", BaseDir: aliceDir, Config: &core.Config{}})
 
-	sess = &Session{
+	sess = &AccountRuntime{
 		Config:          &core.Config{},
 		AccountID:       "alice",
 		AccountRegistry: reg,
@@ -61,7 +61,7 @@ func mustCall(t *testing.T, accountID, path string) core.SkillCall {
 }
 
 // TestShareRead_Success pins the happy path — alice asking for a
-// team-space memory path returns the file body. The pair (Session.AccountID,
+// team-space memory path returns the file body. The pair (AccountRuntime.AccountID,
 // target Account from registry) is what makes the cross-account check
 // meaningful; without the session field wired up the whole surface is
 // dead code.
@@ -157,13 +157,13 @@ func TestShareRead_AuditLog(t *testing.T) {
 	}
 }
 
-// TestShareRead_NoRegistry protects against the "Session wired without
+// TestShareRead_NoRegistry protects against the "runtime wired without
 // account context" case — e.g. a legacy single-account server or a test
 // setup that forgot to inject the registry. Rather than panic on nil,
 // surface a clear "unavailable" error so skill authors see what's
 // missing instead of debugging a segfault.
 func TestShareRead_NoRegistry(t *testing.T) {
-	sess := &Session{Config: &core.Config{}} // AccountID="", AccountRegistry=nil
+	sess := &AccountRuntime{Config: &core.Config{}} // AccountID="", AccountRegistry=nil
 
 	out, _ := executeShare(context.Background(), mustCall(t, "team", "x"), sess)
 	var resp map[string]string
@@ -175,7 +175,7 @@ func TestShareRead_NoRegistry(t *testing.T) {
 
 func TestShareRead_RejectsNonMember(t *testing.T) {
 	sess, _ := newShareFixture(t)
-	out, _ := executeShare(context.Background(), mustCall(t, "team", "memory/weather.json"), &Session{
+	out, _ := executeShare(context.Background(), mustCall(t, "team", "memory/weather.json"), &AccountRuntime{
 		AccountID:       "bob",
 		AccountRegistry: sess.AccountRegistry,
 	})
@@ -191,15 +191,15 @@ func TestShareRead_RejectsNonMember(t *testing.T) {
 func TestShareRead_NonMemberAndUnknownTargetShareExternalError(t *testing.T) {
 	sess, _ := newShareFixture(t)
 
-	nonMemberOut, _ := executeShare(context.Background(), mustCall(t, "team", "memory/weather.json"), &Session{
+	nonMemberOut, _ := executeShare(context.Background(), mustCall(t, "team", "memory/weather.json"), &AccountRuntime{
 		AccountID:       "bob",
 		AccountRegistry: sess.AccountRegistry,
 	})
-	nonTeamSpaceOut, _ := executeShare(context.Background(), mustCall(t, "alice", "memory/weather.json"), &Session{
+	nonTeamSpaceOut, _ := executeShare(context.Background(), mustCall(t, "alice", "memory/weather.json"), &AccountRuntime{
 		AccountID:       "bob",
 		AccountRegistry: sess.AccountRegistry,
 	})
-	unknownOut, _ := executeShare(context.Background(), mustCall(t, "grandma", "memory/weather.json"), &Session{
+	unknownOut, _ := executeShare(context.Background(), mustCall(t, "grandma", "memory/weather.json"), &AccountRuntime{
 		AccountID:       "bob",
 		AccountRegistry: sess.AccountRegistry,
 	})
@@ -261,7 +261,7 @@ func TestShareRead_RejectsNonTeamSpaceTarget(t *testing.T) {
 	})
 	reg.Register(&core.Account{ID: "alice", BaseDir: aliceDir, Config: &core.Config{}})
 
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:          &core.Config{},
 		AccountID:       "alice",
 		AccountRegistry: reg,

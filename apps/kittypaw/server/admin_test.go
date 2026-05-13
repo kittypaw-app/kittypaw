@@ -79,7 +79,7 @@ func TestAddAccount_RegistersOnAllThreeStores(t *testing.T) {
 		t.Fatalf("AddAccount: %v", err)
 	}
 
-	if srv.accounts.Session("alice") == nil {
+	if srv.accounts.Runtime("alice") == nil {
 		t.Error("alice missing from AccountRouter after AddAccount")
 	}
 	if srv.accountRegistry.Get("alice") == nil {
@@ -200,7 +200,7 @@ func TestAddAccount_ChannelCollision(t *testing.T) {
 	}
 
 	// Side-effect assertion — no leak across registries.
-	if srv.accounts.Session("bob") != nil {
+	if srv.accounts.Runtime("bob") != nil {
 		t.Error("bob leaked into AccountRouter after rejected AddAccount")
 	}
 	if srv.accountRegistry.Get("bob") != nil {
@@ -246,7 +246,7 @@ func TestAddAccount_UnknownTeamSpaceMemberRejectedStateUnchanged(t *testing.T) {
 		t.Fatalf("AddAccount error = %v, want team-space membership validation", err)
 	}
 
-	if srv.accounts.Session("team") != nil {
+	if srv.accounts.Runtime("team") != nil {
 		t.Error("team leaked into AccountRouter after rejected AddAccount")
 	}
 	if srv.accountRegistry.Get("team") != nil {
@@ -289,7 +289,7 @@ func TestRemoveAccount_HappyPath(t *testing.T) {
 		t.Fatalf("RemoveAccount: %v", err)
 	}
 
-	if sess := srv.accounts.Session("alice"); sess != nil {
+	if sess := srv.accounts.Runtime("alice"); sess != nil {
 		t.Error("alice still in AccountRouter after RemoveAccount")
 	}
 	if srv.accountRegistry.Get("alice") != nil {
@@ -341,7 +341,7 @@ func TestRemoveAccount_InvalidIDRejectedStateUnchanged(t *testing.T) {
 		t.Error("want validation error, got nil")
 	}
 
-	if srv.accounts.Session("alice") == nil {
+	if srv.accounts.Runtime("alice") == nil {
 		t.Error("alice dropped from router after rejected RemoveAccount")
 	}
 	if srv.accountRegistry.Get("alice") == nil {
@@ -402,7 +402,7 @@ func TestHandleAdminAccountRemove_Success(t *testing.T) {
 	if resp["account_id"] != "alice" {
 		t.Errorf("account_id = %v, want \"alice\"", resp["account_id"])
 	}
-	if srv.accounts.Session("alice") != nil {
+	if srv.accounts.Runtime("alice") != nil {
 		t.Error("alice still registered after 200 deactivation")
 	}
 }
@@ -441,7 +441,7 @@ func TestHandleAdminAccountRemove_NonLocalhostRejected(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("want 403, got %d: %s", w.Code, w.Body.String())
 	}
-	if srv.accounts.Session("alice") == nil {
+	if srv.accounts.Runtime("alice") == nil {
 		t.Error("alice dropped despite localhost-gate rejection")
 	}
 }
@@ -466,7 +466,7 @@ func TestHandleAdminAccountAdd_Success(t *testing.T) {
 	if resp["account_id"] != "alice" {
 		t.Errorf("account_id = %v, want \"alice\"", resp["account_id"])
 	}
-	if srv.accounts.Session("alice") == nil {
+	if srv.accounts.Runtime("alice") == nil {
 		t.Error("alice not registered after 200")
 	}
 }
@@ -528,7 +528,7 @@ func TestHandleAdminAccountAdd_NonLocalhostRejected(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("want 403, got %d: %s", w.Code, w.Body.String())
 	}
-	if srv.accounts.Session("alice") != nil {
+	if srv.accounts.Runtime("alice") != nil {
 		t.Error("alice registered despite localhost-gate rejection")
 	}
 }
@@ -582,7 +582,7 @@ func TestHandleAdminAccountAdd_HotReloadRouterReflectsImmediately(t *testing.T) 
 
 	// Post-add: charlie is immediately in the router and fresh events route
 	// cleanly without bumping the drop counter.
-	if got := srv.accounts.Session("charlie"); got == nil {
+	if got := srv.accounts.Runtime("charlie"); got == nil {
 		t.Fatal("post-add: charlie missing from router — hot-reload failed")
 	}
 	dropBefore := srv.accounts.DropCount()

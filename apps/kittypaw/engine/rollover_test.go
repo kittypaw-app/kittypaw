@@ -30,10 +30,10 @@ func (p *rolloverMemoryProvider) MaxTokens() int     { return 4096 }
 func rolloverChatEvent(t *testing.T, text, chatID, sessionID, conversationID string) core.Event {
 	t.Helper()
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         chatID,
-		Text:           text,
-		SessionID:      sessionID,
-		ConversationID: conversationID,
+		ChatID:          chatID,
+		Text:            text,
+		SourceSessionID: sessionID,
+		ConversationID:  conversationID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,14 +70,14 @@ func TestLengthRolloverCreatesChildAndRecordsCurrentTurnThere(t *testing.T) {
 		t.Fatalf("CreateConversation(parent): %v", err)
 	}
 	seedConversationTurns(t, st, parent.ID, 5)
-	payload := core.ChatPayload{ChatID: "chat-1", SessionID: "sess-rollover"}
+	payload := core.ChatPayload{ChatID: "chat-1", SourceSessionID: "sess-rollover"}
 	routeKey, route := conversationRouteKey(core.EventWebChat, payload)
 	route.ConversationID = parent.ID
 	if err := st.UpsertConversationRoute(route); err != nil {
 		t.Fatalf("UpsertConversationRoute: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:    st,
 		Config:   &cfg,
 		Provider: &promptCaptureProvider{response: `return "done"`},
@@ -129,14 +129,14 @@ func TestLengthRolloverIsIdempotentForNextRun(t *testing.T) {
 		t.Fatalf("CreateConversation(parent): %v", err)
 	}
 	seedConversationTurns(t, st, parent.ID, 5)
-	payload := core.ChatPayload{ChatID: "chat-1", SessionID: "sess-rollover"}
+	payload := core.ChatPayload{ChatID: "chat-1", SourceSessionID: "sess-rollover"}
 	routeKey, route := conversationRouteKey(core.EventWebChat, payload)
 	route.ConversationID = parent.ID
 	if err := st.UpsertConversationRoute(route); err != nil {
 		t.Fatalf("UpsertConversationRoute: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:    st,
 		Config:   &cfg,
 		Provider: &promptCaptureProvider{response: `return "done"`},
@@ -164,7 +164,7 @@ func TestProjectConversationDoesNotAutoRollover(t *testing.T) {
 	}
 	seedConversationTurns(t, st, "project:alpha", 5)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:    st,
 		Config:   &cfg,
 		Provider: &promptCaptureProvider{response: `return "done"`},
@@ -198,7 +198,7 @@ func TestResolveConversationForEventPreservesExistingChatIDConversation(t *testi
 		t.Fatalf("CreateProject: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 	event := rolloverChatEvent(t, "continue project chat", project.ProjectConversationID, "browser-session", "")
 
 	resolution, err := resolveConversationForEvent(context.Background(), sess, &event, nil)
@@ -209,8 +209,8 @@ func TestResolveConversationForEventPreservesExistingChatIDConversation(t *testi
 		t.Fatalf("ConversationID = %q, want existing project conversation %q", resolution.ConversationID, project.ProjectConversationID)
 	}
 	routeKey, _ := conversationRouteKey(core.EventWebChat, core.ChatPayload{
-		ChatID:    project.ProjectConversationID,
-		SessionID: "browser-session",
+		ChatID:          project.ProjectConversationID,
+		SourceSessionID: "browser-session",
 	})
 	if route, ok, err := st.ConversationRoute(routeKey); err != nil || ok {
 		t.Fatalf("ConversationRoute(%q) = %+v ok=%v err=%v, want no route created", routeKey, route, ok, err)
@@ -225,14 +225,14 @@ func TestRolloverNoticeAppearsOnce(t *testing.T) {
 		t.Fatalf("CreateConversation(parent): %v", err)
 	}
 	seedConversationTurns(t, st, parent.ID, 5)
-	payload := core.ChatPayload{ChatID: "chat-1", SessionID: "sess-rollover"}
+	payload := core.ChatPayload{ChatID: "chat-1", SourceSessionID: "sess-rollover"}
 	_, route := conversationRouteKey(core.EventWebChat, payload)
 	route.ConversationID = parent.ID
 	if err := st.UpsertConversationRoute(route); err != nil {
 		t.Fatalf("UpsertConversationRoute: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:    st,
 		Config:   &cfg,
 		Provider: &promptCaptureProvider{response: `return "done"`},
@@ -256,14 +256,14 @@ func TestTopicShiftSuggestsWithoutSwitching(t *testing.T) {
 		t.Fatalf("CreateConversation(parent): %v", err)
 	}
 	seedConversationTurns(t, st, parent.ID, 3)
-	payload := core.ChatPayload{ChatID: "chat-1", SessionID: "sess-topic"}
+	payload := core.ChatPayload{ChatID: "chat-1", SourceSessionID: "sess-topic"}
 	routeKey, route := conversationRouteKey(core.EventWebChat, payload)
 	route.ConversationID = parent.ID
 	if err := st.UpsertConversationRoute(route); err != nil {
 		t.Fatalf("UpsertConversationRoute: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:    st,
 		Config:   &cfg,
 		Provider: &promptCaptureProvider{response: `return "answer"`},

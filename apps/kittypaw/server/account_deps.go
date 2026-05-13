@@ -19,7 +19,7 @@ import (
 )
 
 // AccountDeps is the per-account set of dependencies server.New needs to
-// build an engine.Session for one account. The server entry point (CLI
+// build an engine.AccountRuntime for one account. The server entry point (CLI
 // server start) opens these per-account resources (DB, LLM provider, sandbox)
 // before handing the slice to server.New — the server package stays out
 // of discovery/migration business.
@@ -78,7 +78,7 @@ func (td *AccountDeps) Close() error {
 }
 
 // OpenAccountDeps opens every per-account dependency needed to build an
-// engine.Session: filesystem layout, SQLite store, LLM provider (plus
+// engine.AccountRuntime: filesystem layout, SQLite store, LLM provider (plus
 // optional fallback), sandbox, secrets store, package manager, API token
 // manager, and — when [mcp] is declared in config — a connected MCP
 // registry.
@@ -213,28 +213,28 @@ func connectProviderLabel(provider string) string {
 	}
 }
 
-// buildAccountSession wires a single AccountDeps into a ready-to-dispatch
-// engine.Session. Used both by server.New at boot and by Server.AddAccount
+// buildAccountRuntime wires a single AccountDeps into a ready-to-dispatch
+// engine.AccountRuntime. Used both by server.New at boot and by Server.AddAccount
 // at runtime so hot-added accounts are indistinguishable from those loaded
 // at startup.
 //
 // Side effects (all best-effort, logged on failure — none abort):
 //   - Seeds workspace_files from config.Sandbox.AllowedPaths.
-//   - Populates Session.AllowedPaths via RefreshAllowedPaths.
+//   - Populates AccountRuntime.AllowedPaths via RefreshAllowedPaths.
 //   - Spawns a background goroutine that runs the FTS5 indexer over every
 //     registered file root for this account.
 //
 // Team-space accounts receive a ChannelFanout wired to the shared eventCh;
-// personal accounts leave sess.Fanout == nil so the sandbox hides the
+// personal accounts leave runtime.Fanout == nil so the sandbox hides the
 // Fanout JS global (I5 — personal cannot reach personal).
-func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventCh chan<- core.Event) *engine.Session {
+func buildAccountRuntime(td *AccountDeps, registry *core.AccountRegistry, eventCh chan<- core.Event) *engine.AccountRuntime {
 	if roots := td.Account.Config.WorkspaceRoots(); len(roots) > 0 {
 		if err := td.Store.SeedWorkspaceRootsFromConfig(roots); err != nil {
 			slog.Error("seed workspaces from config", "account", td.Account.ID, "error", err)
 		}
 	}
 
-	sess := &engine.Session{
+	runtime := &engine.AccountRuntime{
 		Provider:          td.Provider,
 		FallbackProvider:  td.Fallback,
 		Sandbox:           td.Sandbox,
@@ -251,14 +251,15 @@ func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventC
 		AccountRegistry:   registry,
 		Health:            core.NewHealthState(),
 		SummaryFlight:     &singleflight.Group{},
+		Admission:         engine.NewRuntimeAdmission(engine.RuntimeAdmissionConfigFromCore(td.Account.Config)),
 	}
-	if sess.ProjectJobRuntime == nil {
-		sess.ProjectJobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+	if runtime.ProjectJobRuntime == nil {
+		runtime.ProjectJobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
 			Store:     td.Store,
 			AccountID: td.Account.ID,
 			BaseDir:   td.Account.BaseDir,
 		})
-		td.JobRuntime = sess.ProjectJobRuntime
+		td.JobRuntime = runtime.ProjectJobRuntime
 	}
 	if count, err := td.Store.MarkRunningJobsFailedOnStartup("daemon stopped while the job was running"); err != nil {
 		slog.Warn("mark interrupted project jobs failed", "account", td.Account.ID, "error", err)
@@ -266,16 +267,16 @@ func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventC
 		slog.Warn("marked interrupted project jobs failed", "account", td.Account.ID, "count", count)
 	}
 	if td.Account.Config.IsTeamSpaceAccount() {
-		sess.Fanout = core.NewChannelFanout(eventCh, registry, td.Account.ID)
+		runtime.Fanout = core.NewChannelFanout(eventCh, registry, td.Account.ID)
 	}
 
-	if err := sess.RefreshAllowedPaths(); err != nil {
+	if err := runtime.RefreshAllowedPaths(); err != nil {
 		slog.Warn("startup: failed to load workspace paths, file access denied by default",
 			"account", td.Account.ID, "error", err)
 	}
 
 	indexer := engine.NewFTS5Indexer(td.Store)
-	sess.Indexer = indexer
+	runtime.Indexer = indexer
 
 	// Live indexing is opt-out via [workspace] live_index = false. Attempt
 	// to open an fsnotify watcher eagerly; a failure (OS limit, etc.)
@@ -322,5 +323,5 @@ func buildAccountSession(td *AccountDeps, registry *core.AccountRegistry, eventC
 		}
 	}(td.Account.ID, td.Store, indexer, liveIdx)
 
-	return sess
+	return runtime
 }

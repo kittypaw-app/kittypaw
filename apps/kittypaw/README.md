@@ -98,8 +98,8 @@ connected chat channel:
 /run <name>                                run an installed skill or package by id/name
 /teach <description>                       create and save a draft skill from chat
 /staff <current|list|show|use|hire|cancel> inspect or change staff state
-/model [id]                                show model info or switch this chat session
-/session                                   show current conversation/session diagnostics
+/model [id]                                show model info or switch the active runtime model
+/conversation                              show current conversation diagnostics
 /context                                   show prompt/context window diagnostics
 /projects                                  list projects
 /project <current|show|use|new|settings>  inspect or select the current project
@@ -114,7 +114,7 @@ changes are recorded.
 
 ## Conversation Rollover
 
-General chat routes keep a stable conversation per source session/channel
+General chat routes keep a stable conversation per source identity/channel
 instead of mixing every message into one account timeline. When a general
 conversation grows past the rollover policy, KittyPaw creates a child
 conversation, carries forward conservative durable memories, and prepends a
@@ -123,7 +123,7 @@ short "Conversation rolled over" notice to the next assistant reply.
 Topic changes are advisory: KittyPaw may suggest splitting a new topic, but it
 does not silently switch threads for topic changes alone. Project and ticket
 conversations keep their explicit scoped IDs and are not auto-rolled by the
-general chat policy. `/session` and `/context` show rollover diagnostics.
+general chat policy. `/conversation` and `/context` show rollover diagnostics.
 
 ## Web Tools
 

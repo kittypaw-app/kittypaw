@@ -61,7 +61,7 @@ func runE2ELiveStaffDraftReproducesContextualPMRequest(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	seedStaffDraftTranscript(t, st)
 
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Store:     st,
 		Config:    cfg,

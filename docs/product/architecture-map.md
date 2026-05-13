@@ -113,10 +113,10 @@ User message
   +-- Hosted Space relay request
         |
         v
-AccountRouter selects account/session
+AccountRouter selects account runtime
         |
         v
-Session.Run
+AccountRuntime.Run
         |
         +-- deterministic slash command?
         |     |
@@ -263,7 +263,7 @@ Hosted relay
 local daemon relay connector
         |
         v
-local account/session/API
+local account runtime/API
 ```
 
 Hosted Space is a remote access layer. It does not own account state. If a
@@ -276,7 +276,7 @@ and smoke coverage before the feature is considered hosted.
 Inbound message
   -> channel adapter
   -> account router
-  -> Session.Run
+  -> AccountRuntime.Run
   -> response through same channel when supported
 
 Scheduled/proactive message

@@ -46,7 +46,7 @@ func TestParseCronInterval(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSchedulerStopMultipleCalls(t *testing.T) {
-	sched := NewScheduler(&Session{}, nil)
+	sched := NewScheduler(&AccountRuntime{}, nil)
 	sched.Stop()
 	sched.Stop() // must not panic
 	sched.Stop()
@@ -56,11 +56,28 @@ func TestSchedulerStartAsyncStopWaitIncludesLoops(t *testing.T) {
 	st := newTestStore(t)
 	cfg := &core.Config{}
 	cfg.Reflection.Enabled = true
-	sched := NewScheduler(&Session{Store: st, Config: cfg}, nil)
+	sched := NewScheduler(&AccountRuntime{Store: st, Config: cfg}, nil)
 
 	sched.StartAsync(context.Background())
 	sched.Stop()
 	sched.Wait()
+}
+
+func TestSchedulerScheduledSlotRejectsWhenFull(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.Runtime.MaxConcurrentScheduledJobs = 1
+	sched := NewScheduler(&AccountRuntime{Config: &cfg}, nil)
+
+	release, ok := sched.acquireScheduledSlot()
+	if !ok {
+		t.Fatal("first scheduled slot should be acquired")
+	}
+	defer release()
+
+	if release, ok := sched.acquireScheduledSlot(); ok {
+		release()
+		t.Fatal("second scheduled slot should be rejected while cap is full")
+	}
 }
 
 func TestReflectionDueUsesConfiguredCron(t *testing.T) {
@@ -104,7 +121,7 @@ func newTestStore(t *testing.T) *store.Store {
 func newTestScheduler(t *testing.T) (*Scheduler, *store.Store) {
 	t.Helper()
 	st := newTestStore(t)
-	session := &Session{Store: st, Config: &core.Config{}}
+	session := &AccountRuntime{Store: st, Config: &core.Config{}}
 	return NewScheduler(session, nil), st
 }
 
@@ -257,7 +274,7 @@ func TestFirstTelegramTarget_NoAdminChatID(t *testing.T) {
 		// AllowedChatIDs intentionally empty — without a chat target we
 		// cannot dispatch, so first-channel match must short-circuit.
 	}
-	sched := NewScheduler(&Session{Store: st, Config: cfg}, nil)
+	sched := NewScheduler(&AccountRuntime{Store: st, Config: cfg}, nil)
 	if tok, chat := sched.firstTelegramTarget(); tok != "" || chat != "" {
 		t.Errorf("missing allowed chat ids must yield empty target; got token=%q chat=%q", tok, chat)
 	}
@@ -273,7 +290,7 @@ func TestFirstTelegramTarget_PicksFirstTelegram(t *testing.T) {
 			{ChannelType: core.ChannelTelegram, Token: "telegram-token-2"},
 		},
 	}
-	sched := NewScheduler(&Session{Store: st, Config: cfg}, nil)
+	sched := NewScheduler(&AccountRuntime{Store: st, Config: cfg}, nil)
 	tok, chat := sched.firstTelegramTarget()
 	if tok != "telegram-token-1" {
 		t.Errorf("expected first telegram token; got %q", tok)
@@ -291,7 +308,7 @@ func TestRunSkillAutoDeliversReturnToTriggerDeliveryTarget(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.AutonomyLevel = core.AutonomyFull
 	notifier := &captureNotifier{}
-	session := &Session{
+	session := &AccountRuntime{
 		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`return "scheduled output";`)}},
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -336,7 +353,7 @@ func TestRunSkillSkipsAutoDeliveryAfterNotifySend(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.AutonomyLevel = core.AutonomyFull
 	notifier := &captureNotifier{}
-	session := &Session{
+	session := &AccountRuntime{
 		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`Notify.send("explicit notice"); return "explicit notice";`)}},
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -378,7 +395,7 @@ func TestRunOnceSkillDeletesAfterDeliveryFailure(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.AutonomyLevel = core.AutonomyFull
 	notifier := &captureNotifier{err: errors.New("delivery unavailable")}
-	session := &Session{
+	session := &AccountRuntime{
 		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`return "scheduled output";`)}},
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -425,13 +442,13 @@ func TestDeliverWeeklyReport_WrongDay(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	// Pick a weekday that is NOT today so the day check rejects.
 	notToday := (int(time.Now().Weekday()) + 3) % 7
-	sched.session.Config.Reflection.WeeklyReportDay = uint32(notToday)
+	sched.runtime.Config.Reflection.WeeklyReportDay = uint32(notToday)
 	// Even with topic prefs and a telegram channel set up, deliver must
 	// short-circuit before any network attempt — verified by absence of
 	// a __weekly_report__ last-run marker afterwards.
 	_ = st.SetUserContext("topic_pref:weather", "0.40", "test")
-	sched.session.Config.AllowedChatIDs = []string{"chat-id"}
-	sched.session.Config.Channels = []core.ChannelConfig{
+	sched.runtime.Config.AllowedChatIDs = []string{"chat-id"}
+	sched.runtime.Config.Channels = []core.ChannelConfig{
 		{ChannelType: core.ChannelTelegram, Token: "tok"},
 	}
 
@@ -445,7 +462,7 @@ func TestDeliverWeeklyReport_WrongDay(t *testing.T) {
 func TestDeliverWeeklyReport_SameDayDedup(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	today := int(time.Now().Weekday())
-	sched.session.Config.Reflection.WeeklyReportDay = uint32(today)
+	sched.runtime.Config.Reflection.WeeklyReportDay = uint32(today)
 	// Pretend a prior delivery happened 1 hour ago: the function must
 	// refuse to redeliver within the 23h dedup window.
 	_ = st.SetLastRun("__weekly_report__", time.Now().Add(-1*time.Hour))
@@ -465,11 +482,11 @@ func TestDeliverWeeklyReport_SameDayDedup(t *testing.T) {
 func TestDeliverWeeklyReport_NoPrefsSkips(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	today := int(time.Now().Weekday())
-	sched.session.Config.Reflection.WeeklyReportDay = uint32(today)
+	sched.runtime.Config.Reflection.WeeklyReportDay = uint32(today)
 	// No topic_pref:* rows — empty report would be useless. Function
 	// must skip dispatch and not record a last-run.
-	sched.session.Config.AllowedChatIDs = []string{"chat-id"}
-	sched.session.Config.Channels = []core.ChannelConfig{
+	sched.runtime.Config.AllowedChatIDs = []string{"chat-id"}
+	sched.runtime.Config.Channels = []core.ChannelConfig{
 		{ChannelType: core.ChannelTelegram, Token: "tok"},
 	}
 
@@ -487,7 +504,7 @@ func TestDeliverWeeklyReport_NoPrefsSkips(t *testing.T) {
 func TestDeliverWeeklyReport_NoChannelPreservesLastRun(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	today := int(time.Now().Weekday())
-	sched.session.Config.Reflection.WeeklyReportDay = uint32(today)
+	sched.runtime.Config.Reflection.WeeklyReportDay = uint32(today)
 	_ = st.SetUserContext("topic_pref:weather", "0.40", "test")
 	// No channels, no allowed chat ids — firstTelegramTarget returns empty.
 

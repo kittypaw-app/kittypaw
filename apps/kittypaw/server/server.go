@@ -25,14 +25,13 @@ import (
 )
 
 // Server is the HTTP/WebSocket gateway that bridges REST clients and browsers
-// to the runner engine. It owns the chi router, the default-account engine
-// session, account schedulers, channel spawner, account router, and all
-// handler state.
+// to the runner engine. It owns the chi router, the default-account runtime,
+// account schedulers, channel spawner, account router, and all handler state.
 type Server struct {
 	config             *core.Config
 	configMu           sync.RWMutex // protects config during hot-reload
 	store              *store.Store
-	session            *engine.Session // default-account session; HTTP handlers use this
+	runtime            *engine.AccountRuntime // default-account runtime; HTTP handlers use this
 	schedulers         *AccountSchedulers
 	router             chi.Router
 	spawner            *ChannelSpawner       // manages channel lifecycle for hot-reload
@@ -72,12 +71,12 @@ const DefaultAccountID = "default"
 // Callers must pass at least one AccountDeps; New panics on an empty slice
 // because a server with no accounts has nothing to route to.
 //
-// One engine.Session is built per account. Team-space accounts
+// One engine.AccountRuntime is built per account. Team-space accounts
 // (Config.IsTeamSpaceAccount()) receive a ChannelFanout wired to the shared
 // eventCh so their skills can push to configured members via Fanout.send;
 // personal accounts keep Fanout nil so the JS global stays hidden
 // (I5 — personal cannot reach personal).
-// Every session shares the same *core.AccountRegistry pointer so Share.read
+// Every runtime shares the same *core.AccountRegistry pointer so Share.read
 // can resolve peer accounts by ID.
 //
 // The HTTP handler surface (/api/v1, secrets) remains bound to the default
@@ -116,22 +115,22 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 
 	router := NewAccountRouter()
 	schedulers := NewAccountSchedulers()
-	var defaultSession *engine.Session
+	var defaultRuntime *engine.AccountRuntime
 	depsByID := make(map[string]*AccountDeps, len(accounts))
 	for _, td := range accounts {
-		sess := buildAccountSession(td, registry, eventCh)
-		router.Register(td.Account.ID, sess)
-		schedulers.Register(td.Account.ID, engine.NewScheduler(sess, td.PkgMgr))
+		runtime := buildAccountRuntime(td, registry, eventCh)
+		router.Register(td.Account.ID, runtime)
+		schedulers.Register(td.Account.ID, engine.NewScheduler(runtime, td.PkgMgr))
 		depsByID[td.Account.ID] = td
 		if td == defaultDeps {
-			defaultSession = sess
+			defaultRuntime = runtime
 		}
 	}
 
 	s := &Server{
 		config:          cfg,
 		store:           defaultDeps.Store,
-		session:         defaultSession,
+		runtime:         defaultRuntime,
 		schedulers:      schedulers,
 		accounts:        router,
 		accountList:     accountList,
@@ -151,7 +150,7 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 		if td == nil || td.Account == nil {
 			continue
 		}
-		s.attachSessionNotifier(td.Account.ID, router.Session(td.Account.ID))
+		s.attachRuntimeNotifier(td.Account.ID, router.Runtime(td.Account.ID))
 	}
 	s.router = s.setupRoutes()
 	return s
@@ -190,8 +189,8 @@ func (s *Server) defaultAccountID() string {
 			return id
 		}
 	}
-	if s.session != nil && s.session.AccountID != "" {
-		return s.session.AccountID
+	if s.runtime != nil && s.runtime.AccountID != "" {
+		return s.runtime.AccountID
 	}
 	for _, account := range s.accountList {
 		if account != nil && account.ID == DefaultAccountID {
@@ -216,7 +215,7 @@ func (s *Server) effectiveAPIKey() string {
 type requestAccount struct {
 	ID      string
 	Deps    *AccountDeps
-	Session *engine.Session
+	Runtime *engine.AccountRuntime
 }
 
 func (s *Server) requestAccount(r *http.Request) (*requestAccount, error) {
@@ -295,14 +294,14 @@ func (s *Server) requestAccountFromDeps(deps *AccountDeps) (*requestAccount, err
 	if deps == nil || deps.Account == nil {
 		return nil, fmt.Errorf("unauthorized")
 	}
-	sess := s.accounts.Session(deps.Account.ID)
-	if sess == nil {
+	runtime := s.accounts.Runtime(deps.Account.ID)
+	if runtime == nil {
 		return nil, fmt.Errorf("unauthorized")
 	}
 	return &requestAccount{
 		ID:      deps.Account.ID,
 		Deps:    deps,
-		Session: sess,
+		Runtime: runtime,
 	}, nil
 }
 
@@ -335,8 +334,8 @@ func (s *Server) allowedOriginsForAccount(acct *requestAccount) []string {
 		s.configMu.RUnlock()
 		return origins
 	}
-	if acct != nil && acct.Session != nil && acct.Session.Config != nil {
-		return append([]string(nil), acct.Session.Config.Server.AllowedOrigins...)
+	if acct != nil && acct.Runtime != nil && acct.Runtime.Config != nil {
+		return append([]string(nil), acct.Runtime.Config.Server.AllowedOrigins...)
 	}
 	if acct != nil && acct.Deps != nil && acct.Deps.Account != nil && acct.Deps.Account.Config != nil {
 		return append([]string(nil), acct.Deps.Account.Config.Server.AllowedOrigins...)
@@ -563,13 +562,13 @@ func (s *Server) getConfig() *core.Config {
 	return s.config
 }
 
-func (s *Server) defaultSession() *engine.Session {
+func (s *Server) defaultRuntime() *engine.AccountRuntime {
 	if s.accounts != nil {
-		if sess := s.accounts.Session(s.defaultAccountID()); sess != nil {
-			return sess
+		if runtime := s.accounts.Runtime(s.defaultAccountID()); runtime != nil {
+			return runtime
 		}
 	}
-	return s.session
+	return s.runtime
 }
 
 func (s *Server) defaultPackageManager() *core.PackageManager {
@@ -579,15 +578,15 @@ func (s *Server) defaultPackageManager() *core.PackageManager {
 	return s.pkgManager
 }
 
-// ProcessEvent runs a single event through the engine session and returns
+// ProcessEvent runs a single event through the account runtime and returns
 // the runner response. This is used by the channel dispatch loop to bridge
 // inbound channel messages to the runner engine.
 func (s *Server) ProcessEvent(ctx context.Context, event core.Event) (string, error) {
-	sess := s.defaultSession()
-	if sess == nil {
-		return "", fmt.Errorf("default session unavailable")
+	runtime := s.defaultRuntime()
+	if runtime == nil {
+		return "", fmt.Errorf("default runtime unavailable")
 	}
-	return sess.Run(ctx, event, nil)
+	return runtime.Run(ctx, event, nil)
 }
 
 // StartChannels creates the ChannelSpawner, reconciles each account's
@@ -668,8 +667,8 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				continue
 			}
 
-			session := s.accounts.Route(event)
-			if session == nil {
+			runtime := s.accounts.Route(event)
+			if runtime == nil {
 				// Drop was already logged + counted by AccountRouter.
 				continue
 			}
@@ -682,9 +681,9 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			}
 
 			// AC-T7: chat_id ownership check. Route() matched AccountID to a
-			// Session, but a compromised/leaked bot token could still inject
+			// runtime, but a compromised/leaked bot token could still inject
 			// an event whose chat_id belongs to a different account. Without
-			// this gate alice's Session.Run would persist bob's conversation
+			// this gate alice's AccountRuntime.Run would persist bob's conversation
 			// under alice's store — a privacy breach the AccountID check
 			// alone cannot catch. Permissive when no allowed chat IDs are
 			// configured (web_chat-only accounts).
@@ -693,7 +692,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			// used by SendResponse, not a stable user/chat identity. Kakao account
 			// ownership is established by the per-account relay token that stamped
 			// Event.AccountID before this dispatch path.
-			if event.Type != core.EventKakaoTalk && !core.ChatBelongsToAccount(session.Config, payload.ChatID) {
+			if event.Type != core.EventKakaoTalk && !core.ChatBelongsToAccount(runtime.Config, payload.ChatID) {
 				s.accounts.RecordMismatch(event.AccountID)
 				slog.Warn("account_routing_mismatch",
 					"account", event.AccountID,
@@ -702,12 +701,12 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				)
 				continue
 			}
-			if !core.UserBelongsToAccount(session.Config, payload.SessionID) {
+			if !core.UserBelongsToAccount(runtime.Config, payload.SourceSessionID) {
 				s.accounts.RecordMismatch(event.AccountID)
 				slog.Warn("account_user_authorization_mismatch",
 					"account", event.AccountID,
 					"chat_id", payload.ChatID,
-					"session_id", payload.SessionID,
+					"session_id", payload.SourceSessionID,
 					"type", event.Type,
 				)
 				continue
@@ -739,7 +738,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 							var ok bool
 							var err error
 							if requester, supported := ch.(channel.RequesterConfirmer); supported {
-								ok, err = requester.AskConfirmationForRequester(permCtx, chatID, payload.SessionID, desc, res)
+								ok, err = requester.AskConfirmationForRequester(permCtx, chatID, payload.SourceSessionID, desc, res)
 							} else {
 								ok, err = confirmer.AskConfirmation(permCtx, chatID, desc, res)
 							}
@@ -762,7 +761,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			s.enqueueChannelEvent(ctx, channelEventJob{
 				event:       event,
 				payload:     payload,
-				session:     session,
+				runtime:     runtime,
 				baseRunOpts: baseRunOpts,
 				ch:          ch,
 				chOK:        chOK,
@@ -944,9 +943,9 @@ func (s *Server) retryPendingResponses(ctx context.Context) {
 					// instead of guessing. Uses MarkResponseDelivered for
 					// cleanup until a dedicated dropped-audit table is
 					// introduced (Plan B).
-					if len(s.accounts.Sessions()) > 1 {
+					if len(s.accounts.AccountIDs()) > 1 {
 						slog.Warn("retry: PERMANENTLY dropping pending row with empty account_id (C1 privacy guard)",
-							"id", p.ID, "chat_id", p.ChatID, "accounts", len(s.accounts.Sessions()))
+							"id", p.ID, "chat_id", p.ChatID, "accounts", len(s.accounts.AccountIDs()))
 						_ = s.store.MarkResponseDelivered(p.ID)
 						continue
 					}
@@ -1021,7 +1020,7 @@ func (s *Server) ListenAndServe(addr string) error {
 		}
 
 		// Close MCP server connections (CommandTransport handles 5s → SIGTERM).
-		if sess := s.defaultSession(); sess != nil && sess.McpRegistry != nil {
+		if sess := s.defaultRuntime(); sess != nil && sess.McpRegistry != nil {
 			sess.McpRegistry.Shutdown()
 		}
 

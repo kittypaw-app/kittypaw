@@ -14,9 +14,9 @@ import (
 func slashCommandEvent(t *testing.T, text string) core.Event {
 	t.Helper()
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:    "test-chat",
-		SessionID: "test-session",
-		Text:      text,
+		ChatID:          "test-chat",
+		SourceSessionID: "test-session",
+		Text:            text,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestUnknownSlashCommandIsHandledDeterministically(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: "llm fallback should not run"}
-	sess := &Session{Store: st, Config: &cfg, Provider: provider}
+	sess := &AccountRuntime{Store: st, Config: &cfg, Provider: provider}
 
 	out, err := sess.Run(context.Background(), slashCommandEvent(t, "/stats"), nil)
 	if err != nil {
@@ -44,7 +44,7 @@ func TestUnknownSlashCommandIsHandledDeterministically(t *testing.T) {
 
 func TestHelpIsGeneratedFromRegisteredCommands(t *testing.T) {
 	cfg := core.DefaultConfig()
-	sess := &Session{Config: &cfg}
+	sess := &AccountRuntime{Config: &cfg}
 
 	out, handled := tryHandleCommand(context.Background(), "/help", sess)
 	if !handled {
@@ -68,7 +68,7 @@ func TestSlashStaffSwitchesConversationDefaultStaff(t *testing.T) {
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "finance", "", "재무담당 스태프")
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		AccountID: "alice",
@@ -94,7 +94,7 @@ func TestSlashStaffSwitchesConversationDefaultStaff(t *testing.T) {
 func TestSlashStaffUseMissingDoesNotSwitchThroughFallbackSoul(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		AccountID: "alice",
@@ -118,7 +118,7 @@ func TestSlashStaffCurrentListShowHireCancel(t *testing.T) {
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "finance", "재무", "재무 정리", "재무")
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		AccountID: "alice",
@@ -170,7 +170,7 @@ func TestSlashStaffCurrentListShowHireCancel(t *testing.T) {
 func TestSlashStaffHireDoesNotOverwritePendingDraft(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		AccountID: "alice",
@@ -197,7 +197,7 @@ func TestSlashStaffHireDoesNotOverwritePendingDraft(t *testing.T) {
 func TestSlashStaffCancelClearsAllPendingStaffState(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		AccountID: "alice",
@@ -231,7 +231,7 @@ func TestSlashStaffCancelClearsAllPendingStaffState(t *testing.T) {
 func TestSlashProjectAndTicketCommands(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -266,7 +266,7 @@ func TestSlashProjectAndTicketCommands(t *testing.T) {
 func TestSlashProjectUsePersistsCurrentProjectForTickets(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg, AccountID: "alice"}
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
 
 	first, err := st.CreateProject(store.CreateProjectRequest{Key: "first", Name: "First", RootPath: t.TempDir()})
 	if err != nil {
@@ -305,7 +305,7 @@ func TestSlashProjectUsePersistsCurrentProjectForTickets(t *testing.T) {
 func TestTicketChatCommandIsExplicitlyAdvisory(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
@@ -329,7 +329,7 @@ func TestTicketChatCommandIsExplicitlyAdvisory(t *testing.T) {
 func TestSlashRunExecutesInstalledSkill(t *testing.T) {
 	baseDir := t.TempDir()
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		BaseDir: baseDir,
 		Config:  &cfg,
 		Sandbox: sandbox.New(cfg.Sandbox),
@@ -358,7 +358,7 @@ func TestSlashRunResultIsRecordedInConversationHistory(t *testing.T) {
 	baseDir := t.TempDir()
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		BaseDir: baseDir,
 		Config:  &cfg,
 		Store:   st,
@@ -395,7 +395,7 @@ func TestSlashRunResultIsRecordedInConversationHistory(t *testing.T) {
 func TestSlashHelpIsNotRecordedInConversationHistory(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 
 	if _, err := sess.Run(context.Background(), slashCommandEvent(t, "/help"), nil); err != nil {
 		t.Fatalf("Run(/help): %v", err)
@@ -418,7 +418,7 @@ func TestSlashModelSwitchIsRecordedInConversationHistory(t *testing.T) {
 		{ID: "main", Provider: "openai", Model: "gpt-main"},
 		{ID: "alt", Provider: "openai", Model: "gpt-alt"},
 	}
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 
 	out, err := sess.Run(context.Background(), slashCommandEvent(t, "/model alt"), nil)
 	if err != nil {
@@ -451,7 +451,7 @@ func TestSlashSessionAndContextDiagnostics(t *testing.T) {
 		ContextWindow: 200000,
 		MaxTokens:     4096,
 	}}
-	sess := &Session{Store: st, Config: &cfg, AccountID: "alice"}
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
 	for _, turn := range []core.ConversationTurn{
 		{ConversationID: store.DefaultConversationID, Role: core.RoleUser, Content: "hello", Timestamp: "1"},
 		{ConversationID: store.DefaultConversationID, Role: core.RoleAssistant, Content: "world", Timestamp: "2"},
@@ -464,13 +464,13 @@ func TestSlashSessionAndContextDiagnostics(t *testing.T) {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
 
-	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/session", sess)
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/conversation", sess)
 	if !handled {
-		t.Fatal("/session was not handled")
+		t.Fatal("/conversation was not handled")
 	}
 	for _, want := range []string{"conversation", store.DefaultConversationID, "alice", "turns: 2", "checkpoint"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("/session output missing %q:\n%s", want, out)
+			t.Fatalf("/conversation output missing %q:\n%s", want, out)
 		}
 	}
 
@@ -485,7 +485,7 @@ func TestSlashSessionAndContextDiagnostics(t *testing.T) {
 	}
 }
 
-func TestSessionShowsRolloverMetadata(t *testing.T) {
+func TestConversationCommandShowsRolloverMetadata(t *testing.T) {
 	st := openTestStore(t)
 	parent, err := st.CreateConversation(store.CreateConversationRequest{ScopeType: "general", ScopeID: "parent"})
 	if err != nil {
@@ -505,23 +505,37 @@ func TestSessionShowsRolloverMetadata(t *testing.T) {
 		t.Fatalf("CreateConversation(child): %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg, AccountID: "alice"}
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
 
-	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), child.ID), "/session", sess)
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), child.ID), "/conversation", sess)
 	if !handled {
-		t.Fatal("/session was not handled")
+		t.Fatal("/conversation was not handled")
 	}
-	for _, want := range []string{"parent_conversation", parent.ID, "rollover_reason", rolloverReasonLengthTurns, "rollover_from_turn: 12"} {
+	for _, want := range []string{"parent_conversation", parent.ID, "rollover_reason", rolloverReasonLengthTurns, "rollover_from_turn: 12", "route_source_session_id: sess-1"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("/session output missing %q:\n%s", want, out)
+			t.Fatalf("/conversation output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestConversationCommandKeepsSessionAlias(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	runtime := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/session", runtime)
+	if !handled {
+		t.Fatal("/session alias was not handled")
+	}
+	if !strings.Contains(out, "conversation: "+store.DefaultConversationID) {
+		t.Fatalf("/session alias output missing conversation id:\n%s", out)
 	}
 }
 
 func TestContextShowsRolloverThreshold(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg}
+	sess := &AccountRuntime{Store: st, Config: &cfg}
 
 	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/context", sess)
 	if !handled {
@@ -547,7 +561,7 @@ func TestContextShowsRolloverThreshold(t *testing.T) {
 // Fields shown in info match core.ModelConfig only — no temperature/thinking
 // inferences (see formatModelInfo doc).
 
-func newModelTestSession() *Session {
+func newModelTestSession() *AccountRuntime {
 	cfg := core.DefaultConfig()
 	cfg.LLM.Default = "main"
 	cfg.LLM.Models = []core.ModelConfig{
@@ -565,7 +579,7 @@ func newModelTestSession() *Session {
 			BaseURL:  "https://api.groq.com/openai/v1/chat/completions",
 		},
 	}
-	return &Session{Config: &cfg, AccountID: "alice"}
+	return &AccountRuntime{Config: &cfg, AccountID: "alice"}
 }
 
 func TestHandleModel_Info(t *testing.T) {
@@ -588,7 +602,7 @@ func TestHandleModel_Info(t *testing.T) {
 func TestHandleModel_Info_NoModelsRegistered(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.LLM.Models = nil
-	sess := &Session{Config: &cfg}
+	sess := &AccountRuntime{Config: &cfg}
 	out, _ := tryHandleCommand(context.Background(), "/model", sess)
 	if !strings.Contains(out, "없음") && !strings.Contains(out, "없습니다") {
 		t.Errorf("expected empty-list message, got: %s", out)

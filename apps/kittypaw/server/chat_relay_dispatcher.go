@@ -156,7 +156,7 @@ func (r *relayResponseRecorder) StatusCode() int {
 }
 
 func (d *chatRelayDispatcher) dispatchModels(acct *requestAccount) chatrelay.DispatchResult {
-	cfg := acct.Session.Config
+	cfg := acct.Runtime.Config
 	models := make([]map[string]any, 0, len(cfg.LLM.Models)+len(cfg.Models)+1)
 	for _, model := range cfg.LLM.Models {
 		id := strings.TrimSpace(model.ModelID())
@@ -202,9 +202,9 @@ func (d *chatRelayDispatcher) dispatchChatCompletions(
 
 	sessionID := body.SessionID(req.ID)
 	payload := core.ChatPayload{
-		ChatID:    sessionID,
-		Text:      text,
-		SessionID: sessionID,
+		ChatID:          sessionID,
+		Text:            text,
+		SourceSessionID: sessionID,
 	}
 	raw, _ := json.Marshal(payload)
 	event := core.Event{
@@ -212,12 +212,15 @@ func (d *chatRelayDispatcher) dispatchChatCompletions(
 		AccountID: acct.ID,
 		Payload:   raw,
 	}
-	opts := &engine.RunOptions{ModelOverride: body.ModelOverride(acct.Session.Config)}
+	opts := &engine.RunOptions{ModelOverride: body.ModelOverride(acct.Runtime.Config)}
 	// Chat-path /model override fallback (only applies when the relay
 	// caller did NOT specify model — explicit body.Model wins).
-	opts = acct.Session.ApplyActiveModel(opts)
-	output, err := acct.Session.RunTurn(ctx, req.ID, event, opts)
+	opts = acct.Runtime.ApplyActiveModel(opts)
+	output, err := acct.Runtime.RunTurn(ctx, req.ID, event, opts)
 	if err != nil {
+		if isRuntimeAdmissionBusy(err) {
+			return jsonDispatch(http.StatusTooManyRequests, openAIServerError("runtime busy")), nil
+		}
 		slog.Warn("chat relay chat completion failed",
 			"request_id", req.ID,
 			"account_id", req.AccountID,
@@ -226,7 +229,7 @@ func (d *chatRelayDispatcher) dispatchChatCompletions(
 		return jsonDispatch(http.StatusInternalServerError, openAIServerError(err.Error())), nil
 	}
 	outbound := core.ParseOutboundResponse(output)
-	model := body.ResponseModel(acct.Session.Config)
+	model := body.ResponseModel(acct.Runtime.Config)
 	if body.Stream {
 		return sseDispatch(openAIChatCompletionSSE(req.ID, model, outbound.Text)), nil
 	}

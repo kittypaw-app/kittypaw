@@ -66,7 +66,7 @@ type rolloverMemoryResponse struct {
 	Memories []rolloverMemory `json:"memories"`
 }
 
-func resolveConversationForEvent(ctx context.Context, s *Session, event *core.Event, provider llm.Provider) (conversationResolution, error) {
+func resolveConversationForEvent(ctx context.Context, s *AccountRuntime, event *core.Event, provider llm.Provider) (conversationResolution, error) {
 	fallback := conversationKeyForEvent(s, event)
 	resolution := conversationResolution{ConversationID: fallback}
 	if s == nil || s.Store == nil || event == nil {
@@ -133,9 +133,9 @@ func conversationRouteKey(eventType core.EventType, payload core.ChatPayload) (s
 	stableID := strings.TrimSpace(payload.ChatID)
 	switch eventType {
 	case core.EventKakaoTalk, core.EventWebChat, core.EventDesktop:
-		stableID = firstNonEmptyConversationValue(payload.SessionID, payload.ChatID)
+		stableID = firstNonEmptyConversationValue(payload.SourceSessionID, payload.ChatID)
 	default:
-		stableID = firstNonEmptyConversationValue(payload.ChatID, payload.SessionID)
+		stableID = firstNonEmptyConversationValue(payload.ChatID, payload.SourceSessionID)
 	}
 	if stableID == "" || stableID == "api" || stableID == "scheduler" {
 		return "", store.ConversationRoute{}
@@ -148,12 +148,12 @@ func conversationRouteKey(eventType core.EventType, payload core.ChatPayload) (s
 	return routeKey, store.ConversationRoute{
 		RouteKey:        routeKey,
 		SourceChannel:   string(eventType),
-		SourceSessionID: strings.TrimSpace(payload.SessionID),
+		SourceSessionID: strings.TrimSpace(payload.SourceSessionID),
 		ChatID:          strings.TrimSpace(payload.ChatID),
 	}
 }
 
-func maybeRolloverConversation(ctx context.Context, s *Session, current conversationResolution, provider llm.Provider) (conversationResolution, error) {
+func maybeRolloverConversation(ctx context.Context, s *AccountRuntime, current conversationResolution, provider llm.Provider) (conversationResolution, error) {
 	policy := defaultRolloverPolicy
 	if !policy.Enabled || current.Route == nil {
 		return current, nil

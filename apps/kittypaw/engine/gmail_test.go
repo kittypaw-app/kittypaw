@@ -74,7 +74,7 @@ func TestExecuteGmailSearchUsesConnectedAccountToken(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:          &core.Config{AutonomyLevel: core.AutonomyFull},
 		ServiceTokenMgr: mgr,
 		AccountID:       "jinto",
@@ -112,7 +112,7 @@ func TestExecuteGmailSearchUsesConnectedAccountToken(t *testing.T) {
 }
 
 func TestExecuteGmailReadRequiresConnection(t *testing.T) {
-	sess := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, AccountID: "jinto"}
+	sess := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, AccountID: "jinto"}
 	id := json.RawMessage(`"msg-1"`)
 	got, err := resolveSkillCall(context.Background(), core.SkillCall{
 		SkillName: "Gmail",

@@ -94,7 +94,7 @@ func (p *toolUseScriptedProvider) ContextWindow() int { return 200000 }
 func (p *toolUseScriptedProvider) MaxTokens() int     { return 4096 }
 
 func TestMediateSkillOutput_NilProvider(t *testing.T) {
-	sess := &Session{Provider: nil}
+	sess := &AccountRuntime{Provider: nil}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "원화로 환율", "raw output")
 	if got != "raw output" {
 		t.Fatalf("nil provider must return raw output verbatim, got %q", got)
@@ -110,7 +110,7 @@ func TestMediateSkillOutput_NilSession(t *testing.T) {
 
 func TestMediateSkillOutput_EmptyUserText(t *testing.T) {
 	mock := &mediateMockProvider{response: "should not be reached"}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "", "raw")
 	if got != "raw" {
 		t.Fatalf("empty user text must skip LLM and return raw, got %q", got)
@@ -122,7 +122,7 @@ func TestMediateSkillOutput_EmptyUserText(t *testing.T) {
 
 func TestMediateSkillOutput_EmptyRawOutput(t *testing.T) {
 	mock := &mediateMockProvider{response: "x"}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "원화로", "")
 	if got != "" {
 		t.Fatalf("empty raw must return empty (caller already handled this), got %q", got)
@@ -134,7 +134,7 @@ func TestMediateSkillOutput_EmptyRawOutput(t *testing.T) {
 
 func TestMediateSkillOutput_LLMError(t *testing.T) {
 	mock := &mediateMockProvider{err: errors.New("provider down")}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "원화로 환율", "raw EUR-base")
 	if got != "raw EUR-base" {
 		t.Fatalf("LLM error must fall back to raw, got %q", got)
@@ -146,7 +146,7 @@ func TestMediateSkillOutput_LLMError(t *testing.T) {
 
 func TestMediateSkillOutput_EmptyResponseFallsBack(t *testing.T) {
 	mock := &mediateMockProvider{response: "   \n   "}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "원화로", "raw")
 	if got != "raw" {
 		t.Fatalf("whitespace-only LLM response must fall back to raw, got %q", got)
@@ -155,7 +155,7 @@ func TestMediateSkillOutput_EmptyResponseFallsBack(t *testing.T) {
 
 func TestMediateSkillOutput_PassThrough(t *testing.T) {
 	mock := &mediateMockProvider{response: "1 USD = 1477원\n1 EUR = 1684원"}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "원화로 환율", "raw EUR-base output")
 	if !strings.Contains(got, "1477원") {
 		t.Fatalf("expected LLM-mediated response, got %q", got)
@@ -189,7 +189,7 @@ func TestMediateSkillOutput_LongRawTruncated(t *testing.T) {
 	// fact-preservation guard short-circuits to true (overlap N/A).
 	long := strings.Repeat("A", mediateSkillRawOutputCap+500)
 	mock := &mediateMockProvider{response: "summary"}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "환율", long)
 	if got != "summary" {
 		t.Fatalf("expected mediated summary, got %q", got)
@@ -201,7 +201,7 @@ func TestMediateSkillOutput_FabricationFallsBack(t *testing.T) {
 	// Caller must receive raw, not the LLM hallucination.
 	raw := "1 USD = 1477.04 KRW\n1 EUR = 1684.32 KRW"
 	mock := &mediateMockProvider{response: "환율 정보를 가져오지 못했습니다. 다른 사이트를 확인해주세요."}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "환율", raw)
 	if got != raw {
 		t.Fatalf("fabrication (zero numeric overlap) must fall back to raw\n  got: %q\n  raw: %q", got, raw)
@@ -212,7 +212,7 @@ func TestMediateSkillOutput_PartialNumberOverlapPasses(t *testing.T) {
 	// LLM kept some raw numbers but reformatted units — should pass.
 	raw := "1 USD = 1477.04 KRW"
 	mock := &mediateMockProvider{response: "1 USD = 1477.04원"}
-	sess := &Session{Provider: mock}
+	sess := &AccountRuntime{Provider: mock}
 	got := mediateSkillOutput(context.Background(), sess, "exchange-rate", "원화로 환율", raw)
 	if got != "1 USD = 1477.04원" {
 		t.Fatalf("LLM kept the raw number — expected mediated response, got %q", got)
@@ -242,12 +242,12 @@ func TestMediationPreservesFacts_AnyOverlap(t *testing.T) {
 // see the prior branch dispatch in conversation history.
 func TestRecordPipelineTurn_AppendsBothTurns(t *testing.T) {
 	st := openTestStore(t)
-	sess := &Session{Store: st}
+	sess := &AccountRuntime{Store: st}
 
 	payload, _ := json.Marshal(core.ChatPayload{
-		ChatID:    "test-chat",
-		Text:      "환율 알려줘",
-		SessionID: "test-session",
+		ChatID:          "test-chat",
+		Text:            "환율 알려줘",
+		SourceSessionID: "test-session",
 	})
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
 
@@ -295,11 +295,11 @@ func TestRecordPipelineTurn_StripsAckBeforeStoring(t *testing.T) {
 	// pattern and copies it back into its own response (2026-04-27
 	// regression: '스킬을 설치했어요' count=2 in flow_installed_dispatch).
 	st := openTestStore(t)
-	sess := &Session{Store: st}
+	sess := &AccountRuntime{Store: st}
 	payload, _ := json.Marshal(core.ChatPayload{
-		ChatID:    "test-chat",
-		Text:      "네",
-		SessionID: "test-session",
+		ChatID:          "test-chat",
+		Text:            "네",
+		SourceSessionID: "test-session",
 	})
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
 	if err := sess.recordPipelineTurn(event, "네", "✅ '환율 조회' 스킬을 설치했어요.\n\n📈 환율\n1 USD = 1477.04 KRW"); err != nil {
@@ -329,7 +329,7 @@ func TestMediateWithTools_CodeExecLoop(t *testing.T) {
 		},
 		finalText: "EUR/KRW = 1729.90",
 	}
-	sess := &Session{Provider: p}
+	sess := &AccountRuntime{Provider: p}
 	out := mediateSkillOutputWithTools(context.Background(), sess, "exchange-rate", "원화로 환율", "1 USD = 1477.04 KRW, 1 USD = 0.85383 EUR")
 	if !strings.Contains(out, "1729.90") {
 		t.Fatalf("final text not delivered, got: %q", out)
@@ -346,7 +346,7 @@ func TestMediateWithTools_LoopCapped(t *testing.T) {
 	// Provider keeps returning tool_use forever. After the cap the
 	// loop must fall back to the raw output rather than spin.
 	p := &toolUseScriptedProvider{infinite: true}
-	sess := &Session{Provider: p}
+	sess := &AccountRuntime{Provider: p}
 	raw := "1 USD = 1477.04 KRW"
 	out := mediateSkillOutputWithTools(context.Background(), sess, "exchange-rate", "원화로", raw)
 	if out != raw {
@@ -363,7 +363,7 @@ func TestMediateWithTools_FabricationGuardFalls(t *testing.T) {
 	p := &toolUseScriptedProvider{
 		finalText: "환율 정보를 가져오지 못했습니다. 사이트를 확인하세요.",
 	}
-	sess := &Session{Provider: p}
+	sess := &AccountRuntime{Provider: p}
 	raw := "1 USD = 1477.04 KRW"
 	out := mediateSkillOutputWithTools(context.Background(), sess, "exchange-rate", "원화로", raw)
 	if out != raw {
@@ -372,7 +372,7 @@ func TestMediateWithTools_FabricationGuardFalls(t *testing.T) {
 }
 
 func TestMediateWithTools_NilProviderFallsBack(t *testing.T) {
-	sess := &Session{Provider: nil}
+	sess := &AccountRuntime{Provider: nil}
 	out := mediateSkillOutputWithTools(context.Background(), sess, "x", "원화로", "1 USD = 1477 KRW")
 	if out != "1 USD = 1477 KRW" {
 		t.Fatalf("nil provider must return raw, got %q", out)
@@ -413,7 +413,7 @@ func TestClassifyIntent_RecentWeatherLocationFollowupRoutesToAmbiguousFollowup(t
 	state := NewPipelineState()
 	state.RecordSkillOutputForSkill("weather-now", "강남역 현재 날씨\n1시간 강수: 없음")
 
-	intent := classifyIntent("장안동은?", state, &Session{})
+	intent := classifyIntent("장안동은?", state, &AccountRuntime{})
 
 	if intent.Kind != IntentAmbiguousFollowup {
 		t.Fatalf("expected IntentAmbiguousFollowup, got %v", intent.Kind)
@@ -469,7 +469,7 @@ const ctx = JSON.parse(__context__);
 return "1 " + ctx.params.base + " = 0.00068 USD";
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Pipeline:       state,
 		PackageManager: pm,
 		Sandbox:        sandbox.New(cfg.Sandbox),
@@ -506,7 +506,7 @@ description = "환율을 조회합니다."
 return "📈 환율 (2026-04-30)\n\n1 USD = 0.85383 EUR\n1 USD = 156.56 JPY\n1 USD = 1477 KRW\n\n_Source: Frankfurter (ECB) · Powered by KittyPaw_";
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Pipeline:       state,
 		PackageManager: pm,
 		Sandbox:        sandbox.New(cfg.Sandbox),
@@ -548,7 +548,7 @@ description = "환율을 조회합니다."
 return "📈 환율 (2026-04-30)\n\n1 USD = 0.85383 EUR\n1 USD = 156.56 JPY\n1 USD = 1477 KRW";
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Pipeline:       state,
 		Store:          st,
 		PackageManager: pm,
@@ -592,7 +592,7 @@ description = "환율을 조회합니다."
 return "📈 환율 (2026-04-30)\n\n1 USD = 0.85383 EUR\n1 USD = 156.56 JPY\n1 USD = 1477 KRW";
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Pipeline:       state,
 		Store:          st,
 		PackageManager: pm,
@@ -636,7 +636,7 @@ description = "환율을 조회합니다."
 return "📈 환율 (2026-04-30)\n\n1 USD = 0.85383 EUR\n1 USD = 156.56 JPY\n1 USD = 1477 KRW";
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Pipeline:       state,
 		Store:          st,
 		PackageManager: pm,
@@ -676,7 +676,7 @@ func TestExchangeRateDisplayPreferenceCandidateReadsLegacyMemory(t *testing.T) {
 	if err := st.SetUserContext("currency_display_preference", "1000원 기준으로 표시", "runner"); err != nil {
 		t.Fatal(err)
 	}
-	pref, ok := exchangeRateDisplayPreferenceCandidate(&Session{Store: st})
+	pref, ok := exchangeRateDisplayPreferenceCandidate(&AccountRuntime{Store: st})
 	if !ok {
 		t.Fatal("expected legacy currency display memory to become a preference candidate")
 	}
@@ -696,7 +696,7 @@ func TestPreferenceConfirmationBranchAcceptsExchangeRateDisplayPreference(t *tes
 	if err := st.SetUserContext("preference_pending_confirmation:exchange_rate.display", pref, "test"); err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{Pipeline: state, Store: st}
+	sess := &AccountRuntime{Pipeline: state, Store: st}
 
 	intent := classifyIntent("네네", state, sess)
 	if intent.Kind != IntentPreferenceConfirmation {
@@ -735,7 +735,7 @@ func TestPreferenceConfirmationDoesNotStealRecentSkillConsent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	intent := classifyIntent("네", state, &Session{Pipeline: state, Store: st})
+	intent := classifyIntent("네", state, &AccountRuntime{Pipeline: state, Store: st})
 	if intent.Kind != IntentInstallConsentReply {
 		t.Fatalf("intent = %v, want recent skill consent to win over preference confirmation", intent.Kind)
 	}
@@ -823,14 +823,14 @@ func TestClassifyIntent_AffirmativeConfirmsPendingClarification(t *testing.T) {
 }
 
 func TestClassifyIntent_ExchangeRateQueryUsesDeterministicBranch(t *testing.T) {
-	intent := classifyIntent("환율.", NewPipelineState(), &Session{})
+	intent := classifyIntent("환율.", NewPipelineState(), &AccountRuntime{})
 	if intent.Kind != IntentExchangeRateLookup {
 		t.Fatalf("expected IntentExchangeRateLookup, got %v", intent.Kind)
 	}
 }
 
 func TestClassifyIntent_WeatherNowQueryUsesDeterministicBranch(t *testing.T) {
-	intent := classifyIntent("강남역에 비오나? 지금?", NewPipelineState(), &Session{})
+	intent := classifyIntent("강남역에 비오나? 지금?", NewPipelineState(), &AccountRuntime{})
 	if intent.Kind != IntentWeatherNowLookup {
 		t.Fatalf("expected IntentWeatherNowLookup, got %v", intent.Kind)
 	}
@@ -843,7 +843,7 @@ func TestClassifyIntent_LocationReplyConfirmsPendingWeatherLocation(t *testing.T
 		Query: "강남역이 비오나? 지금?",
 	})
 
-	intent := classifyIntent("강남역이요.", state, &Session{})
+	intent := classifyIntent("강남역이요.", state, &AccountRuntime{})
 	if intent.Kind != IntentConfirmClarification {
 		t.Fatalf("expected IntentConfirmClarification, got %v", intent.Kind)
 	}
@@ -884,7 +884,7 @@ func TestExchangeRateLookupResponseFramesSearchHitsAsCandidates(t *testing.T) {
 
 func TestExchangeRateLookupBranchCachesActionableSkillOffer(t *testing.T) {
 	state := NewPipelineState()
-	sess := &Session{Pipeline: state}
+	sess := &AccountRuntime{Pipeline: state}
 
 	out, err := (&ExchangeRateLookupBranch{}).Execute(context.Background(), sess, core.Event{}, Intent{
 		Kind: IntentExchangeRateLookup,
@@ -909,7 +909,7 @@ func TestExchangeRateLookupBranchCachesActionableSkillOffer(t *testing.T) {
 
 func TestWeatherNowLookupBranchCachesOnlyCurrentWeatherOffer(t *testing.T) {
 	state := NewPipelineState()
-	sess := &Session{Pipeline: state}
+	sess := &AccountRuntime{Pipeline: state}
 
 	out, err := (&WeatherNowLookupBranch{}).Execute(context.Background(), sess, core.Event{}, Intent{
 		Kind: IntentWeatherNowLookup,
@@ -970,7 +970,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 `)
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1034,7 +1034,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 `)
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1094,7 +1094,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 `)
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp("장안동")}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1157,7 +1157,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 	cfg := core.DefaultConfig()
 	state := NewPipelineState()
 	state.RecordSkillOutputForSkill("weather-now", "강남역 현재 날씨\n1시간 강수: 없음")
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"intent":"weather_now","confidence":0.91,"location_query":"장안동"}`)}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1223,7 +1223,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 	cfg := core.DefaultConfig()
 	state := NewPipelineState()
 	state.RecordSkillOutputForSkill("weather-now", "강남역 현재 날씨\n1시간 강수: 없음")
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"intent":"Weather-Now","confidence":0.91,"location_query":"장안동"}`)}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1250,7 +1250,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 func TestAmbiguousFollowupBranchLowConfidenceAsksConfirmation(t *testing.T) {
 	state := NewPipelineState()
 	state.RecordSkillOutputForSkill("weather-now", "강남역 현재 날씨\n1시간 강수: 없음")
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`{"intent":"weather_now","confidence":0.42,"location_query":"장안동"}`)}},
 		Pipeline: state,
 	}
@@ -1314,7 +1314,7 @@ return JSON.stringify(ctx.user && ctx.user.location);
 `)
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp("사용자의 질문을 확인해보니 강남역의 현재 날씨를 문의하신 것 같습니다.")}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1368,7 +1368,7 @@ return "SHOULD_NOT_RUN";
 `)
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Config:         &cfg,
@@ -1395,7 +1395,7 @@ return "SHOULD_NOT_RUN";
 
 func TestWeatherNowLookupBranchRecordsPendingLocationWhenSlotExtractionFails(t *testing.T) {
 	state := NewPipelineState()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":`)}},
 		Pipeline: state,
 	}
@@ -1450,7 +1450,7 @@ const ctx = JSON.parse(__context__);
 return JSON.stringify(ctx.user && ctx.user.location);
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
 		Pipeline:       state,
 		PackageManager: pm,
@@ -1515,7 +1515,7 @@ const ctx = JSON.parse(__context__);
 return JSON.stringify(ctx.user && ctx.user.location);
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: &mockProvider{responses: []*llm.Response{
 			mockResp(`{"location_query":""}`),
 			mockResp(`{"location_query":"강남역"}`),
@@ -1560,7 +1560,7 @@ func TestWeatherNowLookupBranchCachesPendingStructuredParamsForInstall(t *testin
 
 	state := NewPipelineState()
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
 		Config:   &cfg,
 		Pipeline: state,
@@ -1620,7 +1620,7 @@ const ctx = JSON.parse(__context__);
 return JSON.stringify(ctx.user && ctx.user.location);
 `)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:       &mockProvider{responses: []*llm.Response{mockResp(`{"location_query":"강남역"}`)}},
 		Pipeline:       state,
 		PackageManager: pm,
@@ -1676,7 +1676,7 @@ func TestConfirmClarificationBranch_ExchangeRateOffersActionableSkill(t *testing
 		Kind:  "exchange_rate",
 		Query: "달러",
 	})
-	sess := &Session{Pipeline: state}
+	sess := &AccountRuntime{Pipeline: state}
 
 	out, err := (&ConfirmClarificationBranch{}).Execute(context.Background(), sess, core.Event{}, Intent{
 		Kind: IntentConfirmClarification,
@@ -1703,7 +1703,7 @@ func TestConfirmClarificationBranch_WeatherNowOffersActionableSkill(t *testing.T
 		Kind:  "weather_now",
 		Query: "장한평역에 비오나",
 	})
-	sess := &Session{Pipeline: state}
+	sess := &AccountRuntime{Pipeline: state}
 
 	out, err := (&ConfirmClarificationBranch{}).Execute(context.Background(), sess, core.Event{}, Intent{
 		Kind: IntentConfirmClarification,
@@ -1740,7 +1740,7 @@ version = "1.0.0"
 description = "환율을 조회합니다."
 `, `return "1 USD = 1477 KRW";`)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Pipeline:       state,
 		PackageManager: pm,
 		Sandbox:        sandbox.New(cfg.Sandbox),
@@ -1767,7 +1767,7 @@ func TestInstallConsentBranch_BareAffirmativeWithMultipleCandidatesAsksChoice(t 
 		{ID: "weather-briefing", Name: "아침 날씨 요약", Description: "매일 아침 날씨를 확인하고 텔레그램으로 보내줍니다."},
 		{ID: "weather-now", Name: "현재 날씨", Description: "wttr.in으로 현재 날씨를 즉답합니다."},
 	})
-	sess := &Session{Pipeline: state}
+	sess := &AccountRuntime{Pipeline: state}
 
 	out, err := (&InstallConsentBranch{}).Execute(context.Background(), sess, core.Event{}, Intent{Kind: IntentInstallConsentReply})
 	if err != nil {
@@ -1850,7 +1850,7 @@ version = "1.0.0"
 description = "매일 아침 설정한 도시의 날씨 예보를 텔레그램으로 보내줍니다."
 cron = "0 7 * * *"
 `, `return "briefing";`)
-	sess := &Session{PackageManager: pm}
+	sess := &AccountRuntime{PackageManager: pm}
 
 	if got := matchInstalledSkill("현재 날씨", sess); got != nil {
 		t.Fatalf("current weather query must not run scheduled briefing, got %s", got.Meta.ID)
@@ -1872,7 +1872,7 @@ name = "현재 날씨"
 version = "1.0.0"
 description = "지금 시점 현재 날씨와 비 여부를 즉답합니다."
 `, `return "now";`)
-	sess := &Session{PackageManager: pm}
+	sess := &AccountRuntime{PackageManager: pm}
 
 	got := matchInstalledSkill("지금 강남역에 비오나? 현재 날씨", sess)
 	if got == nil {
@@ -1892,7 +1892,7 @@ version = "1.0.0"
 description = "매일 아침 설정한 도시의 날씨 예보를 텔레그램으로 보내줍니다."
 cron = "0 7 * * *"
 `, `return "briefing";`)
-	sess := &Session{PackageManager: pm}
+	sess := &AccountRuntime{PackageManager: pm}
 
 	got := matchInstalledSkill("매일 아침 날씨 브리핑", sess)
 	if got == nil {
@@ -1988,12 +1988,12 @@ func TestRecordPipelineTurn_NextLoadSeesPriorTurns(t *testing.T) {
 	// accumulate in history — this is what gives the 3rd turn (legacy
 	// LLM) a 2-turn context.
 	st := openTestStore(t)
-	sess := &Session{Store: st}
+	sess := &AccountRuntime{Store: st}
 	mkEvent := func(text string) core.Event {
 		payload, _ := json.Marshal(core.ChatPayload{
-			ChatID:    "test-chat",
-			Text:      text,
-			SessionID: "test-session",
+			ChatID:          "test-chat",
+			Text:            text,
+			SourceSessionID: "test-session",
 		})
 		return core.Event{Type: core.EventWebChat, Payload: payload}
 	}

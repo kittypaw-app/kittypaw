@@ -39,7 +39,7 @@ type TopicPref struct {
 // 5. TTL sweep
 func RunReflectionCycle(
 	ctx context.Context,
-	s *Session,
+	s *AccountRuntime,
 	config *core.ReflectionConfig,
 ) error {
 	slog.Info("reflection: cycle starting")
@@ -149,7 +149,7 @@ func analyzeIntents(
 	ctx context.Context,
 	messages []string,
 	rejected []store.KeyValue,
-	s *Session,
+	s *AccountRuntime,
 ) (*ReflectionResult, error) {
 	// Build rejected list for the prompt.
 	var rejectedLabels strings.Builder

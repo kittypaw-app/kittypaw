@@ -8,16 +8,16 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
-// TestBuildAccountSession_LiveIndexEnabled: default config wires a
+// TestBuildAccountRuntime_LiveIndexEnabled: default config wires a
 // LiveIndexer onto AccountDeps.
-func TestBuildAccountSession_LiveIndexEnabled(t *testing.T) {
+func TestBuildAccountRuntime_LiveIndexEnabled(t *testing.T) {
 	root := t.TempDir()
 	cfg := core.DefaultConfig()
 	td := buildAccountDeps(t, root, "default", &cfg)
 
 	registry := core.NewAccountRegistry(root, "default")
 	eventCh := make(chan core.Event, 4)
-	_ = buildAccountSession(td, registry, eventCh)
+	_ = buildAccountRuntime(td, registry, eventCh)
 
 	if td.LiveIndexer == nil {
 		t.Fatal("expected LiveIndexer to be wired when live_index=true")
@@ -28,9 +28,9 @@ func TestBuildAccountSession_LiveIndexEnabled(t *testing.T) {
 	t.Cleanup(func() { _ = td.Close() })
 }
 
-// TestBuildAccountSession_LiveIndexDisabled: config with live_index=false
+// TestBuildAccountRuntime_LiveIndexDisabled: config with live_index=false
 // leaves LiveIndexer nil (v1 behavior preserved).
-func TestBuildAccountSession_LiveIndexDisabled(t *testing.T) {
+func TestBuildAccountRuntime_LiveIndexDisabled(t *testing.T) {
 	root := t.TempDir()
 	cfg := core.DefaultConfig()
 	cfg.Workspace.LiveIndex = false
@@ -38,7 +38,7 @@ func TestBuildAccountSession_LiveIndexDisabled(t *testing.T) {
 
 	registry := core.NewAccountRegistry(root, "default")
 	eventCh := make(chan core.Event, 4)
-	_ = buildAccountSession(td, registry, eventCh)
+	_ = buildAccountRuntime(td, registry, eventCh)
 
 	if td.LiveIndexer != nil {
 		t.Fatal("expected LiveIndexer to be nil when live_index=false")
@@ -47,7 +47,7 @@ func TestBuildAccountSession_LiveIndexDisabled(t *testing.T) {
 	t.Cleanup(func() { _ = td.Close() })
 }
 
-// TestAccountDeps_Close_NoGoroutineLeak: close after buildAccountSession
+// TestAccountDeps_Close_NoGoroutineLeak: close after buildAccountRuntime
 // tears down LiveIndexer cleanly.
 func TestAccountDeps_Close_NoGoroutineLeak(t *testing.T) {
 	before := runtime.NumGoroutine()
@@ -58,7 +58,7 @@ func TestAccountDeps_Close_NoGoroutineLeak(t *testing.T) {
 		td := buildAccountDeps(t, root, "default", &cfg)
 		registry := core.NewAccountRegistry(root, "default")
 		eventCh := make(chan core.Event, 4)
-		_ = buildAccountSession(td, registry, eventCh)
+		_ = buildAccountRuntime(td, registry, eventCh)
 
 		// Give the startup goroutine a window to call AddWorkspace + Start.
 		time.Sleep(50 * time.Millisecond)

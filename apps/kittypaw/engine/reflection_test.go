@@ -90,7 +90,7 @@ func TestRunReflectionCycleReadsConversationTurnsAndStoresCandidates(t *testing.
 			t.Fatalf("seed conversation turn: %v", err)
 		}
 	}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store: st,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`{
 			"intents": [{"label":"환율 조회","count":3,"cron":"0 8 * * *"}],

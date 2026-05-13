@@ -16,7 +16,7 @@ import (
 
 // Scheduler runs scheduled skills at their configured intervals.
 type Scheduler struct {
-	session    *Session
+	runtime    *AccountRuntime
 	pkgManager *core.PackageManager
 	stop       chan struct{}
 	stopOnce   sync.Once
@@ -24,6 +24,7 @@ type Scheduler struct {
 	loops      sync.WaitGroup
 	inflight   sync.Map       // skill name → struct{}: prevents concurrent runs of the same skill
 	wg         sync.WaitGroup // tracks in-flight runSkill goroutines for graceful drain
+	jobSlots   chan struct{}
 }
 
 type SkillScheduleState struct {
@@ -33,13 +34,18 @@ type SkillScheduleState struct {
 	Due          bool
 }
 
-// NewScheduler creates a scheduler that uses the given session for execution.
+// NewScheduler creates a scheduler that uses the given account runtime for execution.
 // pkgManager may be nil if packages are not configured.
-func NewScheduler(session *Session, pkgManager *core.PackageManager) *Scheduler {
+func NewScheduler(runtime *AccountRuntime, pkgManager *core.PackageManager) *Scheduler {
+	jobLimit := uint32(2)
+	if runtime != nil && runtime.Config != nil && runtime.Config.Runtime.MaxConcurrentScheduledJobs != 0 {
+		jobLimit = runtime.Config.Runtime.MaxConcurrentScheduledJobs
+	}
 	return &Scheduler{
-		session:    session,
+		runtime:    runtime,
 		pkgManager: pkgManager,
 		stop:       make(chan struct{}),
+		jobSlots:   make(chan struct{}, jobLimit),
 	}
 }
 
@@ -88,7 +94,7 @@ func (s *Scheduler) run(ctx context.Context) {
 }
 
 func (s *Scheduler) startReflectionLoop(ctx context.Context) {
-	if s.session == nil || s.session.Config == nil || !s.session.Config.Reflection.Enabled {
+	if s.runtime == nil || s.runtime.Config == nil || !s.runtime.Config.Reflection.Enabled {
 		return
 	}
 	s.loops.Add(1)
@@ -105,7 +111,7 @@ func (s *Scheduler) startReflectionLoop(ctx context.Context) {
 func (s *Scheduler) tickOnce(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			RecoverAccountPanic(s.session, "scheduler.tick", r)
+			RecoverAccountPanic(s.runtime, "scheduler.tick", r)
 		}
 	}()
 	s.checkAndRun(ctx)
@@ -139,25 +145,25 @@ func (s *Scheduler) reflectionTick(ctx context.Context) {
 func (s *Scheduler) runReflectionTick(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			RecoverAccountPanic(s.session, "scheduler.reflection", r)
+			RecoverAccountPanic(s.runtime, "scheduler.reflection", r)
 		}
 	}()
 	if !s.isReflectionDue() {
 		return
 	}
 	slog.Info("scheduler: running reflection cycle")
-	if err := RunReflectionCycle(ctx, s.session, &s.session.Config.Reflection); err != nil {
+	if err := RunReflectionCycle(ctx, s.runtime, &s.runtime.Config.Reflection); err != nil {
 		slog.Error("scheduler: reflection cycle failed", "error", err)
 	}
 
 	// After reflection, check evolution trigger conditions.
-	if s.session.Config.Evolution.Enabled {
-		base, err := core.ResolveBaseDir(s.session.BaseDir)
+	if s.runtime.Config.Evolution.Enabled {
+		base, err := core.ResolveBaseDir(s.runtime.BaseDir)
 		if err == nil {
 			staffList, err := core.ListStaffRecords(base)
 			if err == nil {
 				for _, p := range staffList {
-					_ = TriggerEvolution(ctx, p.ID, s.session, &s.session.Config.Evolution)
+					_ = TriggerEvolution(ctx, p.ID, s.runtime, &s.runtime.Config.Evolution)
 				}
 			}
 		}
@@ -168,7 +174,7 @@ func (s *Scheduler) runReflectionTick(ctx context.Context) {
 	s.deliverWeeklyReport(ctx)
 
 	// Record last run.
-	_ = s.session.Store.SetLastRun("__reflection__", time.Now())
+	_ = s.runtime.Store.SetLastRun("__reflection__", time.Now())
 }
 
 // deliverWeeklyReport sends the topic-preference summary on the configured
@@ -176,18 +182,18 @@ func (s *Scheduler) runReflectionTick(ctx context.Context) {
 // server restart on the same day does not double-send. Best-effort: any
 // dispatch failure is logged warn and does not abort the reflection cycle.
 func (s *Scheduler) deliverWeeklyReport(ctx context.Context) {
-	cfg := s.session.Config.Reflection
+	cfg := s.runtime.Config.Reflection
 	// time.Weekday: Sunday=0..Saturday=6. Default 0 (Sunday) matches the
 	// docs/index.html promise "매주 일요일 주간 관심사 리포트".
 	if int(time.Now().Weekday()) != int(cfg.WeeklyReportDay) {
 		return
 	}
-	lastRun, _ := s.session.Store.GetLastRun("__weekly_report__")
+	lastRun, _ := s.runtime.Store.GetLastRun("__weekly_report__")
 	if lastRun != nil && time.Since(*lastRun) < 23*time.Hour {
 		return
 	}
 
-	prefs, err := s.session.Store.ListUserContextPrefix("topic_pref:")
+	prefs, err := s.runtime.Store.ListUserContextPrefix("topic_pref:")
 	if err != nil {
 		slog.Warn("weekly report: load prefs failed", "error", err)
 		return
@@ -214,12 +220,12 @@ func (s *Scheduler) deliverWeeklyReport(ctx context.Context) {
 		return
 	}
 	target := core.DeliveryTarget{
-		AccountID: s.session.AccountID,
+		AccountID: s.runtime.AccountID,
 		Channel:   string(core.EventTelegram),
 		ChatID:    chatID,
 	}
-	if s.session.Notifier != nil {
-		if err := s.session.Notifier.SendNotification(ctx, target, report); err != nil {
+	if s.runtime.Notifier != nil {
+		if err := s.runtime.Notifier.SendNotification(ctx, target, report); err != nil {
 			slog.Warn("weekly report: telegram dispatch failed", "error", err)
 			return
 		}
@@ -228,13 +234,13 @@ func (s *Scheduler) deliverWeeklyReport(ctx context.Context) {
 		return
 	}
 	slog.Info("weekly report: delivered")
-	_ = s.session.Store.SetLastRun("__weekly_report__", time.Now())
+	_ = s.runtime.Store.SetLastRun("__weekly_report__", time.Now())
 }
 
 // firstTelegramTarget returns the (bot_token, chat_id) of the account's
 // first telegram channel, or ("", "") when none is configured.
 func (s *Scheduler) firstTelegramTarget() (string, string) {
-	cfg := s.session.Config
+	cfg := s.runtime.Config
 	chatID := core.FirstAllowedChatID(cfg)
 	if chatID == "" {
 		return "", ""
@@ -250,8 +256,8 @@ func (s *Scheduler) firstTelegramTarget() (string, string) {
 // isReflectionDue returns true if the reflection cycle should run inside the
 // configured cron window. When no cron is configured, it uses 03:00 daily.
 func (s *Scheduler) isReflectionDue() bool {
-	lastRun, _ := s.session.Store.GetLastRun("__reflection__")
-	return reflectionDueAt(s.session.Config.Reflection, lastRun, time.Now())
+	lastRun, _ := s.runtime.Store.GetLastRun("__reflection__")
+	return reflectionDueAt(s.runtime.Config.Reflection, lastRun, time.Now())
 }
 
 func reflectionDueAt(cfg core.ReflectionConfig, lastRun *time.Time, now time.Time) bool {
@@ -285,7 +291,7 @@ func (s *Scheduler) Wait() {
 }
 
 func (s *Scheduler) checkAndRun(ctx context.Context) {
-	skills, err := core.LoadAllSkillsFrom(s.session.BaseDir)
+	skills, err := core.LoadAllSkillsFrom(s.runtime.BaseDir)
 	if err != nil {
 		slog.Error("scheduler: load skills failed", "error", err)
 		return
@@ -304,12 +310,19 @@ func (s *Scheduler) checkAndRun(ctx context.Context) {
 				slog.Debug("scheduler: skill still running, skipping", "name", sk.Skill.Name)
 				continue
 			}
+			releaseSlot, ok := s.acquireScheduledSlot()
+			if !ok {
+				s.inflight.Delete(sk.Skill.Name)
+				slog.Warn("scheduler: account scheduled job cap reached, skipping tick", "name", sk.Skill.Name)
+				continue
+			}
 			slog.Info("scheduler: running skill", "name", sk.Skill.Name, "trigger", sk.Skill.Trigger.Type)
 			s.wg.Add(1)
 			go func(sk core.SkillWithCode) {
 				defer s.wg.Done()
+				defer releaseSlot()
 				defer s.inflight.Delete(sk.Skill.Name)
-				runWithAccountRecover(s.session, "scheduler.runSkill", func() {
+				runWithAccountRecover(s.runtime, "scheduler.runSkill", func() {
 					s.runSkill(ctx, &sk)
 				})
 			}(sk)
@@ -338,7 +351,7 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 		}
 
 		schedName := "pkg:" + pkg.Meta.ID
-		lastRun, _ := s.session.Store.GetLastRun(schedName)
+		lastRun, _ := s.runtime.Store.GetLastRun(schedName)
 		if !cronIsDue(pkg.Meta.Cron, lastRun) {
 			continue
 		}
@@ -346,16 +359,35 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 		if _, loaded := s.inflight.LoadOrStore(schedName, struct{}{}); loaded {
 			continue
 		}
+		releaseSlot, ok := s.acquireScheduledSlot()
+		if !ok {
+			s.inflight.Delete(schedName)
+			slog.Warn("scheduler: account scheduled job cap reached, skipping tick", "id", pkg.Meta.ID)
+			continue
+		}
 
 		slog.Info("scheduler: running package", "id", pkg.Meta.ID)
 		s.wg.Add(1)
 		go func(pkg core.SkillPackage) {
 			defer s.wg.Done()
+			defer releaseSlot()
 			defer s.inflight.Delete("pkg:" + pkg.Meta.ID)
-			runWithAccountRecover(s.session, "scheduler.runPackage", func() {
+			runWithAccountRecover(s.runtime, "scheduler.runPackage", func() {
 				s.runPackage(ctx, &pkg)
 			})
 		}(pkg)
+	}
+}
+
+func (s *Scheduler) acquireScheduledSlot() (func(), bool) {
+	if s == nil || s.jobSlots == nil {
+		return func() {}, true
+	}
+	select {
+	case s.jobSlots <- struct{}{}:
+		return func() { <-s.jobSlots }, true
+	default:
+		return nil, false
 	}
 }
 
@@ -364,16 +396,16 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 // message — the scheduler handles delivery.
 func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
 	schedName := "pkg:" + pkg.Meta.ID
-	if err := s.session.Store.SetLastRun(schedName, time.Now()); err != nil {
+	if err := s.runtime.Store.SetLastRun(schedName, time.Now()); err != nil {
 		slog.Error("scheduler: SetLastRun failed for package", "id", pkg.Meta.ID, "error", err)
 		return
 	}
 
 	// Execute package directly (no LLM loop).
-	resultJSON, err := runSkillOrPackage(ctx, pkg.Meta.ID, s.session)
+	resultJSON, err := runSkillOrPackage(ctx, pkg.Meta.ID, s.runtime)
 	if err != nil {
 		slog.Error("scheduler: package execution failed", "id", pkg.Meta.ID, "error", err)
-		_ = s.session.Store.IncrementFailureCount(schedName)
+		_ = s.runtime.Store.IncrementFailureCount(schedName)
 		return
 	}
 
@@ -385,12 +417,12 @@ func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
 	}
 	if errMsg, ok := result["error"].(string); ok && errMsg != "" {
 		slog.Error("scheduler: package returned error", "id", pkg.Meta.ID, "error", errMsg)
-		_ = s.session.Store.IncrementFailureCount(schedName)
+		_ = s.runtime.Store.IncrementFailureCount(schedName)
 		return
 	}
 
 	output, _ := result["output"].(string)
-	_ = s.session.Store.ResetFailureCount(schedName)
+	_ = s.runtime.Store.ResetFailureCount(schedName)
 
 	// Dispatch output to Telegram if configured.
 	if output != "" && s.pkgManager != nil {
@@ -399,12 +431,12 @@ func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
 		chatID := config["chat_id"]
 		if token != "" && chatID != "" {
 			target := core.DeliveryTarget{
-				AccountID: s.session.AccountID,
+				AccountID: s.runtime.AccountID,
 				Channel:   string(core.EventTelegram),
 				ChatID:    chatID,
 			}
-			if s.session.Notifier != nil {
-				if err := s.session.Notifier.SendNotification(ctx, target, output); err != nil {
+			if s.runtime.Notifier != nil {
+				if err := s.runtime.Notifier.SendNotification(ctx, target, output); err != nil {
 					slog.Error("scheduler: telegram dispatch failed", "id", pkg.Meta.ID, "error", err)
 				}
 			} else if err := SendTelegramText(ctx, token, chatID, output); err != nil {
@@ -467,21 +499,21 @@ func (s *Scheduler) executePackageCode(ctx context.Context, pkg *core.SkillPacka
 	if model != "" {
 		opts = &RunOptions{ModelOverride: model}
 	}
-	return s.session.Run(ctx, event, opts)
+	return s.runtime.Run(ctx, event, opts)
 }
 
 func (s *Scheduler) isDue(skill *core.Skill) bool {
-	lastRun, err := s.session.Store.GetLastRun(skill.Name)
+	lastRun, err := s.runtime.Store.GetLastRun(skill.Name)
 	if err != nil {
 		return false
 	}
 
-	failCount, _ := s.session.Store.GetFailureCount(skill.Name)
+	failCount, _ := s.runtime.Store.GetFailureCount(skill.Name)
 	return SkillScheduleStateFor(skill, lastRun, failCount, time.Now()).Due
 }
 
 func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
-	if err := s.session.Store.SetLastRun(sk.Skill.Name, time.Now()); err != nil {
+	if err := s.runtime.Store.SetLastRun(sk.Skill.Name, time.Now()); err != nil {
 		slog.Error("scheduler: SetLastRun failed, aborting to prevent duplicate execution",
 			"name", sk.Skill.Name, "trigger", sk.Skill.Trigger.Type, "error", err)
 		return
@@ -501,14 +533,14 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 	runCtx := ContextWithDeliveryTarget(ctx, target)
 	state := &deliveryState{}
 	runCtx = contextWithDeliveryState(runCtx, state)
-	output, err := s.session.Run(runCtx, event, nil)
+	output, err := s.runtime.Run(runCtx, event, nil)
 	if err != nil {
 		slog.Error("scheduler: skill execution failed", "name", sk.Skill.Name, "error", err)
-		_ = s.session.Store.IncrementFailureCount(sk.Skill.Name)
+		_ = s.runtime.Store.IncrementFailureCount(sk.Skill.Name)
 
 		// Auto-delete one-shot skills even on failure.
 		if sk.Skill.Trigger.Type == "once" {
-			if delErr := core.DeleteSkillFrom(s.session.BaseDir, sk.Skill.Name); delErr != nil {
+			if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Skill.Name); delErr != nil {
 				slog.Error("scheduler: failed to delete one-shot skill after failure", "name", sk.Skill.Name, "error", delErr)
 			}
 			return
@@ -516,14 +548,14 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 		return
 	}
 
-	_ = s.session.Store.ResetFailureCount(sk.Skill.Name)
+	_ = s.runtime.Store.ResetFailureCount(sk.Skill.Name)
 
-	if strings.TrimSpace(output) != "" && !notificationSent(runCtx) && s.session.Notifier != nil && !target.IsZero() {
-		if err := s.session.Notifier.SendNotification(ctx, target, output); err != nil {
+	if strings.TrimSpace(output) != "" && !notificationSent(runCtx) && s.runtime.Notifier != nil && !target.IsZero() {
+		if err := s.runtime.Notifier.SendNotification(ctx, target, output); err != nil {
 			slog.Error("scheduler: skill output delivery failed", "name", sk.Skill.Name, "error", err)
-			_ = s.session.Store.IncrementFailureCount(sk.Skill.Name)
+			_ = s.runtime.Store.IncrementFailureCount(sk.Skill.Name)
 			if sk.Skill.Trigger.Type == "once" {
-				if delErr := core.DeleteSkillFrom(s.session.BaseDir, sk.Skill.Name); delErr != nil {
+				if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Skill.Name); delErr != nil {
 					slog.Error("scheduler: failed to delete one-shot skill after delivery failure", "name", sk.Skill.Name, "error", delErr)
 				}
 			}
@@ -533,7 +565,7 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 
 	// Delete one-shot skills after successful execution
 	if sk.Skill.Trigger.Type == "once" {
-		if delErr := core.DeleteSkillFrom(s.session.BaseDir, sk.Skill.Name); delErr != nil {
+		if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Skill.Name); delErr != nil {
 			slog.Error("scheduler: failed to delete one-shot skill after success", "name", sk.Skill.Name, "error", delErr)
 		} else {
 			slog.Info("scheduler: one-shot skill completed and deleted", "name", sk.Skill.Name)

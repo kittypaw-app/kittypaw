@@ -58,7 +58,7 @@ func (s *Server) AddAccount(t *core.Account) error {
 		}
 	}()
 
-	if existing := s.accounts.Session(t.ID); existing != nil {
+	if existing := s.accounts.Runtime(t.ID); existing != nil {
 		return fmt.Errorf("%w: %q", ErrAccountAlreadyActive, t.ID)
 	}
 	if s.isAccountRemovalInProgress(t.ID) {
@@ -103,8 +103,8 @@ func (s *Server) AddAccount(t *core.Account) error {
 		}
 	}
 
-	sess := buildAccountSession(td, s.accountRegistry, s.eventCh)
-	s.attachSessionNotifier(t.ID, sess)
+	sess := buildAccountRuntime(td, s.accountRegistry, s.eventCh)
+	s.attachRuntimeNotifier(t.ID, sess)
 
 	s.accountRegistry.Register(t)
 	rollback = append(rollback, func() { s.accountRegistry.Unregister(t.ID) })
@@ -202,7 +202,7 @@ func (s *Server) RemoveAccount(id string) error {
 
 	s.accountMu.Lock()
 
-	if s.accounts == nil || s.accounts.Session(id) == nil {
+	if s.accounts == nil || s.accounts.Runtime(id) == nil {
 		s.accountMu.Unlock()
 		return fmt.Errorf("%w: %q", ErrAccountNotActive, id)
 	}

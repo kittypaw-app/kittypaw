@@ -32,7 +32,7 @@ type TeachResult struct {
 // HandleTeach runs the full teach pipeline: LLM code generation → fence stripping →
 // syntax check → metadata derivation. Returns a TeachResult for user review.
 // Does not save the skill — call ApproveSkill to persist.
-func HandleTeach(ctx context.Context, desc, chatID string, s *Session) (*TeachResult, error) {
+func HandleTeach(ctx context.Context, desc, chatID string, s *AccountRuntime) (*TeachResult, error) {
 	if strings.TrimSpace(desc) == "" {
 		return nil, fmt.Errorf("description is empty")
 	}

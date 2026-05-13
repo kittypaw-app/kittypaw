@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -11,8 +12,8 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
-// These tests exercise Session.RunTurn's idempotency cache without
-// going through Session.Run. Two layers:
+// These tests exercise AccountRuntime.RunTurn's idempotency cache without
+// going through AccountRuntime.Run. Two layers:
 //
 //  1. Pre-populated turnCache + RunTurn — verifies dedup / waiter /
 //     ctx-cancel logic in the cache-hit path.
@@ -25,7 +26,7 @@ import (
 // server/ws integration tests.
 
 func TestRunTurn_DedupCachedResult(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 
 	closedDone := make(chan struct{})
 	close(closedDone)
@@ -45,7 +46,7 @@ func TestRunTurn_DedupCachedResult(t *testing.T) {
 }
 
 func TestRunTurn_DedupCachedError(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 
 	closedDone := make(chan struct{})
 	close(closedDone)
@@ -62,7 +63,7 @@ func TestRunTurn_DedupCachedError(t *testing.T) {
 }
 
 func TestRunTurn_InFlightWait(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 
 	pending := &turnState{done: make(chan struct{})}
 	s.turnCache.Store("turn-3", pending)
@@ -90,7 +91,7 @@ func TestRunTurn_InFlightWait(t *testing.T) {
 }
 
 func TestRunTurn_CtxCancelDuringInFlight(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 
 	pending := &turnState{done: make(chan struct{})} // never closed
 	s.turnCache.Store("turn-4", pending)
@@ -109,7 +110,7 @@ func TestRunTurn_DedupConcurrentRetries(t *testing.T) {
 	// drives N concurrent RunTurn calls with the same turn_id (the
 	// transport drop + retry race). Only one should drive execution;
 	// the others must see the cached result.
-	s := &Session{}
+	s := &AccountRuntime{}
 
 	pending := &turnState{done: make(chan struct{})}
 	s.turnCache.Store("turn-5", pending)
@@ -152,7 +153,7 @@ func TestRunTurnOwner_DetachesFromCallerContext(t *testing.T) {
 	// — a transport drop on the caller side must NOT abort the
 	// in-flight LLM call. Without detachment, the very retry case
 	// the cache exists for would observe a context-canceled result.
-	s := &Session{}
+	s := &AccountRuntime{}
 	state := &turnState{done: make(chan struct{})}
 	s.turnCache.Store("owner-detach", state)
 
@@ -187,7 +188,7 @@ func TestRunTurnOwner_PanicEvictsAndRePanics(t *testing.T) {
 	// (c) evict the poisoned cache entry so retries take the cold
 	// path instead of inheriting the empty-result poison, and (d)
 	// re-panic so upstream RecoverAccountPanic surfaces the failure.
-	s := &Session{}
+	s := &AccountRuntime{}
 	state := &turnState{done: make(chan struct{})}
 	s.turnCache.Store("owner-panic", state)
 
@@ -223,7 +224,7 @@ func TestRunTurnOwner_PanicEvictsAndRePanics(t *testing.T) {
 func TestRunTurnOwner_NormalCompletionSchedulesEviction(t *testing.T) {
 	// Sanity check: the owner happy path closes done, stores
 	// result/err, and the entry stays in the cache under TTL.
-	s := &Session{}
+	s := &AccountRuntime{}
 	state := &turnState{done: make(chan struct{})}
 	s.turnCache.Store("owner-ok", state)
 
@@ -242,4 +243,70 @@ func TestRunTurnOwner_NormalCompletionSchedulesEviction(t *testing.T) {
 	if _, exists := s.turnCache.Load("owner-ok"); !exists {
 		t.Error("cache entry evicted prematurely (TTL not yet expired)")
 	}
+}
+
+func TestAccountRuntimeAcquireTurnAdmissionBusy(t *testing.T) {
+	s := &AccountRuntime{
+		AccountID: "alice",
+		Admission: NewRuntimeAdmission(RuntimeAdmissionConfig{
+			MaxConcurrentAccount: 1,
+			MaxQueuedAccount:     0,
+			MaxConcurrentScope:   0,
+		}),
+	}
+
+	_, first, err := s.acquireTurnAdmission(context.Background(), core.Event{
+		Type: core.EventWebChat,
+		Payload: marshalRunTurnPayload(t, core.ChatPayload{
+			SourceSessionID: "one",
+		}),
+	})
+	if err != nil {
+		t.Fatalf("first acquireTurnAdmission: %v", err)
+	}
+	defer first.Release()
+
+	_, _, err = s.acquireTurnAdmission(context.Background(), core.Event{
+		Type: core.EventWebChat,
+		Payload: marshalRunTurnPayload(t, core.ChatPayload{
+			SourceSessionID: "two",
+		}),
+	})
+	if !errors.Is(err, ErrRuntimeAdmissionBusy) {
+		t.Fatalf("second acquireTurnAdmission err = %v, want ErrRuntimeAdmissionBusy", err)
+	}
+}
+
+func TestAccountRuntimeAcquireTurnAdmissionReentrant(t *testing.T) {
+	s := &AccountRuntime{
+		AccountID: "alice",
+		Admission: NewRuntimeAdmission(RuntimeAdmissionConfig{
+			MaxConcurrentAccount: 1,
+			MaxQueuedAccount:     0,
+			MaxConcurrentScope:   0,
+		}),
+	}
+
+	ctx, first, err := s.acquireTurnAdmission(context.Background(), core.Event{})
+	if err != nil {
+		t.Fatalf("first acquireTurnAdmission: %v", err)
+	}
+	defer first.Release()
+
+	_, second, err := s.acquireTurnAdmission(ctx, core.Event{})
+	if err != nil {
+		t.Fatalf("reentrant acquireTurnAdmission: %v", err)
+	}
+	if second != nil {
+		t.Fatal("reentrant acquireTurnAdmission should not allocate another lease")
+	}
+}
+
+func marshalRunTurnPayload(t *testing.T, payload core.ChatPayload) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

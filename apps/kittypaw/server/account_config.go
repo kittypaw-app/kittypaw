@@ -144,26 +144,26 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 		s.accountRegistry.Register(td.Account)
 	}
 
-	oldSession := s.accounts.Session(accountID)
-	newSession := s.rebuildSessionForConfigLocked(td, oldSession)
+	oldRuntime := s.accounts.Runtime(accountID)
+	newRuntime := s.rebuildRuntimeForConfigLocked(td, oldRuntime)
 	var oldScheduler *engine.Scheduler
-	s.accounts.Register(accountID, newSession)
+	s.accounts.Register(accountID, newRuntime)
 	if s.schedulers == nil {
 		s.schedulers = NewAccountSchedulers()
 	}
-	oldScheduler = s.schedulers.Replace(accountID, engine.NewScheduler(newSession, td.PkgMgr))
+	oldScheduler = s.schedulers.Replace(accountID, engine.NewScheduler(newRuntime, td.PkgMgr))
 	if accountID == s.defaultAccountID() {
 		s.configMu.Lock()
 		s.config = td.Account.Config
 		s.configMu.Unlock()
-		s.session = newSession
+		s.runtime = newRuntime
 		s.store = td.Store
 		s.pkgManager = td.PkgMgr
 	}
 	return oldScheduler, nil
 }
 
-func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Session) *engine.Session {
+func (s *Server) rebuildRuntimeForConfigLocked(td *AccountDeps, old *engine.AccountRuntime) *engine.AccountRuntime {
 	health := core.NewHealthState()
 	var budget *engine.SharedTokenBudget
 	var indexer engine.Indexer
@@ -177,7 +177,7 @@ func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Sess
 		pipeline = old.Pipeline
 	}
 
-	sess := &engine.Session{
+	runtime := &engine.AccountRuntime{
 		Provider:          td.Provider,
 		FallbackProvider:  td.Fallback,
 		Sandbox:           td.Sandbox,
@@ -197,31 +197,32 @@ func (s *Server) rebuildSessionForConfigLocked(td *AccountDeps, old *engine.Sess
 		Budget:            budget,
 		Indexer:           indexer,
 		Pipeline:          pipeline,
+		Admission:         engine.NewRuntimeAdmission(engine.RuntimeAdmissionConfigFromCore(td.Account.Config)),
 	}
-	if sess.ProjectJobRuntime == nil {
-		sess.ProjectJobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
+	if runtime.ProjectJobRuntime == nil {
+		runtime.ProjectJobRuntime = engine.NewProjectJobRuntime(engine.ProjectJobRuntimeOptions{
 			Store:     td.Store,
 			AccountID: td.Account.ID,
 			BaseDir:   td.Account.BaseDir,
 		})
-		td.JobRuntime = sess.ProjectJobRuntime
+		td.JobRuntime = runtime.ProjectJobRuntime
 	}
 	if td.Account.Config.IsTeamSpaceAccount() {
-		sess.Fanout = core.NewChannelFanout(s.eventCh, s.accountRegistry, td.Account.ID)
+		runtime.Fanout = core.NewChannelFanout(s.eventCh, s.accountRegistry, td.Account.ID)
 	}
 	if old != nil {
-		sess.SetActiveModel(old.GetActiveModel())
+		runtime.SetActiveModel(old.GetActiveModel())
 	}
-	s.attachSessionNotifier(td.Account.ID, sess)
+	s.attachRuntimeNotifier(td.Account.ID, runtime)
 
 	if roots := td.Account.Config.WorkspaceRoots(); len(roots) > 0 {
 		if err := td.Store.SeedWorkspaceRootsFromConfig(roots); err != nil {
 			slog.Error("seed workspaces from config", "account", td.Account.ID, "error", err)
 		}
 	}
-	if err := sess.RefreshAllowedPaths(); err != nil {
+	if err := runtime.RefreshAllowedPaths(); err != nil {
 		slog.Warn("setup: failed to refresh allowed paths after config update",
 			"account", td.Account.ID, "error", err)
 	}
-	return sess
+	return runtime
 }

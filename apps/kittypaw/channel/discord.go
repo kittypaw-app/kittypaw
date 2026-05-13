@@ -212,10 +212,10 @@ func (d *DiscordChannel) handleMessage(ctx context.Context, data json.RawMessage
 	d.mu.Unlock()
 
 	payload := core.ChatPayload{
-		ChatID:    msg.ChannelID,
-		Text:      msg.Content,
-		FromName:  msg.Author.Username,
-		SessionID: msg.Author.ID,
+		ChatID:          msg.ChannelID,
+		Text:            msg.Content,
+		FromName:        msg.Author.Username,
+		SourceSessionID: msg.Author.ID,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

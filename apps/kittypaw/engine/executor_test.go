@@ -248,7 +248,7 @@ func TestExecuteFileSearch_Dispatch(t *testing.T) {
 	dir := setupTestWorkspace(t)
 	ix.Index(context.Background(), "ws-exec", dir)
 
-	s := &Session{Store: st, Indexer: ix}
+	s := &AccountRuntime{Store: st, Indexer: ix}
 	// Pre-load allowed paths with workspace dir.
 	paths := []string{dir}
 	s.allowedPaths.Store(&paths)
@@ -277,7 +277,7 @@ func TestExecuteFileSearch_Dispatch(t *testing.T) {
 }
 
 func TestExecuteFileSearch_NilIndexer(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 	call := core.SkillCall{
 		SkillName: "File",
 		Method:    "search",
@@ -295,7 +295,7 @@ func TestExecuteFileSearch_AllowedPathsFilter(t *testing.T) {
 	dir := setupTestWorkspace(t)
 	ix.Index(context.Background(), "ws-filter", dir)
 
-	s := &Session{Store: st, Indexer: ix}
+	s := &AccountRuntime{Store: st, Indexer: ix}
 	// Set AllowedPaths to a non-matching path — all results should be filtered out.
 	paths := []string{"/some/other/path"}
 	s.allowedPaths.Store(&paths)
@@ -323,7 +323,7 @@ func TestExecuteFileStats_Dispatch(t *testing.T) {
 	dir := setupTestWorkspace(t)
 	ix.Index(context.Background(), "ws-stats-exec", dir)
 
-	s := &Session{Store: st, Indexer: ix}
+	s := &AccountRuntime{Store: st, Indexer: ix}
 	call := core.SkillCall{
 		SkillName: "File",
 		Method:    "stats",
@@ -351,7 +351,7 @@ func TestExecuteFileReindex_Dispatch(t *testing.T) {
 	// Register workspace in store.
 	st.SaveWorkspace(&store.Workspace{ID: "ws-reindex-exec", Name: "test", RootPath: dir})
 
-	s := &Session{Store: st, Indexer: ix}
+	s := &AccountRuntime{Store: st, Indexer: ix}
 	call := core.SkillCall{
 		SkillName: "File",
 		Method:    "reindex",
@@ -373,7 +373,7 @@ func TestExecuteFileReindex_Dispatch(t *testing.T) {
 func TestExecuteFileRead_StillWorks(t *testing.T) {
 	st := openTestStore(t)
 	dir := setupTestWorkspace(t)
-	s := &Session{Store: st}
+	s := &AccountRuntime{Store: st}
 	// Resolve the path to handle macOS /private/var symlink.
 	resolvedDir := resolveForValidation(dir)
 	paths := []string{resolvedDir}
@@ -398,7 +398,7 @@ func TestExecuteFileWrite_RelativePathUsesWorkspaceRoot(t *testing.T) {
 	processCWD := t.TempDir()
 	t.Chdir(processCWD)
 
-	s := &Session{}
+	s := &AccountRuntime{}
 	paths := []string{workspaceRoot}
 	s.allowedPaths.Store(&paths)
 
@@ -434,7 +434,7 @@ func TestExecuteFileEdit_ReplacesExactlyOneOccurrence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &Session{}
+	s := &AccountRuntime{}
 	paths := []string{workspaceRoot}
 	s.allowedPaths.Store(&paths)
 
@@ -470,7 +470,7 @@ func TestExecuteFileEdit_FailsWithoutChangingMissingOrAmbiguousOldText(t *testin
 		t.Fatal(err)
 	}
 
-	s := &Session{}
+	s := &AccountRuntime{}
 	paths := []string{workspaceRoot}
 	s.allowedPaths.Store(&paths)
 
@@ -580,7 +580,7 @@ func TestResolveSkillCallPackageUninstall(t *testing.T) {
 	if err := os.MkdirAll(pkgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	s := &Session{
+	s := &AccountRuntime{
 		BaseDir:        baseDir,
 		Config:         &core.Config{AutonomyLevel: core.AutonomyFull},
 		PackageManager: core.NewPackageManagerFrom(baseDir, nil),
@@ -610,7 +610,7 @@ name = "날씨 조회"
 version = "1.0.0"
 description = "현재 날씨와 비 여부를 확인합니다."
 `, `return "ok";`)
-	s := &Session{
+	s := &AccountRuntime{
 		BaseDir:        baseDir,
 		Config:         &core.Config{AutonomyLevel: core.AutonomyFull},
 		PackageManager: pm,
@@ -635,7 +635,7 @@ description = "현재 날씨와 비 여부를 확인합니다."
 
 func TestResolveSkillCallCreateOnceDelayStoresRunAt(t *testing.T) {
 	baseDir := t.TempDir()
-	s := &Session{
+	s := &AccountRuntime{
 		BaseDir: baseDir,
 		Config:  &core.Config{AutonomyLevel: core.AutonomyFull},
 	}
@@ -679,7 +679,7 @@ func TestResolveSkillCallCreateOnceDelayStoresRunAt(t *testing.T) {
 		t.Fatalf("run_at = %s, want roughly 2m from now (%s..%s)", runAt, before, after)
 	}
 
-	sched := NewScheduler(&Session{Store: openTestStore(t), Config: &core.Config{}}, nil)
+	sched := NewScheduler(&AccountRuntime{Store: openTestStore(t), Config: &core.Config{}}, nil)
 	if sched.isDue(skill) {
 		t.Fatal("new delayed once skill should not be due before run_at")
 	}
@@ -702,7 +702,7 @@ func (n *captureNotifier) SendNotification(_ context.Context, target core.Delive
 
 func TestNotifySendUsesCurrentDeliveryTarget(t *testing.T) {
 	notifier := &captureNotifier{}
-	s := &Session{
+	s := &AccountRuntime{
 		Config:    &core.Config{AutonomyLevel: core.AutonomyFull},
 		AccountID: "alice",
 		Notifier:  notifier,
@@ -741,7 +741,7 @@ func TestNotifySendUsesCurrentDeliveryTarget(t *testing.T) {
 
 func TestNotifySendChannelOverrideClearsCurrentChatTarget(t *testing.T) {
 	notifier := &captureNotifier{}
-	s := &Session{
+	s := &AccountRuntime{
 		Config:    &core.Config{AutonomyLevel: core.AutonomyFull},
 		AccountID: "alice",
 		Notifier:  notifier,
@@ -786,14 +786,14 @@ func TestDurableDeliveryTargetTreatsDesktopAsNonDurable(t *testing.T) {
 	cfg.Channels = []core.ChannelConfig{
 		{ChannelType: core.ChannelTelegram, Token: "telegram-token"},
 	}
-	s := &Session{
+	s := &AccountRuntime{
 		Config:    &cfg,
 		AccountID: "alice",
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:    "desktop-session",
-		SessionID: "desktop-session",
-		Text:      "remind me",
+		ChatID:          "desktop-session",
+		SourceSessionID: "desktop-session",
+		Text:            "remind me",
 	})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -808,7 +808,7 @@ func TestDurableDeliveryTargetTreatsDesktopAsNonDurable(t *testing.T) {
 }
 
 func TestPlatformSendWithoutNotifierDoesNotPretendSuccess(t *testing.T) {
-	s := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}}
+	s := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}}
 	for _, tt := range []struct {
 		skill  string
 		method string
@@ -845,14 +845,14 @@ func TestSkillCreateFromWebChatUsesDurableConfiguredDeliveryTarget(t *testing.T)
 			{ChannelType: core.ChannelTelegram, Token: "tok"},
 		},
 	}
-	s := &Session{
+	s := &AccountRuntime{
 		BaseDir:   baseDir,
 		Config:    cfg,
 		AccountID: "alice",
 	}
 	payload, _ := json.Marshal(core.ChatPayload{
-		ChatID:    "browser-session",
-		SessionID: "browser-user",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-user",
 	})
 	event := core.Event{Type: core.EventWebChat, AccountID: "alice", Payload: payload}
 	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), "general:web_chat:browser-session")
@@ -889,14 +889,14 @@ func TestSkillCreateFromWebChatUsesDurableConfiguredDeliveryTarget(t *testing.T)
 
 func TestSkillCreateCapturesDeliveryTarget(t *testing.T) {
 	baseDir := t.TempDir()
-	s := &Session{
+	s := &AccountRuntime{
 		BaseDir:   baseDir,
 		Config:    &core.Config{AutonomyLevel: core.AutonomyFull},
 		AccountID: "alice",
 	}
 	payload, _ := json.Marshal(core.ChatPayload{
 		ChatID:           "C123",
-		SessionID:        "U456",
+		SourceSessionID:  "U456",
 		ReplyToMessageID: "thread-1",
 	})
 	event := core.Event{Type: core.EventSlack, AccountID: "alice", Payload: payload}
@@ -936,7 +936,7 @@ func TestSkillCreateCapturesDeliveryTarget(t *testing.T) {
 
 func TestResolveSkillCallPermissionGate(t *testing.T) {
 	st := openTestStore(t)
-	s := &Session{
+	s := &AccountRuntime{
 		Store: st,
 		Config: &core.Config{
 			AutonomyLevel: core.AutonomySupervised,
@@ -961,7 +961,7 @@ func TestResolveSkillCallPermissionGate(t *testing.T) {
 
 func TestResolveSkillCallPermissionApproved(t *testing.T) {
 	st := openTestStore(t)
-	s := &Session{
+	s := &AccountRuntime{
 		Store: st,
 		Config: &core.Config{
 			AutonomyLevel: core.AutonomySupervised,
@@ -994,7 +994,7 @@ func TestResolveSkillCallPermissionApproved(t *testing.T) {
 
 func TestResolveSkillCallPermissionDenied(t *testing.T) {
 	st := openTestStore(t)
-	s := &Session{
+	s := &AccountRuntime{
 		Store: st,
 		Config: &core.Config{
 			AutonomyLevel: core.AutonomySupervised,
@@ -1023,7 +1023,7 @@ func TestResolveSkillCallPermissionDenied(t *testing.T) {
 
 func TestResolveSkillCallFullAutonomy(t *testing.T) {
 	st := openTestStore(t)
-	s := &Session{
+	s := &AccountRuntime{
 		Store: st,
 		Config: &core.Config{
 			AutonomyLevel: core.AutonomyFull,
@@ -1048,7 +1048,7 @@ func TestResolveSkillCallFullAutonomy(t *testing.T) {
 
 func TestResolveSkillCallCustomPermissionList(t *testing.T) {
 	st := openTestStore(t)
-	s := &Session{
+	s := &AccountRuntime{
 		Store: st,
 		Config: &core.Config{
 			AutonomyLevel: core.AutonomySupervised,
@@ -1086,7 +1086,7 @@ func (f *fakeBrowserController) Close() error { return nil }
 
 func TestResolveSkillCallBrowserDispatch(t *testing.T) {
 	fake := &fakeBrowserController{}
-	s := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, BrowserController: fake}
+	s := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}, BrowserController: fake}
 	got, err := resolveSkillCall(context.Background(), core.SkillCall{SkillName: "Browser", Method: "status"}, s, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1100,7 +1100,7 @@ func TestResolveSkillCallBrowserDispatch(t *testing.T) {
 }
 
 func TestResolveSkillCallBrowserNotConfigured(t *testing.T) {
-	s := &Session{Config: &core.Config{AutonomyLevel: core.AutonomyFull}}
+	s := &AccountRuntime{Config: &core.Config{AutonomyLevel: core.AutonomyFull}}
 	got, err := resolveSkillCall(context.Background(), core.SkillCall{SkillName: "Browser", Method: "status"}, s, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1129,7 +1129,7 @@ func TestRunPromptModeSkillUsesProvider(t *testing.T) {
 
 	cfg := core.DefaultConfig()
 	provider := &recordingProvider{resp: &llm.Response{Content: "remember to stretch"}}
-	sess := &Session{
+	sess := &AccountRuntime{
 		BaseDir:  baseDir,
 		Config:   &cfg,
 		Provider: provider,
@@ -1217,7 +1217,7 @@ func TestRunPromptModeSkillExecutesDeclaredTools(t *testing.T) {
 
 	cfg := core.DefaultConfig()
 	provider := &promptModeToolProvider{}
-	sess := &Session{
+	sess := &AccountRuntime{
 		BaseDir:  baseDir,
 		Config:   &cfg,
 		Provider: provider,
@@ -1291,7 +1291,7 @@ func TestSkillListIncludesScheduleState(t *testing.T) {
 	if err := st.IncrementFailureCount(skill.Name); err != nil {
 		t.Fatalf("IncrementFailureCount: %v", err)
 	}
-	sess := &Session{BaseDir: baseDir, Store: st}
+	sess := &AccountRuntime{BaseDir: baseDir, Store: st}
 
 	raw, err := executeSkillMgmt(context.Background(), core.SkillCall{SkillName: "Skill", Method: "list"}, sess)
 	if err != nil {
@@ -1328,7 +1328,7 @@ func TestSkillListIncludesScheduleState(t *testing.T) {
 
 func TestResolveSkillCallGitNonDestructive(t *testing.T) {
 	st := openTestStore(t)
-	s := &Session{
+	s := &AccountRuntime{
 		Store: st,
 		Config: &core.Config{
 			AutonomyLevel: core.AutonomySupervised,
@@ -1381,7 +1381,7 @@ func TestBuildUserContext(t *testing.T) {
 	cfg.User.Latitude = 37.57
 	cfg.User.Longitude = 126.98
 
-	sess := &Session{Config: cfg}
+	sess := &AccountRuntime{Config: cfg}
 
 	payload, _ := json.Marshal(core.ChatPayload{
 		Text:     "오늘 날씨 알려줘",
@@ -1454,7 +1454,7 @@ func TestBuildUserContext(t *testing.T) {
 
 	t.Run("locale fallback to detection", func(t *testing.T) {
 		noLocaleCfg := &core.Config{}
-		noLocaleSess := &Session{Config: noLocaleCfg}
+		noLocaleSess := &AccountRuntime{Config: noLocaleCfg}
 		result := buildUserContext([]string{"locale"}, noLocaleSess, event)
 		if result["locale"] != "ko" {
 			t.Errorf("locale = %v, want ko (detected from Korean text)", result["locale"])
@@ -1465,7 +1465,7 @@ func TestBuildUserContext(t *testing.T) {
 		// AC #3: event text is Korean but config says "en" — config must win.
 		enCfg := &core.Config{}
 		enCfg.User.Locale = "en"
-		enSess := &Session{Config: enCfg}
+		enSess := &AccountRuntime{Config: enCfg}
 		result := buildUserContext([]string{"locale"}, enSess, event)
 		if result["locale"] != "en" {
 			t.Errorf("locale = %v, want en (config must beat detection)", result["locale"])
@@ -1563,7 +1563,7 @@ func (r *recordingProvider) MaxTokens() int     { return 4096 }
 // regardless of what the model actually says.
 func TestExecuteLLM_ToolResultProtocol(t *testing.T) {
 	prov := &recordingProvider{}
-	sess := &Session{Provider: prov}
+	sess := &AccountRuntime{Provider: prov}
 
 	const promptPayload = "다음 검색 결과를 정리해주세요.\n[search dump: Seoul 12C cloudy]"
 	args, err := json.Marshal(promptPayload)

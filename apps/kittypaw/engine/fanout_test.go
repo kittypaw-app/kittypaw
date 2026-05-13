@@ -47,12 +47,12 @@ func fanoutCall(t *testing.T, method string, args ...any) core.SkillCall {
 }
 
 // TestFanout_SendRoutesToInterface confirms the executor plumbs skill
-// arguments through to Session.Fanout. Without this, the JS binding is
+// arguments through to AccountRuntime.Fanout. Without this, the JS binding is
 // dead — skill code would call Fanout.send but nothing would reach the
 // event channel.
 func TestFanout_SendRoutesToInterface(t *testing.T) {
 	f := &fakeFanout{}
-	sess := &Session{Fanout: f}
+	sess := &AccountRuntime{Fanout: f}
 
 	out, err := executeFanout(context.Background(), fanoutCall(t, "send", "alice", map[string]any{"text": "안녕"}), sess)
 	if err != nil {
@@ -73,7 +73,7 @@ func TestFanout_SendRoutesToInterface(t *testing.T) {
 // blocking is somehow bypassed (e.g. a test harness wires the stub
 // anyway), executor must reject. Defense in depth.
 func TestFanout_NoFanoutConfigured(t *testing.T) {
-	sess := &Session{} // Fanout nil — personal session
+	sess := &AccountRuntime{} // Fanout nil — personal session
 
 	out, _ := executeFanout(context.Background(), fanoutCall(t, "send", "alice", map[string]any{"text": "x"}), sess)
 	var resp map[string]string
@@ -87,7 +87,7 @@ func TestFanout_NoFanoutConfigured(t *testing.T) {
 // authors see "fanout: unknown target account" instead of a generic error.
 func TestFanout_PropagatesError(t *testing.T) {
 	f := &fakeFanout{sendErr: core.ErrFanoutUnknownAccount}
-	sess := &Session{Fanout: f}
+	sess := &AccountRuntime{Fanout: f}
 
 	out, _ := executeFanout(context.Background(), fanoutCall(t, "send", "ghost", map[string]any{"text": "x"}), sess)
 	var resp map[string]string
@@ -102,7 +102,7 @@ func TestFanout_PropagatesError(t *testing.T) {
 // checking the method dispatch is wired.
 func TestFanout_Broadcast(t *testing.T) {
 	f := &fakeFanout{}
-	sess := &Session{Fanout: f}
+	sess := &AccountRuntime{Fanout: f}
 
 	out, err := executeFanout(context.Background(), fanoutCall(t, "broadcast", map[string]any{"text": "all hands"}), sess)
 	if err != nil {

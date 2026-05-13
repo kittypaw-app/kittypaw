@@ -24,7 +24,7 @@ func TestTriggerEvolutionStoresPendingFromConversationPatterns(t *testing.T) {
 	_ = st.SetUserContext("suggest_candidate:finance", "재무 리포트|3|0 8 * * 1", "reflection")
 
 	base := t.TempDir()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:   st,
 		BaseDir: base,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`{

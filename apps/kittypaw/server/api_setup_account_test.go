@@ -564,7 +564,7 @@ func TestSetupCompleteRejectsFamilyAccountChannels(t *testing.T) {
 	}
 }
 
-func TestSetupCompleteRefreshesLoggedInRuntimeSession(t *testing.T) {
+func TestSetupCompleteRefreshesLoggedInAccountRuntime(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)
 	aliceCfg := core.DefaultConfig()
@@ -580,11 +580,11 @@ func TestSetupCompleteRefreshesLoggedInRuntimeSession(t *testing.T) {
 		writeConfigForTest(t, filepath.Join(root, "accounts", accountID), cfg)
 	}
 
-	originalBobSession := srv.accounts.Session("bob")
-	if originalBobSession == nil {
-		t.Fatal("bob session missing before setup complete")
+	originalBobRuntime := srv.accounts.Runtime("bob")
+	if originalBobRuntime == nil {
+		t.Fatal("bob runtime missing before setup complete")
 	}
-	originalBobProvider := originalBobSession.Provider
+	originalBobProvider := originalBobRuntime.Provider
 
 	cookie := loginSessionCookie(t, srv, "bob", "bob-pw")
 	postSetupJSON(t, srv, cookie, "/api/setup/llm", `{"provider":"local","local_url":"http://localhost:11434/v1","local_model":"llama3"}`)
@@ -598,27 +598,27 @@ func TestSetupCompleteRefreshesLoggedInRuntimeSession(t *testing.T) {
 		t.Fatalf("complete code = %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	bobSession := srv.accounts.Session("bob")
-	if bobSession == nil {
-		t.Fatal("bob session missing after setup complete")
+	bobRuntime := srv.accounts.Runtime("bob")
+	if bobRuntime == nil {
+		t.Fatal("bob runtime missing after setup complete")
 	}
-	if bobSession == originalBobSession {
-		t.Fatalf("bob session pointer was preserved after setup complete: %p", bobSession)
+	if bobRuntime == originalBobRuntime {
+		t.Fatalf("bob runtime pointer was preserved after setup complete: %p", bobRuntime)
 	}
-	if bobSession.Config.LLM.BaseURL != "http://localhost:11434/v1/chat/completions" {
-		t.Fatalf("bob runtime config base URL = %q, want generated local URL", bobSession.Config.LLM.BaseURL)
+	if bobRuntime.Config.LLM.BaseURL != "http://localhost:11434/v1/chat/completions" {
+		t.Fatalf("bob runtime config base URL = %q, want generated local URL", bobRuntime.Config.LLM.BaseURL)
 	}
-	if bobSession.Provider == nil {
+	if bobRuntime.Provider == nil {
 		t.Fatal("bob runtime provider is nil after setup complete")
 	}
-	if bobSession.Provider == originalBobProvider {
+	if bobRuntime.Provider == originalBobProvider {
 		t.Fatal("bob runtime provider was not refreshed after setup complete")
 	}
 	if !srv.schedulers.Has("bob") {
 		t.Fatal("bob scheduler missing after setup complete")
 	}
-	if len(bobSession.Config.Channels) != 1 || bobSession.Config.Channels[0].Token != "123456:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" {
-		t.Fatalf("bob runtime channels = %#v, want generated telegram channel", bobSession.Config.Channels)
+	if len(bobRuntime.Config.Channels) != 1 || bobRuntime.Config.Channels[0].Token != "123456:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" {
+		t.Fatalf("bob runtime channels = %#v, want generated telegram channel", bobRuntime.Config.Channels)
 	}
 	if got := srv.accountDepsForID("bob").Account.Config.LLM.BaseURL; got != "http://localhost:11434/v1/chat/completions" {
 		t.Fatalf("bob deps config base URL = %q, want generated local URL", got)
@@ -661,7 +661,7 @@ func TestSetupCompleteForDefaultPreservesReloadConfigPointers(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("complete code = %d body=%s", rr.Code, rr.Body.String())
 	}
-	if srv.config != srv.session.Config {
+	if srv.config != srv.runtime.Config {
 		t.Fatal("default server config and session config should share the same pointer after setup")
 	}
 
@@ -676,8 +676,8 @@ func TestSetupCompleteForDefaultPreservesReloadConfigPointers(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("reload code = %d body=%s", rr.Code, rr.Body.String())
 	}
-	if srv.session.Config.LLM.APIKey != "reloaded-key" {
-		t.Fatalf("default session config API key = %q, want reloaded-key", srv.session.Config.LLM.APIKey)
+	if srv.runtime.Config.LLM.APIKey != "reloaded-key" {
+		t.Fatalf("default runtime config API key = %q, want reloaded-key", srv.runtime.Config.LLM.APIKey)
 	}
 	if got := srv.accountDepsForID("alice").Account.Config.LLM.APIKey; got != "reloaded-key" {
 		t.Fatalf("default deps config API key = %q, want reloaded-key", got)

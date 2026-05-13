@@ -59,7 +59,7 @@ func (s *Server) setupAccount(r *http.Request) (*setupAccountContext, error) {
 		if err != nil {
 			return nil, err
 		}
-		cfg := acct.Session.Config
+		cfg := acct.Runtime.Config
 		if cfg == nil && acct.Deps != nil && acct.Deps.Account != nil {
 			cfg = acct.Deps.Account.Config
 		}

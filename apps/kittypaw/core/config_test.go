@@ -493,6 +493,40 @@ func TestBrowserConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigDefaultsAndParsing(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Runtime.MaxConcurrentTurnsPerAccount != 1 {
+		t.Fatalf("MaxConcurrentTurnsPerAccount = %d, want 1", cfg.Runtime.MaxConcurrentTurnsPerAccount)
+	}
+	if cfg.Runtime.MaxQueuedTurnsPerAccount != 32 {
+		t.Fatalf("MaxQueuedTurnsPerAccount = %d, want 32", cfg.Runtime.MaxQueuedTurnsPerAccount)
+	}
+	if cfg.Runtime.MaxConcurrentTurnsPerConversation != 1 {
+		t.Fatalf("MaxConcurrentTurnsPerConversation = %d, want 1", cfg.Runtime.MaxConcurrentTurnsPerConversation)
+	}
+	if cfg.Runtime.MaxConcurrentScheduledJobs != 2 {
+		t.Fatalf("MaxConcurrentScheduledJobs = %d, want 2", cfg.Runtime.MaxConcurrentScheduledJobs)
+	}
+
+	tomlContent := `
+[runtime]
+max_concurrent_turns_per_account = 3
+max_queued_turns_per_account = 7
+max_concurrent_turns_per_conversation = 2
+max_concurrent_scheduled_jobs = 4
+`
+	var parsed Config
+	if _, err := toml.Decode(tomlContent, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if parsed.Runtime.MaxConcurrentTurnsPerAccount != 3 ||
+		parsed.Runtime.MaxQueuedTurnsPerAccount != 7 ||
+		parsed.Runtime.MaxConcurrentTurnsPerConversation != 2 ||
+		parsed.Runtime.MaxConcurrentScheduledJobs != 4 {
+		t.Fatalf("parsed runtime config = %#v", parsed.Runtime)
+	}
+}
+
 func TestWebConfigParsing(t *testing.T) {
 	tomlContent := `
 [web]

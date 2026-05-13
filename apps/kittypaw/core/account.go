@@ -251,7 +251,7 @@ func ValidateAccountChannels(accountChannels map[string][]ChannelConfig) error {
 // ChatBelongsToAccount reports whether chatID belongs to the account whose
 // Config is cfg. An account with no AllowedChatIDs configured returns true —
 // the check is permissive for legacy single-account installs and for channels
-// like web_chat whose ownership is tracked by SessionID, not chat_id.
+// like web_chat whose ownership is tracked by source session ID, not chat_id.
 //
 // When AllowedChatIDs is non-empty the check is strict: only IDs in that list
 // pass. This is the last line of defense against a compromised bot token or
@@ -545,7 +545,7 @@ func isEmptyDir(dir string) bool {
 
 // DiscoverAccounts scans baseDir for account directories, loads their
 // configs, and returns Account values. It does NOT register them — the
-// caller is responsible for bootstrapping (Store, Session, etc.) and
+// caller is responsible for bootstrapping (Store, AccountRuntime, etc.) and
 // calling Register.
 func DiscoverAccounts(baseDir string) ([]*Account, error) {
 	entries, err := os.ReadDir(baseDir)

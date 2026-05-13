@@ -54,7 +54,7 @@ type Confirmer interface {
 }
 
 // RequesterConfirmer is an optional stricter confirmation capability for group
-// chats. requesterID is the inbound ChatPayload.SessionID, usually the platform
+// chats. requesterID is the inbound ChatPayload.SourceSessionID, usually the platform
 // user ID, and callbacks from other users must not resolve the prompt.
 type RequesterConfirmer interface {
 	AskConfirmationForRequester(ctx context.Context, chatID, requesterID, description, resource string) (bool, error)

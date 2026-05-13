@@ -139,7 +139,7 @@ func TestConversationsAPICreatesGeneralConversation(t *testing.T) {
 
 func TestConversationsAPIUpdatesDefaultStaffID(t *testing.T) {
 	srv := newProjectsAPITestServer(t)
-	seedServerActiveStaff(t, srv.session.BaseDir, "dev-pm", "development pm")
+	seedServerActiveStaff(t, srv.runtime.BaseDir, "dev-pm", "development pm")
 	conv, err := srv.store.CreateConversation(store.CreateConversationRequest{
 		ScopeType: "general",
 		ScopeID:   "staff-route",

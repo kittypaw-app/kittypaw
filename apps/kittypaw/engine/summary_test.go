@@ -282,7 +282,7 @@ func TestSummary_ForceRefresh_UpdatesCachedResult(t *testing.T) {
 // AC-6: executor-level path rejection. T1: executeFileSummary panics → test
 // fails (red). T4: real path validation greens the assertion.
 func TestSummary_PathOutsideAllowed_Rejects(t *testing.T) {
-	s := &Session{Store: openTestStore(t), Config: &core.Config{}}
+	s := &AccountRuntime{Store: openTestStore(t), Config: &core.Config{}}
 	call := core.SkillCall{
 		SkillName: "File",
 		Method:    "summary",
@@ -300,7 +300,7 @@ func TestSummary_PathOutsideAllowed_Rejects(t *testing.T) {
 // AC-7: symlink escaping the workspace. T1: panic → red. T4: EvalSymlinks
 // in resolveForValidation + isPathAllowedResolved → rejection.
 func TestSummary_SymlinkOutsideAllowed_Rejects(t *testing.T) {
-	s := &Session{Store: openTestStore(t), Config: &core.Config{}}
+	s := &AccountRuntime{Store: openTestStore(t), Config: &core.Config{}}
 	// Symlink fixture is built in T4 (tmp workspace + symlink → /etc/passwd).
 	// T1's assertion only needs the error message; the dispatch panics first.
 	call := core.SkillCall{

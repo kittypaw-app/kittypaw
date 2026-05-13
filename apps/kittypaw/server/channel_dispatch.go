@@ -25,7 +25,7 @@ var channelWorkerStopTimeout = 10 * time.Second
 type channelEventJob struct {
 	event       core.Event
 	payload     core.ChatPayload
-	session     *engine.Session
+	runtime     *engine.AccountRuntime
 	baseRunOpts *engine.RunOptions
 	ch          channel.Channel
 	chOK        bool
@@ -106,8 +106,8 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 
 	// Fold chat-path /model overrides after dequeue, not at enqueue time.
 	// A queued /model command must affect later jobs in this same worker.
-	runOpts := job.session.ApplyActiveModel(job.baseRunOpts)
-	response, runErr, panicked := s.runChannelSession(runCtx, job.session, job.event, runOpts)
+	runOpts := job.runtime.ApplyActiveModel(job.baseRunOpts)
+	response, runErr, panicked := s.runChannelRuntime(runCtx, job.runtime, job.event, runOpts)
 	if ctx.Err() != nil {
 		return
 	}
@@ -116,6 +116,10 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		return
 	}
 	if runErr != nil {
+		if isRuntimeAdmissionBusy(runErr) {
+			s.sendOrQueueChannelFailure(ctx, job, channelQueueOverflowResponse)
+			return
+		}
 		slog.Error("channel event: engine error",
 			"worker", key,
 			"type", job.event.Type,
@@ -127,7 +131,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		return
 	}
 
-	engine.MarkAccountReady(job.session)
+	engine.MarkAccountReady(job.runtime)
 
 	if strings.TrimSpace(response) == "" {
 		return
@@ -180,14 +184,14 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 	}
 }
 
-func (s *Server) runChannelSession(ctx context.Context, session *engine.Session, event core.Event, runOpts *engine.RunOptions) (response string, runErr error, panicked bool) {
+func (s *Server) runChannelRuntime(ctx context.Context, runtime *engine.AccountRuntime, event core.Event, runOpts *engine.RunOptions) (response string, runErr error, panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			panicked = true
-			engine.RecoverAccountPanic(session, "server.channelWorker", r)
+			engine.RecoverAccountPanic(runtime, "server.channelWorker", r)
 		}
 	}()
-	response, runErr = session.Run(ctx, event, runOpts)
+	response, runErr = runtime.Run(ctx, event, runOpts)
 	return response, runErr, false
 }
 
@@ -243,9 +247,9 @@ func channelWorkerScope(event core.Event) string {
 	}
 	switch event.Type {
 	case core.EventKakaoTalk, core.EventWebChat, core.EventDesktop:
-		return firstNonEmptyWorkerScope(payload.SessionID, payload.ChatID)
+		return firstNonEmptyWorkerScope(payload.SourceSessionID, payload.ChatID)
 	default:
-		return firstNonEmptyWorkerScope(payload.ChatID, payload.SessionID)
+		return firstNonEmptyWorkerScope(payload.ChatID, payload.SourceSessionID)
 	}
 }
 

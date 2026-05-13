@@ -30,7 +30,7 @@ type structuredLocation struct {
 	Lon   float64
 }
 
-func extractWeatherNowSlots(ctx context.Context, sess *Session, userText string) (weatherNowSlots, error) {
+func extractWeatherNowSlots(ctx context.Context, sess *AccountRuntime, userText string) (weatherNowSlots, error) {
 	var slots weatherNowSlots
 	userText = strings.TrimSpace(userText)
 	if sess == nil || sess.Provider == nil || userText == "" {
@@ -219,7 +219,7 @@ func buildWeatherSlotPrompt(userText string) string {
 	return b.String()
 }
 
-func resolveStructuredLocation(ctx context.Context, sess *Session, query string) (structuredLocation, error) {
+func resolveStructuredLocation(ctx context.Context, sess *AccountRuntime, query string) (structuredLocation, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return structuredLocation{}, nil
@@ -268,7 +268,7 @@ func resolveStructuredLocation(ctx context.Context, sess *Session, query string)
 	return structuredLocation{Label: label, Lat: payload.Lat, Lon: payload.Lon}, nil
 }
 
-func effectiveKittypawAPIBaseURL(sess *Session) string {
+func effectiveKittypawAPIBaseURL(sess *AccountRuntime) string {
 	if sess != nil && sess.APITokenMgr != nil {
 		if base, ok := sess.APITokenMgr.LoadAPIBaseURL(core.DefaultAPIServerURL); ok && strings.TrimSpace(base) != "" {
 			return strings.TrimSpace(base)

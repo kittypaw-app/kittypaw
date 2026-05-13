@@ -89,6 +89,7 @@ type Config struct {
 	Reflection       ReflectionConfig    `toml:"reflection"`
 	Evolution        EvolutionConfig     `toml:"evolution"`
 	Orchestration    OrchestrationConfig `toml:"orchestration"`
+	Runtime          RuntimeConfig       `toml:"runtime"`
 	Registry         RegistryConfig      `toml:"registry"`
 	SkillInstall     SkillInstallConfig  `toml:"skill_install"`
 	Permissions      PermissionPolicy    `toml:"permissions"`
@@ -275,6 +276,14 @@ type OrchestrationConfig struct {
 	MaxDelegates uint32 `toml:"max_delegates"`
 }
 
+// RuntimeConfig controls account runtime admission and scheduler concurrency.
+type RuntimeConfig struct {
+	MaxConcurrentTurnsPerAccount      uint32 `toml:"max_concurrent_turns_per_account"`
+	MaxQueuedTurnsPerAccount          uint32 `toml:"max_queued_turns_per_account"`
+	MaxConcurrentTurnsPerConversation uint32 `toml:"max_concurrent_turns_per_conversation"`
+	MaxConcurrentScheduledJobs        uint32 `toml:"max_concurrent_scheduled_jobs"`
+}
+
 // RegistryConfig controls the remote package registry.
 type RegistryConfig struct {
 	URL string `toml:"url"`
@@ -455,6 +464,12 @@ func DefaultConfig() Config {
 		Orchestration: OrchestrationConfig{
 			MaxDepth:     3,
 			MaxDelegates: 5,
+		},
+		Runtime: RuntimeConfig{
+			MaxConcurrentTurnsPerAccount:      1,
+			MaxQueuedTurnsPerAccount:          32,
+			MaxConcurrentTurnsPerConversation: 1,
+			MaxConcurrentScheduledJobs:        2,
 		},
 		Registry: RegistryConfig{
 			URL: DefaultRegistryURL,

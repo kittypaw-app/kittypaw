@@ -18,7 +18,7 @@ const crossAccountTeamSpaceDenied = "cross-account read: target is not the team 
 // Access control lives in core.ValidateSharedReadPath; this layer plumbs the
 // reader identity and emits the cross_account_read audit record unconditionally
 // so data-flow auditing never relies on callers remembering to log.
-func executeShare(_ context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeShare(_ context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "read" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Share method: %s", call.Method)})
 	}

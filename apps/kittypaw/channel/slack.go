@@ -189,11 +189,11 @@ func (s *SlackChannel) handleEventPayload(ctx context.Context, env slackEnvelope
 	s.mu.Unlock()
 
 	payload := core.ChatPayload{
-		ChatID:      evt.Channel,
-		Text:        evt.Text,
-		FromName:    evt.User,
-		WorkspaceID: "", // TODO: extract team_id if needed
-		SessionID:   evt.User,
+		ChatID:          evt.Channel,
+		Text:            evt.Text,
+		FromName:        evt.User,
+		WorkspaceID:     "", // TODO: extract team_id if needed
+		SourceSessionID: evt.User,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

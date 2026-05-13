@@ -65,7 +65,7 @@ type delegateSessionRunner interface {
 func OrchestrateRequest(
 	ctx context.Context,
 	text string,
-	s *Session,
+	s *AccountRuntime,
 ) (string, bool, error) {
 	if s == nil || s.Config == nil {
 		return "", false, nil
@@ -179,7 +179,7 @@ Output ONLY valid JSON.`, text, staffList.String())
 func fanOutDelegations(
 	ctx context.Context,
 	tasks []PMTaskSpec,
-	s *Session,
+	s *AccountRuntime,
 	maxDepth int,
 	config *core.OrchestrationConfig,
 	parentConversationID string,
@@ -228,7 +228,7 @@ func fanOutDelegations(
 func executeDelegateTask(
 	ctx context.Context,
 	task PMTaskSpec,
-	s *Session,
+	s *AccountRuntime,
 	depth, maxDepth int,
 	parentConversationID string,
 	parentEvent *core.Event,
@@ -358,7 +358,7 @@ func delegateConversationID(parentConversationID, staffID string) string {
 	return "delegation:" + parentPart + ":" + staffPart
 }
 
-func packDelegateTask(ctx context.Context, s *Session, parentConversationID string, task PMTaskSpec) string {
+func packDelegateTask(ctx context.Context, s *AccountRuntime, parentConversationID string, task PMTaskSpec) string {
 	var lines []string
 	lines = append(lines,
 		fmt.Sprintf("Delegated staff: %s", task.StaffID),
@@ -407,10 +407,10 @@ func buildDelegateEvent(parent *core.Event, text, conversationID, staffID string
 	eventType := core.EventWebChat
 	accountID := ""
 	payload := core.ChatPayload{
-		ChatID:         "delegate",
-		Text:           text,
-		SessionID:      "delegate-" + staffID,
-		ConversationID: conversationID,
+		ChatID:          "delegate",
+		Text:            text,
+		SourceSessionID: "delegate-" + staffID,
+		ConversationID:  conversationID,
 	}
 	if parent != nil {
 		eventType = parent.Type
@@ -422,8 +422,8 @@ func buildDelegateEvent(parent *core.Event, text, conversationID, staffID string
 			if payload.ChatID == "" {
 				payload.ChatID = "delegate"
 			}
-			if payload.SessionID == "" {
-				payload.SessionID = "delegate-" + staffID
+			if payload.SourceSessionID == "" {
+				payload.SourceSessionID = "delegate-" + staffID
 			}
 		}
 	}
@@ -431,7 +431,7 @@ func buildDelegateEvent(parent *core.Event, text, conversationID, staffID string
 	return core.Event{Type: eventType, AccountID: accountID, Payload: raw}
 }
 
-func recordDelegationExecution(s *Session, task PMTaskSpec, result DelegateResult, parentConversationID, delegateConversationID string, start time.Time, success bool) {
+func recordDelegationExecution(s *AccountRuntime, task PMTaskSpec, result DelegateResult, parentConversationID, delegateConversationID string, start time.Time, success bool) {
 	if s == nil || s.Store == nil {
 		return
 	}

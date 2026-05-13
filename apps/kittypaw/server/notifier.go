@@ -114,7 +114,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 	return nil
 }
 
-func (s *Server) attachSessionNotifier(accountID string, sess *engine.Session) {
+func (s *Server) attachRuntimeNotifier(accountID string, sess *engine.AccountRuntime) {
 	if sess == nil {
 		return
 	}

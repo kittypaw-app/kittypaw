@@ -22,7 +22,7 @@ type registryPackageFixture struct {
 	JS   string
 }
 
-func newInstallFlowSession(t *testing.T, registryURL string, responses ...string) *Session {
+func newInstallFlowSession(t *testing.T, registryURL string, responses ...string) *AccountRuntime {
 	t.Helper()
 	skipWithoutRuntime(t)
 
@@ -41,7 +41,7 @@ func newInstallFlowSession(t *testing.T, registryURL string, responses ...string
 		llmResponses = append(llmResponses, mockResp(response))
 	}
 
-	return &Session{
+	return &AccountRuntime{
 		Provider:       &mockProvider{responses: llmResponses},
 		Sandbox:        sandbox.New(cfg.Sandbox),
 		Store:          st,

@@ -22,7 +22,7 @@ type gmailOptions struct {
 	ID    string `json:"id"`
 }
 
-func executeGmail(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeGmail(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	client, accessToken, errResult := gmailClientForSession(s)
 	if errResult != "" {
 		return errResult, nil
@@ -64,7 +64,7 @@ func executeGmail(ctx context.Context, call core.SkillCall, s *Session) (string,
 	}
 }
 
-func gmailClientForSession(s *Session) (*core.GmailClient, string, string) {
+func gmailClientForSession(s *AccountRuntime) (*core.GmailClient, string, string) {
 	if s == nil || s.ServiceTokenMgr == nil {
 		return nil, "", jsonResultMust(map[string]any{"error": gmailConnectGuidance(s)})
 	}
@@ -79,7 +79,7 @@ func gmailClientForSession(s *Session) (*core.GmailClient, string, string) {
 	return core.NewGmailClient(os.Getenv("KITTYPAW_GMAIL_BASE_URL"), nil), accessToken, ""
 }
 
-func gmailConnectGuidance(s *Session) string {
+func gmailConnectGuidance(s *AccountRuntime) string {
 	if s != nil && strings.TrimSpace(s.AccountID) != "" {
 		return fmt.Sprintf("gmail not connected — run: kittypaw connect gmail --account %s", s.AccountID)
 	}

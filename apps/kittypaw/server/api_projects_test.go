@@ -268,7 +268,7 @@ func TestProjectsAPIJobStartAndLogsUseRuntime(t *testing.T) {
 	if started.Job.Status != "running" || started.Job.WorktreePath == "" {
 		t.Fatalf("started = %+v", started.Job)
 	}
-	if !srv.session.ProjectJobRuntime.WaitForJob(planned.ID, 2*time.Second) {
+	if !srv.runtime.ProjectJobRuntime.WaitForJob(planned.ID, 2*time.Second) {
 		t.Fatal("job did not finish")
 	}
 
@@ -399,8 +399,8 @@ func newProjectsAPITestServerWithRunner(t *testing.T, runner engine.JobCommandRu
 		Runner:    runner,
 	})
 	srv := New([]*AccountDeps{deps}, "test")
-	if srv.session != nil {
-		srv.session.Indexer = nil
+	if srv.runtime != nil {
+		srv.runtime.Indexer = nil
 	}
 	deps.LiveIndexer = nil
 	return srv
@@ -419,8 +419,8 @@ func newProjectsAPITestServerWithPTYRunner(t *testing.T, runner engine.JobPTYRun
 		PTYRunner: runner,
 	})
 	srv := New([]*AccountDeps{deps}, "test")
-	if srv.session != nil {
-		srv.session.Indexer = nil
+	if srv.runtime != nil {
+		srv.runtime.Indexer = nil
 	}
 	deps.LiveIndexer = nil
 	return srv

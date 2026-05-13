@@ -89,6 +89,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	if byModel == nil {
 		byModel = []store.LLMUsageByModel{}
 	}
+	runtimeSnapshot := engine.RuntimeAdmissionSnapshot{}
+	if runtime := s.defaultRuntime(); runtime != nil && runtime.Admission != nil {
+		runtimeSnapshot = runtime.Admission.Snapshot()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_runs":         stats.TotalRuns,
 		"successful":         stats.Successful,
@@ -97,6 +101,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"total_tokens":       stats.TotalTokens,
 		"estimated_cost_usd": stats.EstimatedCostUSD,
 		"llm_usage_by_model": byModel,
+		"runtime":            runtimeSnapshot,
 	})
 }
 
@@ -330,7 +335,7 @@ func (s *Server) handleConversationUpdate(w http.ResponseWriter, r *http.Request
 	}
 	staffID := strings.TrimSpace(*body.DefaultStaffID)
 	if staffID != "" {
-		sess := s.defaultSession()
+		sess := s.defaultRuntime()
 		if sess == nil {
 			writeError(w, http.StatusInternalServerError, "session unavailable")
 			return
@@ -403,7 +408,7 @@ func (s *Server) handleConversationMessages(w http.ResponseWriter, r *http.Reque
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
-	skills, err := core.LoadAllSkillsFrom(s.defaultSession().BaseDir)
+	skills, err := core.LoadAllSkillsFrom(s.defaultRuntime().BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -478,8 +483,12 @@ func (s *Server) handleSkillsRun(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(payload)
 	event := core.Event{Type: core.EventWebChat, Payload: raw}
 
-	output, err := s.defaultSession().Run(r.Context(), event, nil)
+	output, err := s.defaultRuntime().Run(r.Context(), event, nil)
 	if err != nil {
+		if isRuntimeAdmissionBusy(err) {
+			writeError(w, http.StatusTooManyRequests, "runtime busy")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -502,7 +511,7 @@ func (s *Server) handleSkillsTeach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := engine.HandleTeach(r.Context(), body.Description, "api", s.defaultSession())
+	result, err := engine.HandleTeach(r.Context(), body.Description, "api", s.defaultRuntime())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -554,7 +563,7 @@ func (s *Server) handleTeachApprove(w http.ResponseWriter, r *http.Request) {
 		Trigger:     core.SkillTrigger{Type: trigger, Cron: body.Schedule},
 		Permissions: engine.DetectPermissions(body.Code),
 	}
-	if err := engine.ApproveSkill(s.defaultSession().BaseDir, result); err != nil {
+	if err := engine.ApproveSkill(s.defaultRuntime().BaseDir, result); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -571,7 +580,7 @@ func (s *Server) handleSkillsDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := core.DeleteSkillFrom(s.defaultSession().BaseDir, name); err != nil {
+	if err := core.DeleteSkillFrom(s.defaultRuntime().BaseDir, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -588,7 +597,7 @@ func (s *Server) handleSkillEnable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := core.EnableSkillFrom(s.defaultSession().BaseDir, name); err != nil {
+	if err := core.EnableSkillFrom(s.defaultRuntime().BaseDir, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -605,7 +614,7 @@ func (s *Server) handleSkillDisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := core.DisableSkillFrom(s.defaultSession().BaseDir, name); err != nil {
+	if err := core.DisableSkillFrom(s.defaultRuntime().BaseDir, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -622,7 +631,7 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	skill, code, err := core.LoadSkillFrom(s.defaultSession().BaseDir, name)
+	skill, code, err := core.LoadSkillFrom(s.defaultRuntime().BaseDir, name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -640,7 +649,7 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 	messages := []core.LlmMessage{
 		{Role: core.RoleUser, Content: prompt},
 	}
-	resp, err := s.defaultSession().Provider.Generate(engine.WithLLMCallKind(r.Context(), "skill.explain"), messages)
+	resp, err := s.defaultRuntime().Provider.Generate(engine.WithLLMCallKind(r.Context(), "skill.explain"), messages)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -657,9 +666,10 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text           string `json:"text"`
-		SessionID      string `json:"session_id"`
-		ConversationID string `json:"conversation_id"`
+		Text            string `json:"text"`
+		SessionID       string `json:"session_id"`        // legacy wire name
+		SourceSessionID string `json:"source_session_id"` // preferred transport/source name
+		ConversationID  string `json:"conversation_id"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -669,7 +679,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := body.SessionID
+	sessionID := strings.TrimSpace(body.SourceSessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(body.SessionID)
+	}
 	if sessionID == "" {
 		sessionID = "api"
 	}
@@ -694,15 +707,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := core.ChatPayload{
-		ChatID:         chatID,
-		Text:           body.Text,
-		SessionID:      sessionID,
-		ConversationID: conversationID,
+		ChatID:          chatID,
+		Text:            body.Text,
+		SourceSessionID: sessionID,
+		ConversationID:  conversationID,
 	}
 	raw, _ := json.Marshal(payload)
 	event := core.Event{Type: core.EventWebChat, Payload: raw}
 
-	output, err := s.defaultSession().Run(r.Context(), event, nil)
+	output, err := s.defaultRuntime().Run(r.Context(), event, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1032,7 +1045,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		// For native packages, install from temp dir.
 		if source.Format == core.SourceFormatNative {
 			defer os.RemoveAll(source.TempDir)
-			result, err = core.InstallSkillSource(s.defaultSession().BaseDir, source.TempDir, core.InstallOptions{
+			result, err = core.InstallSkillSource(s.defaultRuntime().BaseDir, source.TempDir, core.InstallOptions{
 				SourceURL: source.SourceURL,
 			})
 		} else {
@@ -1047,7 +1060,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, wErr.Error())
 				return
 			}
-			result, err = core.InstallSkillSource(s.defaultSession().BaseDir, tmpDir, core.InstallOptions{
+			result, err = core.InstallSkillSource(s.defaultRuntime().BaseDir, tmpDir, core.InstallOptions{
 				MdExecutionMode: mdMode,
 				SourceURL:       source.SourceURL,
 			})
@@ -1068,7 +1081,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "source path must be a directory")
 			return
 		}
-		result, err = core.InstallSkillSource(s.defaultSession().BaseDir, cleanPath, core.InstallOptions{
+		result, err = core.InstallSkillSource(s.defaultRuntime().BaseDir, cleanPath, core.InstallOptions{
 			MdExecutionMode: mdMode,
 		})
 	}
@@ -1168,7 +1181,7 @@ func (s *Server) handlePackageDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Read README if available.
 	var readme string
-	pkgDir, dirErr := core.PackagesDirFrom(s.defaultSession().BaseDir)
+	pkgDir, dirErr := core.PackagesDirFrom(s.defaultRuntime().BaseDir)
 	if dirErr == nil {
 		if data, readErr := os.ReadFile(filepath.Join(pkgDir, id, "README.md")); readErr == nil {
 			readme = string(data)

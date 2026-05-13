@@ -482,7 +482,7 @@ func TestDoVisionRequest_Retry429(t *testing.T) {
 // --- Argument Validation Tests ---
 
 func TestExecuteVision_MissingArgs(t *testing.T) {
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	call := core.SkillCall{SkillName: "Vision", Method: "analyze", Args: nil}
 	result, err := executeVision(context.Background(), call, s)
 	if err != nil {
@@ -496,7 +496,7 @@ func TestExecuteVision_MissingArgs(t *testing.T) {
 }
 
 func TestExecuteVision_UnknownMethod(t *testing.T) {
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	call := core.SkillCall{SkillName: "Vision", Method: "unknown", Args: nil}
 	result, err := executeVision(context.Background(), call, s)
 	if err != nil {
@@ -523,7 +523,7 @@ func TestExecuteVisionAnalyzeAttachmentUsesCurrentEvent(t *testing.T) {
 	event := core.Event{Type: core.EventTelegram, Payload: eventPayload}
 	ctx := ContextWithEvent(context.Background(), &event)
 
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	args := []json.RawMessage{
 		json.RawMessage(`"tg_42_0"`),
 		json.RawMessage(`"Describe this image"`),
@@ -542,7 +542,7 @@ func TestExecuteVisionAnalyzeAttachmentUsesCurrentEvent(t *testing.T) {
 }
 
 func TestExecuteImage_MissingArgs(t *testing.T) {
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	call := core.SkillCall{SkillName: "Image", Method: "generate", Args: nil}
 	result, err := executeImage(context.Background(), call, s)
 	if err != nil {
@@ -556,7 +556,7 @@ func TestExecuteImage_MissingArgs(t *testing.T) {
 }
 
 func TestExecuteImage_UnknownMethod(t *testing.T) {
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	call := core.SkillCall{SkillName: "Image", Method: "unknown", Args: nil}
 	result, err := executeImage(context.Background(), call, s)
 	if err != nil {
@@ -571,7 +571,7 @@ func TestExecuteImage_UnknownMethod(t *testing.T) {
 }
 
 func TestExecuteVision_EmptyURL(t *testing.T) {
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	args := []json.RawMessage{json.RawMessage(`""`)}
 	call := core.SkillCall{SkillName: "Vision", Method: "analyze", Args: args}
 	result, err := executeVision(context.Background(), call, s)
@@ -591,7 +591,7 @@ func TestExecuteVision_SSRFBlocked(t *testing.T) {
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	tests := []struct {
 		name string
 		url  string
@@ -619,7 +619,7 @@ func TestExecuteVision_SSRFBlocked(t *testing.T) {
 }
 
 func TestExecuteImage_EmptyPrompt(t *testing.T) {
-	s := &Session{Config: &core.Config{}}
+	s := &AccountRuntime{Config: &core.Config{}}
 	args := []json.RawMessage{json.RawMessage(`""`)}
 	call := core.SkillCall{SkillName: "Image", Method: "generate", Args: args}
 	result, err := executeImage(context.Background(), call, s)

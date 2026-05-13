@@ -16,8 +16,8 @@ import (
 // skill id without LLM hallucination. Future state (PendingClarification,
 // recent tool calls, etc.) lands here.
 //
-// One PipelineState per Session — same isolation boundary as the rest
-// of the account. All access is mutex-guarded; the Session.Run loop is
+// One PipelineState per AccountRuntime — same isolation boundary as the rest
+// of the account. All access is mutex-guarded; the AccountRuntime.Run loop is
 // single-goroutine per event but server-side reload could race on init.
 type PipelineState struct {
 	mu                     sync.Mutex

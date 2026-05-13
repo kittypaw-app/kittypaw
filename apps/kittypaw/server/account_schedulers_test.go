@@ -57,9 +57,9 @@ func TestAddRemoveAccountMaintainsScheduler(t *testing.T) {
 
 func TestAccountSchedulersReplaceReturnsPreviousScheduler(t *testing.T) {
 	schedulers := NewAccountSchedulers()
-	first := engine.NewScheduler(&engine.Session{}, nil)
-	second := engine.NewScheduler(&engine.Session{}, nil)
-	third := engine.NewScheduler(&engine.Session{}, nil)
+	first := engine.NewScheduler(&engine.AccountRuntime{}, nil)
+	second := engine.NewScheduler(&engine.AccountRuntime{}, nil)
+	third := engine.NewScheduler(&engine.AccountRuntime{}, nil)
 
 	schedulers.Register("alice", first)
 	if got := schedulers.Replace("alice", second); got != first {
@@ -80,8 +80,8 @@ func TestAccountSchedulersReplaceReturnsPreviousScheduler(t *testing.T) {
 
 func TestAccountSchedulersReplaceWhileRunningStartsReplacement(t *testing.T) {
 	schedulers := NewAccountSchedulers()
-	first := engine.NewScheduler(&engine.Session{Config: &core.Config{}}, nil)
-	second := engine.NewScheduler(&engine.Session{Config: &core.Config{}}, nil)
+	first := engine.NewScheduler(&engine.AccountRuntime{Config: &core.Config{}}, nil)
+	second := engine.NewScheduler(&engine.AccountRuntime{Config: &core.Config{}}, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

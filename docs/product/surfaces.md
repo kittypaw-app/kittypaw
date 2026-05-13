@@ -20,7 +20,7 @@ in-chat commands, natural-language chat, or hosted Space.
 Slash command help is generated from the command registry. Unknown slash
 commands return a deterministic error with `/help` guidance and never fall
 through to the LLM. Read-only diagnostics such as `/help`, `/status`,
-`/model` without an ID, `/session`, and `/context` should not write
+`/model` without an ID, `/conversation`, and `/context` should not write
 conversation history; auditable command results such as `/run`, `/model <id>`,
 `/project use`, and ticket state changes may be recorded in the active
 conversation.
@@ -46,7 +46,7 @@ Legend:
 | Tool global | No direct | No | No | Indirect | Indirect | No | Primary | Supported via relay |
 | Staff | Future CLI/admin | No | Future | Indirect | No | Primary (`/staff`) | Primary draft flow | Supported via relay |
 | Channel | Primary | Primary | Supported | Indirect | No | No | Limited | Indirect |
-| Conversation/history | Primary | No | No | Primary | No | Supported (`/status`, `/session`, `/context`) | Primary | Supported via relay |
+| Conversation/history | Primary | No | No | Primary | No | Supported (`/status`, `/conversation`, `/context`) | Primary | Supported via relay |
 | Memory | Primary search | No | Future | Indirect | No | No | Primary through `Memory` | Supported via relay |
 | Project | Primary | No | No | Indirect | Primary | Supported (`/projects`, `/project`) | Supported via `Kanban` | Local unless hosted route exists |
 | Board | Supported | No | No | Indirect | Primary | No | Supported via `Kanban` | Local unless hosted route exists |
@@ -79,7 +79,7 @@ CLI owns durable model configuration:
 - `kittypaw model list`
 - `kittypaw model remove`
 
-In-chat `/model` changes the active model for the current chat session only.
+In-chat `/model` changes the active model for the current account runtime only.
 The assistant may explain model state, but should not mutate durable model
 config through natural-language chat unless a deterministic flow exists.
 
@@ -126,7 +126,7 @@ until policy rollover moves that route to a child conversation. The user-facing
 rollover surface is the next assistant reply, which starts with a short
 "Conversation rolled over" notice and then continues the answer.
 
-Slash commands stay diagnostic here: `/session` shows current thread metadata,
+Slash commands stay diagnostic here: `/conversation` shows current conversation metadata,
 including parent and rollover fields when present; `/context` shows prompt and
 rollover thresholds. Natural-language topic changes may trigger a suggestion to
 split into a new conversation, but the assistant should ask instead of silently

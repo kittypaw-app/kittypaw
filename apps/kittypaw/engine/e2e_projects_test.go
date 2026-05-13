@@ -28,7 +28,7 @@ func TestE2EProjectsStaffDraftApprovalDoesNotLoseContext(t *testing.T) {
 		"aliases": ["pm", "피엠"],
 		"soul": "You are PM, a KittyPaw staff member.\n\n## Role\n요구사항 정리, 우선순위 조율, 진행상황 추적, 블로커 관리\n\n## Working Style\n- Keep plans practical.\n- Respond in Korean."
 	}`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Store:     st,
 		Config:    &cfg,

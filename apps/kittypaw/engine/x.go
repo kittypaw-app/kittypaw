@@ -21,7 +21,7 @@ type xOptions struct {
 	Limit    int    `json:"limit"`
 }
 
-func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeX(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	client, accessToken, errResult := xClientForSession(s)
 	if errResult != "" {
 		return errResult, nil
@@ -105,7 +105,7 @@ func executeX(ctx context.Context, call core.SkillCall, s *Session) (string, err
 	}
 }
 
-func xClientForSession(s *Session) (*core.XBrokerClient, string, string) {
+func xClientForSession(s *AccountRuntime) (*core.XBrokerClient, string, string) {
 	if s == nil || s.APITokenMgr == nil {
 		return nil, "", jsonResultMust(map[string]any{"error": xLoginGuidance(s)})
 	}
@@ -121,7 +121,7 @@ func xClientForSession(s *Session) (*core.XBrokerClient, string, string) {
 	return core.NewXBrokerClient(s.APITokenMgr.ResolveConnectBaseURL(apiURL), nil), accessToken, ""
 }
 
-func xBrokerErrorMessage(err error, s *Session) string {
+func xBrokerErrorMessage(err error, s *AccountRuntime) string {
 	var statusErr *core.XBrokerStatusError
 	if errors.As(err, &statusErr) {
 		switch statusErr.StatusCode {
@@ -140,14 +140,14 @@ func xBrokerErrorMessage(err error, s *Session) string {
 	return err.Error()
 }
 
-func xLoginGuidance(s *Session) string {
+func xLoginGuidance(s *AccountRuntime) string {
 	if s != nil && strings.TrimSpace(s.AccountID) != "" {
 		return fmt.Sprintf("not logged in - run: kittypaw login --account %s", s.AccountID)
 	}
 	return "not logged in - run: kittypaw login"
 }
 
-func xConnectGuidance(s *Session) string {
+func xConnectGuidance(s *AccountRuntime) string {
 	if s != nil && strings.TrimSpace(s.AccountID) != "" {
 		return fmt.Sprintf("x not connected - run: kittypaw connect x --account %s", s.AccountID)
 	}

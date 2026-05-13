@@ -45,27 +45,27 @@ func TestStaffAPICreatePersistsStaffMeta(t *testing.T) {
 		t.Fatalf("created staff response = %+v", created)
 	}
 
-	meta, err := core.ReadStaffMetaFile(srv.session.BaseDir, "coder")
+	meta, err := core.ReadStaffMetaFile(srv.runtime.BaseDir, "coder")
 	if err != nil {
 		t.Fatalf("ReadStaffMetaFile(coder): %v", err)
 	}
 	if meta.Description != "Writes code" {
 		t.Fatalf("staff metadata = %+v", meta)
 	}
-	if !core.StaffHasSoul(srv.session.BaseDir, "coder") {
+	if !core.StaffHasSoul(srv.runtime.BaseDir, "coder") {
 		t.Fatal("created staff SOUL.md missing")
 	}
 }
 
 func TestStaffAPIActivateExistingStaff(t *testing.T) {
 	srv := newStaffAPITestServer(t)
-	if err := core.WriteStaffMetaFile(srv.session.BaseDir, core.StaffMetaFile{
+	if err := core.WriteStaffMetaFile(srv.runtime.BaseDir, core.StaffMetaFile{
 		ID:          "coder",
 		Description: "Writes code",
 	}); err != nil {
 		t.Fatalf("WriteStaffMetaFile(coder): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(srv.session.BaseDir, "staff", "coder", "SOUL.md"), []byte("coder soul"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(srv.runtime.BaseDir, "staff", "coder", "SOUL.md"), []byte("coder soul"), 0o644); err != nil {
 		t.Fatalf("write coder soul: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestStaffAPIActivateExistingStaff(t *testing.T) {
 		t.Fatalf("activated staff response = %+v", activated)
 	}
 
-	if !core.StaffHasSoul(srv.session.BaseDir, "coder") {
+	if !core.StaffHasSoul(srv.runtime.BaseDir, "coder") {
 		t.Fatal("activated staff SOUL.md missing")
 	}
 }

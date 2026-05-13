@@ -22,7 +22,7 @@ type staffDraftLLMResponse struct {
 	NeedsClarification string   `json:"needs_clarification"`
 }
 
-func buildStaffDraftFromRequest(ctx context.Context, sess *Session, request string) (StaffDraft, string, error) {
+func buildStaffDraftFromRequest(ctx context.Context, sess *AccountRuntime, request string) (StaffDraft, string, error) {
 	request = strings.TrimSpace(request)
 	if request == "" {
 		return StaffDraft{}, "", fmt.Errorf("staff request is empty")

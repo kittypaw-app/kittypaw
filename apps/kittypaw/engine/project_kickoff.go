@@ -37,7 +37,7 @@ type projectKickoffTicket struct {
 	StaffRole string `json:"staff_role"`
 }
 
-func tryHandleProjectBriefDraftApproval(s *Session, event core.Event, eventText string) (string, bool) {
+func tryHandleProjectBriefDraftApproval(s *AccountRuntime, event core.Event, eventText string) (string, bool) {
 	if s == nil || s.Store == nil || !isStaffAffirmative(strings.TrimSpace(eventText)) {
 		return "", false
 	}
@@ -70,7 +70,7 @@ func tryHandleProjectBriefDraftApproval(s *Session, event core.Event, eventText 
 	return formatProjectBriefCommitResponse(project, result), true
 }
 
-func tryHandleProjectKickoffApproval(s *Session, event core.Event, eventText string) (string, bool) {
+func tryHandleProjectKickoffApproval(s *AccountRuntime, event core.Event, eventText string) (string, bool) {
 	if s == nil || s.Store == nil || !isStaffAffirmative(strings.TrimSpace(eventText)) {
 		return "", false
 	}

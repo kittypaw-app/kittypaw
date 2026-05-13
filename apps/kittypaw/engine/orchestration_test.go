@@ -88,7 +88,7 @@ func TestDelegateTask_DepthZeroMaxZero(t *testing.T) {
 
 func TestDelegateTask_StaffNotFound(t *testing.T) {
 	cfg := core.DefaultConfig()
-	sess := &Session{Config: &cfg, Store: newDelegateTestStore(t), BaseDir: t.TempDir()}
+	sess := &AccountRuntime{Config: &cfg, Store: newDelegateTestStore(t), BaseDir: t.TempDir()}
 	spec := PMTaskSpec{StaffID: "nonexistent", Task: "do something"}
 	result := executeDelegateTask(context.Background(), spec, sess, 0, 3, "", nil)
 	if result.Success {
@@ -108,7 +108,7 @@ func TestDelegateTask_MetaOnlyStaffFails(t *testing.T) {
 	}
 
 	spec := PMTaskSpec{StaffID: "inactive", Task: "do something"}
-	sess := &Session{Config: &cfg, Store: st, BaseDir: baseDir}
+	sess := &AccountRuntime{Config: &cfg, Store: st, BaseDir: baseDir}
 	result := executeDelegateTask(context.Background(), spec, sess, 0, 3, "", nil)
 	if result.Success {
 		t.Fatal("expected failure for staff without SOUL.md")
@@ -179,7 +179,7 @@ func TestDelegateTask_BudgetExhausted(t *testing.T) {
 	st := newDelegateTestStore(t)
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "test-staff", "", "A test staff member")
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:  &cfg,
 		Store:   st,
 		BaseDir: baseDir,
@@ -203,7 +203,7 @@ func TestExecuteRunnerDelegateUsesStaffIDFirst(t *testing.T) {
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:   &cfg,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`return "delegated ok";`)}},
 		Sandbox:  sandbox.New(cfg.Sandbox),
@@ -245,7 +245,7 @@ func TestExecuteRunnerDelegateRunsFullToolLoopAndAudit(t *testing.T) {
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config: &cfg,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`
 			const env = Env.get("KITTYPAW_DELEGATE_TOOL_TEST");
@@ -335,7 +335,7 @@ func TestExecuteRunnerDelegateAppliesStaffAllowedSkills(t *testing.T) {
 	}
 
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config: &cfg,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`
 			const env = Env.get("KITTYPAW_DELEGATE_TOOL_TEST");
@@ -385,7 +385,7 @@ func TestExecuteRunnerDelegatePacksParentConversationContext(t *testing.T) {
 
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `return "packed-ok";`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:   &cfg,
 		Provider: provider,
 		Sandbox:  sandbox.New(cfg.Sandbox),
@@ -434,7 +434,7 @@ func TestExecuteRunnerDelegateChargesSharedBudget(t *testing.T) {
 	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
 	cfg := core.DefaultConfig()
 	budget := NewSharedBudget(15)
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:   &cfg,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`return "budgeted";`)}},
 		Sandbox:  sandbox.New(cfg.Sandbox),
@@ -478,7 +478,7 @@ func TestExecuteRunnerDelegateFailsWhenSharedBudgetExceeded(t *testing.T) {
 	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
 	cfg := core.DefaultConfig()
 	budget := NewSharedBudget(10)
-	sess := &Session{
+	sess := &AccountRuntime{
 		Config:   &cfg,
 		Provider: &mockProvider{responses: []*llm.Response{mockResp(`return "over budget";`)}},
 		Sandbox:  sandbox.New(cfg.Sandbox),
@@ -522,7 +522,7 @@ func TestOrchestrateRequest_Disabled(t *testing.T) {
 	config := &core.OrchestrationConfig{Enabled: false}
 	cfg := core.DefaultConfig()
 	cfg.Orchestration = *config
-	_, handled, err := OrchestrateRequest(context.Background(), "hello", &Session{Config: &cfg})
+	_, handled, err := OrchestrateRequest(context.Background(), "hello", &AccountRuntime{Config: &cfg})
 	if err != nil {
 		t.Fatal(err)
 	}

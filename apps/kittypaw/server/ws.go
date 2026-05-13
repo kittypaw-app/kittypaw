@@ -158,7 +158,7 @@ func readPump(ctx context.Context, conn *websocket.Conn, sessionID string,
 	}
 }
 
-// handleWebSocket upgrades to WebSocket and runs a multi-turn chat session.
+// handleWebSocket upgrades to WebSocket and runs multi-turn chat against a conversation.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.handleWebSocketWithAccount(w, r, s.requestAccount)
 }
@@ -229,7 +229,7 @@ func (s *Server) handleWebSocketWithAccount(
 			if clientMsg.Text == "" {
 				continue
 			}
-			if !s.accountActive(acct.ID) || s.accounts.Session(acct.ID) != acct.Session {
+			if !s.accountActive(acct.ID) || s.accounts.Runtime(acct.ID) != acct.Runtime {
 				sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "account inactive"))
 				return
 			}
@@ -270,10 +270,10 @@ func (s *Server) handleWebSocketWithAccount(
 			}
 
 			payload, _ := json.Marshal(core.ChatPayload{
-				ChatID:         chatID,
-				Text:           clientMsg.Text,
-				SessionID:      sessionID,
-				ConversationID: conversationID,
+				ChatID:          chatID,
+				Text:            clientMsg.Text,
+				SourceSessionID: sessionID,
+				ConversationID:  conversationID,
 			})
 			event := core.Event{
 				Type:      core.EventWebChat,
@@ -294,15 +294,19 @@ func (s *Server) handleWebSocketWithAccount(
 					}
 				},
 			}
-			// Chat-path /model override fallback. See engine/session.go
+			// Chat-path /model override fallback. See engine/account_runtime.go
 			// ApplyActiveModel doc for the schedule-path isolation contract.
-			runOpts = acct.Session.ApplyActiveModel(runOpts)
+			runOpts = acct.Runtime.ApplyActiveModel(runOpts)
 
 			// RunTurn dedupes retries that share clientMsg.TurnID via
-			// Session.turnCache. Empty TurnID falls through to plain
+			// AccountRuntime.turnCache. Empty TurnID falls through to plain
 			// Run (legacy client without idempotency).
-			result, err := acct.Session.RunTurn(ctx, clientMsg.TurnID, event, runOpts)
+			result, err := acct.Runtime.RunTurn(ctx, clientMsg.TurnID, event, runOpts)
 			if err != nil {
+				if isRuntimeAdmissionBusy(err) {
+					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "runtime busy"))
+					continue
+				}
 				sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, err.Error()))
 				continue
 			}

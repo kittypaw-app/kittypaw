@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// AccountHealth is the observable liveness of an account Session inside the
+// AccountHealth is the observable liveness of an account runtime inside the
 // single-server multi-account server. It is NOT a process-level health —
 // the server can only tell you "my own goroutines for this account are
 // looking OK right now", not "the account is reachable end-to-end".
@@ -48,7 +48,7 @@ func (h AccountHealth) String() string {
 }
 
 // HealthState is a concurrency-safe health tracker. One instance per
-// account Session. Reads are racy only in the sense that they see a
+// account runtime. Reads are racy only in the sense that they see a
 // snapshot — callers never need a mutex because every field is atomic.
 //
 // The lastPanic timestamp is retained across MarkReady on purpose: it is

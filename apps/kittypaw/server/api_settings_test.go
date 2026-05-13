@@ -67,7 +67,7 @@ func TestSettingsLLMUpdatesCompletedAccountConfig(t *testing.T) {
 	if written.LLM.Provider != "openai" || written.LLM.APIKey != "" || written.LLM.Model != "llama3.1" {
 		t.Fatalf("written LLM = %#v, want local openai-compatible llama3.1 without API key", written.LLM)
 	}
-	if got := srv.accounts.Session("alice").Config.LLM.Model; got != "llama3.1" {
+	if got := srv.accounts.Runtime("alice").Config.LLM.Model; got != "llama3.1" {
 		t.Fatalf("runtime LLM model = %q, want llama3.1", got)
 	}
 }

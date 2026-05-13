@@ -8,8 +8,8 @@ import (
 )
 
 func TestAccountRouter_RouteRegistered(t *testing.T) {
-	alice := &engine.Session{BaseDir: "/tmp/alice"}
-	bob := &engine.Session{BaseDir: "/tmp/bob"}
+	alice := &engine.AccountRuntime{BaseDir: "/tmp/alice"}
+	bob := &engine.AccountRuntime{BaseDir: "/tmp/bob"}
 
 	r := NewAccountRouter()
 	r.Register("alice", alice)
@@ -28,7 +28,7 @@ func TestAccountRouter_RouteRegistered(t *testing.T) {
 // TestAccountRouter_NoFallback enforces C1: empty or unknown AccountID must
 // drop — never fall through to a default account (cross-account leak risk).
 func TestAccountRouter_NoFallback(t *testing.T) {
-	alice := &engine.Session{BaseDir: "/tmp/alice"}
+	alice := &engine.AccountRuntime{BaseDir: "/tmp/alice"}
 	r := NewAccountRouter()
 	r.Register("alice", alice)
 	r.Register("default", alice) // default exists, but unknown must still drop
@@ -54,10 +54,10 @@ func TestAccountRouter_NoFallback(t *testing.T) {
 	}
 }
 
-func TestAccountRouter_RemoveAndSessions(t *testing.T) {
+func TestAccountRouter_RemoveAndAccountIDs(t *testing.T) {
 	r := NewAccountRouter()
-	r.Register("alice", &engine.Session{})
-	r.Register("bob", &engine.Session{})
+	r.Register("alice", &engine.AccountRuntime{})
+	r.Register("bob", &engine.AccountRuntime{})
 
 	if got := r.Route(core.Event{AccountID: "alice"}); got == nil {
 		t.Error("alice should be routable")
@@ -74,9 +74,9 @@ func TestAccountRouter_RemoveAndSessions(t *testing.T) {
 		t.Error("alice should be gone after Remove")
 	}
 
-	ids := r.Sessions()
+	ids := r.AccountIDs()
 	if len(ids) != 1 || ids[0] != "bob" {
-		t.Errorf("Sessions() = %v, want [bob]", ids)
+		t.Errorf("AccountIDs() = %v, want [bob]", ids)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestAccountRouter_MismatchCounters(t *testing.T) {
 
 func TestAccountRouter_ConcurrentAccess(t *testing.T) {
 	r := NewAccountRouter()
-	sess := &engine.Session{}
+	sess := &engine.AccountRuntime{}
 	r.Register("alice", sess)
 
 	done := make(chan struct{})

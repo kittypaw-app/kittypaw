@@ -49,10 +49,10 @@ type Intent struct {
 }
 
 // Branch handles one intent kind end-to-end. Implementations must be
-// safe to call from any account Session without sharing state across
-// accounts — branch-local state lives on PipelineState (per-Session).
+// safe to call from any AccountRuntime without sharing state across
+// accounts — branch-local state lives on PipelineState (per-runtime).
 type Branch interface {
-	Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error)
+	Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error)
 }
 
 // classifyIntent runs the rule-first classifier. Phase 1-3 cover
@@ -65,7 +65,7 @@ type Branch interface {
 // the legacy LLM path just made an offer) AND (b) the reply looks like
 // consent. This keeps a bare "네" off the consent branch when there's
 // no offer to consent to.
-func classifyIntent(text string, state *PipelineState, sess *Session, conversationID ...string) Intent {
+func classifyIntent(text string, state *PipelineState, sess *AccountRuntime, conversationID ...string) Intent {
 	t := strings.TrimSpace(text)
 	if t == "" {
 		return Intent{Kind: IntentLegacyFallback}
@@ -230,7 +230,7 @@ func classifyIntent(text string, state *PipelineState, sess *Session, conversati
 // is the common case; multi-skill ambiguity ("주식" matches both
 // "주식 알림" and "주가 조회") falls through to legacy LLM since picking
 // without context is the wrong call.
-func matchInstalledSkill(text string, sess *Session) *core.SkillPackage {
+func matchInstalledSkill(text string, sess *AccountRuntime) *core.SkillPackage {
 	// 1-char query is too noisy for substring matching against installed
 	// package metadata — let the legacy LLM clarify it instead.
 	if runeCount(text) < 2 {
@@ -289,7 +289,7 @@ func matchInstalledSkill(text string, sess *Session) *core.SkillPackage {
 	return &best.pkg
 }
 
-func installedPackageByID(id string, sess *Session) *core.SkillPackage {
+func installedPackageByID(id string, sess *AccountRuntime) *core.SkillPackage {
 	if sess == nil || sess.PackageManager == nil {
 		return nil
 	}
@@ -728,7 +728,7 @@ func runeCount(s string) int {
 //
 // Returning a bool instead of a sentinel error keeps the legacy path
 // untouched — callers can wire this in with a single if-statement.
-func dispatchPipeline(ctx context.Context, sess *Session, event core.Event, eventText string) (string, bool) {
+func dispatchPipeline(ctx context.Context, sess *AccountRuntime, event core.Event, eventText string) (string, bool) {
 	intent := classifyIntent(eventText, sess.Pipeline, sess, conversationKeyForEvent(sess, &event))
 	branch := getBranch(intent.Kind)
 	if branch == nil {
@@ -785,13 +785,13 @@ func getBranch(kind IntentKind) Branch {
 // the prior tool or re-emits the prior result.
 type ChitchatBranch struct{}
 
-func (b *ChitchatBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *ChitchatBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	return "알겠습니다.", nil
 }
 
 type StaffCreateRequestBranch struct{}
 
-func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
@@ -817,7 +817,7 @@ func (b *StaffCreateRequestBranch) Execute(ctx context.Context, sess *Session, e
 
 type StaffCreateOptInBranch struct{}
 
-func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
@@ -855,7 +855,7 @@ func (b *StaffCreateOptInBranch) Execute(ctx context.Context, sess *Session, eve
 
 type StaffDraftApproveBranch struct{}
 
-func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Store == nil {
 		return "staff 생성을 위한 저장소가 준비되지 않았어요.", nil
 	}
@@ -879,7 +879,7 @@ func (b *StaffDraftApproveBranch) Execute(ctx context.Context, sess *Session, ev
 
 type StaffDraftCancelBranch struct{}
 
-func (b *StaffDraftCancelBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *StaffDraftCancelBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Store == nil {
 		return "staff 초안을 위한 저장소가 준비되지 않았어요.", nil
 	}
@@ -892,7 +892,7 @@ func (b *StaffDraftCancelBranch) Execute(ctx context.Context, sess *Session, eve
 
 type StaffPostCreateSwitchBranch struct{}
 
-func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Store == nil {
 		return "staff 전환을 위한 저장소가 준비되지 않았어요.", nil
 	}
@@ -921,7 +921,7 @@ func (b *StaffPostCreateSwitchBranch) Execute(ctx context.Context, sess *Session
 // guess-and-suggest from one search keyword.
 type BrowseBranch struct{}
 
-func (b *BrowseBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *BrowseBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	rc, err := newRegistryClient(sess.Config)
 	if err != nil {
 		return "지금 스킬 레지스트리에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.", nil
@@ -999,7 +999,7 @@ func categorize(name, desc string) string {
 
 type ExchangeRateLookupBranch struct{}
 
-func (b *ExchangeRateLookupBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *ExchangeRateLookupBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Pipeline == nil {
 		return "", errBranchFallback
 	}
@@ -1031,7 +1031,7 @@ func (b *ExchangeRateLookupBranch) Execute(ctx context.Context, sess *Session, e
 
 type WeatherNowLookupBranch struct{}
 
-func (b *WeatherNowLookupBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *WeatherNowLookupBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Pipeline == nil {
 		return "", errBranchFallback
 	}
@@ -1067,7 +1067,7 @@ func (b *WeatherNowLookupBranch) Execute(ctx context.Context, sess *Session, eve
 	return "날씨 조회 스킬을 설치하면 방금 말한 위치의 현재 날씨와 비 여부를 바로 확인할 수 있어요. 설치해서 지금 실행할까요?", nil
 }
 
-func weatherNowParamsForIntentOrText(ctx context.Context, sess *Session, intent Intent, userText string) (map[string]any, string) {
+func weatherNowParamsForIntentOrText(ctx context.Context, sess *AccountRuntime, intent Intent, userText string) (map[string]any, string) {
 	if intent.Params != nil {
 		locationQuery, _ := intent.Params["location_query"].(string)
 		locationQuery = normalizeLocationSlot(locationQuery)
@@ -1082,7 +1082,7 @@ func weatherNowParamsForIntentOrText(ctx context.Context, sess *Session, intent 
 	return weatherNowParamsForText(ctx, sess, userText)
 }
 
-func weatherNowParamsForText(ctx context.Context, sess *Session, userText string) (map[string]any, string) {
+func weatherNowParamsForText(ctx context.Context, sess *AccountRuntime, userText string) (map[string]any, string) {
 	slots, err := extractWeatherNowSlots(ctx, sess, userText)
 	if err != nil {
 		return nil, "날씨를 확인하기 전에 말씀하신 위치를 정리하지 못했어요. 위치를 한 번만 더 구체적으로 말씀해 주세요."
@@ -1097,7 +1097,7 @@ func weatherNowParamsForText(ctx context.Context, sess *Session, userText string
 	return weatherLocationParams(loc), ""
 }
 
-func exchangeRateSearchResults(ctx context.Context, sess *Session) []WebSearchResult {
+func exchangeRateSearchResults(ctx context.Context, sess *AccountRuntime) []WebSearchResult {
 	if sess == nil || sess.Config == nil {
 		return nil
 	}
@@ -1420,7 +1420,7 @@ func cleanSearchSourceLabel(result WebSearchResult) string {
 
 type ConfirmClarificationBranch struct{}
 
-func (b *ConfirmClarificationBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *ConfirmClarificationBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Pipeline == nil {
 		return "", errBranchFallback
 	}
@@ -1503,7 +1503,7 @@ func (b *ConfirmClarificationBranch) Execute(ctx context.Context, sess *Session,
 	}
 }
 
-func weatherNowParamsForLocationClarification(ctx context.Context, sess *Session, replyText, pendingQuery string) (map[string]any, string) {
+func weatherNowParamsForLocationClarification(ctx context.Context, sess *AccountRuntime, replyText, pendingQuery string) (map[string]any, string) {
 	queries := make([]string, 0, 2)
 	replyText = strings.TrimSpace(replyText)
 	pendingQuery = strings.TrimSpace(pendingQuery)
@@ -1600,7 +1600,7 @@ func isStaffDraftCancel(text string) bool {
 // runs without asking again.
 type InstallConsentBranch struct{}
 
-func (b *InstallConsentBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *InstallConsentBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Pipeline == nil {
 		return "", errBranchFallback
 	}
@@ -1684,7 +1684,7 @@ func formatSkillChoicePrompt(entries []core.RegistryEntry) string {
 
 type AmbiguousFollowupBranch struct{}
 
-func (b *AmbiguousFollowupBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *AmbiguousFollowupBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	if sess == nil || sess.Pipeline == nil || sess.Provider == nil {
 		return "", errBranchFallback
 	}
@@ -1741,7 +1741,7 @@ type ambiguousFollowupDecision struct {
 	LocationQuery string  `json:"location_query"`
 }
 
-func classifyAmbiguousFollowup(ctx context.Context, sess *Session, userText, skillID, rawOutput string) (ambiguousFollowupDecision, error) {
+func classifyAmbiguousFollowup(ctx context.Context, sess *AccountRuntime, userText, skillID, rawOutput string) (ambiguousFollowupDecision, error) {
 	var decision ambiguousFollowupDecision
 	prompt := buildAmbiguousFollowupPrompt(userText, skillID, rawOutput)
 	resp, err := sess.Provider.Generate(WithLLMCallKind(ctx, "pipeline.followup"), buildSubLLMMessages(prompt))
@@ -1808,7 +1808,7 @@ func buildAmbiguousFollowupPrompt(userText, skillID, rawOutput string) string {
 // Phase 11 of the level3 plan.
 type ModifierFollowupBranch struct{}
 
-func (b *ModifierFollowupBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *ModifierFollowupBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	rawOutput, _ := intent.Params["raw_output"].(string)
 	if rawOutput == "" {
 		// Cache emptied between classify and execute — fall back so the
@@ -1880,7 +1880,7 @@ func (errBranchFallbackType) Error() string { return "branch fallback to legacy"
 // removes that drift.
 type RunInstalledSkillBranch struct{}
 
-func (b *RunInstalledSkillBranch) Execute(ctx context.Context, sess *Session, event core.Event, intent Intent) (string, error) {
+func (b *RunInstalledSkillBranch) Execute(ctx context.Context, sess *AccountRuntime, event core.Event, intent Intent) (string, error) {
 	skillID, _ := intent.Params["skill_id"].(string)
 	if skillID == "" {
 		return "", errBranchFallback
@@ -1927,7 +1927,7 @@ const mediateSkillRawOutputCap = 8000
 // be case-by-case (env feedback_no_hardcoding.md). LLM mediation
 // generalizes the fix to every installed skill at a measured 1-call
 // cost. Cache deferred (query-dependent key gives low hit rate).
-func mediateSkillOutput(ctx context.Context, sess *Session, skillID, userText, rawOutput string) string {
+func mediateSkillOutput(ctx context.Context, sess *AccountRuntime, skillID, userText, rawOutput string) string {
 	if sess == nil || sess.Provider == nil || rawOutput == "" || userText == "" {
 		return rawOutput
 	}
@@ -1999,7 +1999,7 @@ var codeExecToolDef = llm.Tool{
 // On any failure path (nil provider, error, empty response,
 // fabrication-guard miss, max iterations) the function returns the
 // raw output unchanged — the user never loses the underlying data.
-func mediateSkillOutputWithTools(ctx context.Context, sess *Session, skillID, userText, rawOutput string) string {
+func mediateSkillOutputWithTools(ctx context.Context, sess *AccountRuntime, skillID, userText, rawOutput string) string {
 	if sess == nil || sess.Provider == nil || rawOutput == "" || userText == "" {
 		return rawOutput
 	}

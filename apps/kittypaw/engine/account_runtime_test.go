@@ -32,7 +32,7 @@ func TestRefreshAllowedPathsUsesProjectRoots(t *testing.T) {
 	if _, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: root}); err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	sess := &Session{Store: st}
+	sess := &AccountRuntime{Store: st}
 
 	if err := sess.RefreshAllowedPaths(); err != nil {
 		t.Fatalf("RefreshAllowedPaths: %v", err)
@@ -58,7 +58,7 @@ func TestResolveWorkspaceIDFindsProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	sess := &Session{Store: st}
+	sess := &AccountRuntime{Store: st}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
@@ -215,7 +215,7 @@ func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "finance", "", "재무담당 스태프")
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg, BaseDir: baseDir}
+	sess := &AccountRuntime{Store: st, Config: &cfg, BaseDir: baseDir}
 	ctx := ContextWithConversationID(context.Background(), "conv-1")
 
 	out, err := executeStaff(ctx, core.SkillCall{
@@ -248,7 +248,7 @@ func TestStaffSwitch_ExecuteStaffSetsContext(t *testing.T) {
 func TestStaffSwitch_MissingStaffDoesNotSetContext(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:   st,
 		Config:  &cfg,
 		BaseDir: t.TempDir(),
@@ -281,7 +281,7 @@ func TestStaffUpdateChangesDescription(t *testing.T) {
 	baseDir := t.TempDir()
 	seedActiveStaffFile(t, baseDir, "finance", "", "old desc", "budget")
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg, BaseDir: baseDir}
+	sess := &AccountRuntime{Store: st, Config: &cfg, BaseDir: baseDir}
 
 	out, err := executeStaff(context.Background(), core.SkillCall{
 		Method: "update",
@@ -319,7 +319,7 @@ func TestStaffUpdateChangesDescription(t *testing.T) {
 
 func TestResolveProvider_EmptyReturnsDefault(t *testing.T) {
 	mock := &mockProvider{}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider: mock,
 		Config:   &core.Config{LLM: core.LLMConfig{Provider: "anthropic", Model: "default"}},
 	}
@@ -335,7 +335,7 @@ func TestResolveProvider_NamedModel(t *testing.T) {
 	cfg.Models = []core.ModelConfig{
 		{Name: "fast", Provider: "anthropic", APIKey: "test-key", Model: "claude-3-haiku", MaxTokens: 2048},
 	}
-	sess := &Session{Provider: mock, Config: &cfg}
+	sess := &AccountRuntime{Provider: mock, Config: &cfg}
 	got := sess.resolveProvider("fast")
 	if got == mock {
 		t.Error("named model should create a new provider")
@@ -349,7 +349,7 @@ func TestResolveProvider_UnknownModelFallsBack(t *testing.T) {
 	mock := &mockProvider{}
 	cfg := core.DefaultConfig()
 	cfg.LLM = core.LLMConfig{Provider: "anthropic", APIKey: "test-key", Model: "default-model", MaxTokens: 1024}
-	sess := &Session{Provider: mock, Config: &cfg}
+	sess := &AccountRuntime{Provider: mock, Config: &cfg}
 	// Raw model IDs not in config should fall back to default (security: no API key leakage).
 	if got := sess.resolveProvider("claude-3-opus-20240229"); got != mock {
 		t.Error("unknown model should fall back to session default provider")
@@ -360,7 +360,7 @@ func TestResolveProvider_InvalidProviderFallsBack(t *testing.T) {
 	mock := &mockProvider{}
 	cfg := core.DefaultConfig()
 	cfg.LLM = core.LLMConfig{Provider: "nonexistent", Model: "x"}
-	sess := &Session{Provider: mock, Config: &cfg}
+	sess := &AccountRuntime{Provider: mock, Config: &cfg}
 	if got := sess.resolveProvider("any-model"); got != mock {
 		t.Error("invalid provider should fall back to session default")
 	}
@@ -397,7 +397,7 @@ func TestRunAtMentionRoutesPromptAndStoresStrippedConversationTurn(t *testing.T)
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `return "finance ok";`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -443,7 +443,7 @@ func TestRunAtMentionResolvesAlias(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `return "alias ok";`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -496,7 +496,7 @@ func TestRunRecordsChosenStaffOnAssistantTurn(t *testing.T) {
 
 	cfg := core.DefaultConfig()
 	provider := &promptCaptureProvider{response: `return "staff audit";`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -533,7 +533,7 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.User.Timezone = "Asia/Seoul"
 	provider := &promptCaptureProvider{response: `return "audit ok";`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -590,7 +590,7 @@ func TestSlashStaffUseSetsCurrentConversationDefault(t *testing.T) {
 	base := t.TempDir()
 	seedActiveStaffFile(t, base, "dev-pm", "", "development pm")
 	cfg := core.DefaultConfig()
-	sess := &Session{Store: st, Config: &cfg, BaseDir: base}
+	sess := &AccountRuntime{Store: st, Config: &cfg, BaseDir: base}
 	ctx := ContextWithConversationID(context.Background(), "general:web_chat:test-session")
 
 	got := handleStaffCommand(ctx, []string{"use", "dev-pm"}, sess)
@@ -608,7 +608,7 @@ func TestSlashStaffUseSetsCurrentConversationDefault(t *testing.T) {
 
 func TestResolveSkillCallRejectsDisallowedStaffSkill(t *testing.T) {
 	cfg := core.DefaultConfig()
-	sess := &Session{Config: &cfg, Store: openTestStore(t), BaseDir: t.TempDir()}
+	sess := &AccountRuntime{Config: &cfg, Store: openTestStore(t), BaseDir: t.TempDir()}
 	ctx := ContextWithStaffPolicy(context.Background(), "reader", []string{"Memory"})
 
 	out, err := resolveSkillCall(ctx, core.SkillCall{SkillName: "File", Method: "read"}, sess, nil)
@@ -652,7 +652,7 @@ func TestRunStoresToolTraceOnAssistantTurn(t *testing.T) {
 		const env = Env.get("KITTYPAW_TRACE_TEST");
 		return env.value;
 	`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -718,7 +718,7 @@ func TestRunPropagatesPermissionCallbackIntoSkillRunFileWrite(t *testing.T) {
 		const result = Skill.run("writer");
 		return result.output;
 	`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -771,7 +771,7 @@ func TestRunAccumulatesToolTracesAcrossRetry(t *testing.T) {
 			return second.value;
 		`, Usage: &llm.TokenUsage{Model: "mock"}},
 	}}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -813,7 +813,7 @@ func TestRunCanCreateStaffFromConversationRequest(t *testing.T) {
 const created = Staff.create("finance", "재무담당 스태프");
 return created.output || created.error || "missing draft output";
 `}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Sandbox:   sandbox.New(cfg.Sandbox),
 		Store:     st,
@@ -842,7 +842,7 @@ func TestStaffNaturalLanguageCreateFlow(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
 	baseDir := t.TempDir()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		BaseDir:   baseDir,
@@ -934,7 +934,7 @@ func TestStaffNaturalLanguageContextualRequestUsesLLMConversationForDraft(t *tes
 		"aliases": ["pm", "피엠"],
 		"soul": "You are PM, a KittyPaw staff member.\n\n## Role\n요구사항 정리, 우선순위 조율, 진행상황 추적, 블로커 관리\n\n## Working Style\n- Keep plans practical.\n- Respond in Korean."
 	}`}
-	sess := &Session{
+	sess := &AccountRuntime{
 		Provider:  provider,
 		Store:     st,
 		Config:    &cfg,
@@ -980,7 +980,7 @@ func TestStaffNaturalLanguageContextualRequestUsesLLMConversationForDraft(t *tes
 func TestStaffNaturalLanguageAcceptsCasualOptInAndSwitchConfirmation(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		BaseDir:   t.TempDir(),
@@ -1031,7 +1031,7 @@ func TestStaffNaturalLanguageAcceptsCasualOptInAndSwitchConfirmation(t *testing.
 func TestStaffNaturalLanguageDoesNotOverwritePendingDraft(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Store:     st,
 		Config:    &cfg,
 		BaseDir:   t.TempDir(),
@@ -1189,17 +1189,17 @@ func TestAugmentSystemPromptWithSuggestion_MalformedValueSkipped(t *testing.T) {
 // appendSuggestionForBranchResponse
 // ---------------------------------------------------------------------------
 
-func newSuggestionBranchTestSession(t *testing.T) *Session {
+func newSuggestionBranchTestSession(t *testing.T) *AccountRuntime {
 	t.Helper()
 	st := openTestStore(t)
-	return &Session{Store: st}
+	return &AccountRuntime{Store: st}
 }
 
 func newWebChatEvent(sessionID string) core.Event {
 	payload, _ := json.Marshal(core.ChatPayload{
-		ChatID:    sessionID,
-		SessionID: sessionID,
-		Text:      "환율",
+		ChatID:          sessionID,
+		SourceSessionID: sessionID,
+		Text:            "환율",
 	})
 	return core.Event{Type: core.EventWebChat, Payload: payload}
 }
@@ -1283,7 +1283,7 @@ func TestAppendSuggestionForBranchResponse_SilenceWindowSuppresses(t *testing.T)
 
 // --- ApplyActiveModel: chat-path /model swap fold-in ---
 //
-// Contract (engine/session.go ApplyActiveModel doc):
+// Contract (engine/account_runtime.go ApplyActiveModel doc):
 //   - active=="" → returns opts unchanged
 //   - opts==nil + active=="x" → returns &RunOptions{ModelOverride:"x"}
 //   - opts.ModelOverride=="" + active=="x" → returns copy with override="x"
@@ -1294,7 +1294,7 @@ func TestAppendSuggestionForBranchResponse_SilenceWindowSuppresses(t *testing.T)
 // in engine/schedule.go (TestSchedule_DoesNotCallApplyActiveModel pins this).
 
 func TestApplyActiveModel_NilOpts_NoActive(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 	got := s.ApplyActiveModel(nil)
 	if got != nil {
 		t.Errorf("got %+v, want nil", got)
@@ -1302,7 +1302,7 @@ func TestApplyActiveModel_NilOpts_NoActive(t *testing.T) {
 }
 
 func TestApplyActiveModel_NilOpts_WithActive(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 	s.SetActiveModel("groq-qwen")
 	got := s.ApplyActiveModel(nil)
 	if got == nil || got.ModelOverride != "groq-qwen" {
@@ -1311,7 +1311,7 @@ func TestApplyActiveModel_NilOpts_WithActive(t *testing.T) {
 }
 
 func TestApplyActiveModel_OptsBlank_WithActive(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 	s.SetActiveModel("groq-qwen")
 	in := &RunOptions{}
 	got := s.ApplyActiveModel(in)
@@ -1328,7 +1328,7 @@ func TestApplyActiveModel_OptsExplicit_WinsOverActive(t *testing.T) {
 	// Explicit per-call ModelOverride (e.g. chat_relay_dispatcher's
 	// body.ModelOverride or schedule.go's per-job model) must win over
 	// the chat-set /model override.
-	s := &Session{}
+	s := &AccountRuntime{}
 	s.SetActiveModel("groq-qwen")
 	in := &RunOptions{ModelOverride: "main"}
 	got := s.ApplyActiveModel(in)
@@ -1338,7 +1338,7 @@ func TestApplyActiveModel_OptsExplicit_WinsOverActive(t *testing.T) {
 }
 
 func TestApplyActiveModel_NoActive_ReturnsOptsUnchanged(t *testing.T) {
-	s := &Session{}
+	s := &AccountRuntime{}
 	in := &RunOptions{ModelOverride: "main"}
 	got := s.ApplyActiveModel(in)
 	if got != in {

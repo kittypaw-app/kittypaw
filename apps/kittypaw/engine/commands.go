@@ -11,14 +11,15 @@ import (
 )
 
 type slashCommand struct {
-	Name    string
-	Usage   string
-	Summary string
-	Aliases []string
-	Risk    string
-	History bool
-	Details []string
-	Handler slashCommandHandler
+	Name          string
+	Usage         string
+	Summary       string
+	Aliases       []string
+	HiddenAliases []string
+	Risk          string
+	History       bool
+	Details       []string
+	Handler       slashCommandHandler
 }
 
 type slashCommandResult struct {
@@ -26,7 +27,7 @@ type slashCommandResult struct {
 	RecordHistory bool
 }
 
-type slashCommandHandler func(context.Context, []string, *Session) slashCommandResult
+type slashCommandHandler func(context.Context, []string, *AccountRuntime) slashCommandResult
 
 var slashCommandRegistry = []slashCommand{
 	{
@@ -41,7 +42,7 @@ var slashCommandRegistry = []slashCommand{
 		Usage:   "/status",
 		Summary: "오늘 실행 통계 확인",
 		Risk:    "read",
-		Handler: func(_ context.Context, _ []string, s *Session) slashCommandResult {
+		Handler: func(_ context.Context, _ []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleStatus(s))
 		},
 	},
@@ -50,7 +51,7 @@ var slashCommandRegistry = []slashCommand{
 		Usage:   "/skills",
 		Summary: "스킬 목록 표시",
 		Risk:    "read",
-		Handler: func(_ context.Context, _ []string, s *Session) slashCommandResult {
+		Handler: func(_ context.Context, _ []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleSkills(s))
 		},
 	},
@@ -60,7 +61,7 @@ var slashCommandRegistry = []slashCommand{
 		Summary: "스킬 또는 패키지 실행",
 		Risk:    "execute",
 		History: true,
-		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			if len(args) == 0 {
 				return slashCommandText("사용법: /run <skill-name>")
 			}
@@ -73,7 +74,7 @@ var slashCommandRegistry = []slashCommand{
 		Summary: "새 스킬 생성",
 		Risk:    "write",
 		History: true,
-		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			if len(args) == 0 {
 				return slashCommandText("사용법: /teach <설명>")
 			}
@@ -96,28 +97,29 @@ var slashCommandRegistry = []slashCommand{
 			"/staff hire <역할>",
 			"/staff cancel",
 		},
-		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandResult{Text: handleStaffCommand(ctx, args, s), RecordHistory: staffCommandRecordsHistory(args)}
 		},
 	},
 	{
 		Name:    "/model",
 		Usage:   "/model [id]",
-		Summary: "현재 LLM 정보 표시 또는 이번 채팅 모델 변경",
-		Risk:    "session",
+		Summary: "현재 LLM 정보 표시 또는 런타임 모델 변경",
+		Risk:    "runtime",
 		History: true,
-		Handler: func(_ context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(_ context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			record := modelCommandRecordsHistory(args, s)
 			return slashCommandResult{Text: handleModel(args, s), RecordHistory: record}
 		},
 	},
 	{
-		Name:    "/session",
-		Usage:   "/session",
-		Summary: "현재 conversation/session 진단 정보",
-		Risk:    "read",
-		Handler: func(ctx context.Context, _ []string, s *Session) slashCommandResult {
-			return slashCommandText(handleSession(ctx, s))
+		Name:          "/conversation",
+		Usage:         "/conversation",
+		Summary:       "현재 대화 진단 정보",
+		HiddenAliases: []string{"/session"},
+		Risk:          "read",
+		Handler: func(ctx context.Context, _ []string, s *AccountRuntime) slashCommandResult {
+			return slashCommandText(handleConversation(ctx, s))
 		},
 	},
 	{
@@ -125,7 +127,7 @@ var slashCommandRegistry = []slashCommand{
 		Usage:   "/context",
 		Summary: "현재 prompt/context 크기 진단",
 		Risk:    "read",
-		Handler: func(ctx context.Context, _ []string, s *Session) slashCommandResult {
+		Handler: func(ctx context.Context, _ []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleContext(ctx, s))
 		},
 	},
@@ -134,7 +136,7 @@ var slashCommandRegistry = []slashCommand{
 		Usage:   "/projects",
 		Summary: "프로젝트 목록",
 		Risk:    "read",
-		Handler: func(_ context.Context, _ []string, s *Session) slashCommandResult {
+		Handler: func(_ context.Context, _ []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleProjectsCommand(s))
 		},
 	},
@@ -151,7 +153,7 @@ var slashCommandRegistry = []slashCommand{
 			"/project new",
 			"/project settings",
 		},
-		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandResult{Text: handleProjectCommand(ctx, args, s), RecordHistory: projectCommandRecordsHistory(args)}
 		},
 	},
@@ -160,7 +162,7 @@ var slashCommandRegistry = []slashCommand{
 		Usage:   "/tickets [project-key]",
 		Summary: "현재 또는 지정 project의 ticket 목록",
 		Risk:    "read",
-		Handler: func(ctx context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleTicketsCommand(ctx, args, s))
 		},
 	},
@@ -178,7 +180,7 @@ var slashCommandRegistry = []slashCommand{
 			"/ticket block <key> <reason>",
 			"/ticket done <key>",
 		},
-		Handler: func(_ context.Context, args []string, s *Session) slashCommandResult {
+		Handler: func(_ context.Context, args []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandResult{Text: handleTicketCommand(args, s), RecordHistory: ticketCommandRecordsHistory(args)}
 		},
 	},
@@ -196,12 +198,12 @@ func slashCommandText(text string) slashCommandResult {
 
 // tryHandleCommand checks if the event text is a slash command.
 // Returns (response, true) if handled, ("", false) otherwise.
-func tryHandleCommand(ctx context.Context, text string, s *Session) (string, bool) {
+func tryHandleCommand(ctx context.Context, text string, s *AccountRuntime) (string, bool) {
 	result, handled := tryHandleCommandResult(ctx, text, s)
 	return result.Text, handled
 }
 
-func tryHandleCommandResult(ctx context.Context, text string, s *Session) (slashCommandResult, bool) {
+func tryHandleCommandResult(ctx context.Context, text string, s *AccountRuntime) (slashCommandResult, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return slashCommandResult{}, false
@@ -250,6 +252,11 @@ func lookupSlashCommand(name string) (slashCommand, bool) {
 			return cmd, true
 		}
 		for _, alias := range cmd.Aliases {
+			if alias == name {
+				return cmd, true
+			}
+		}
+		for _, alias := range cmd.HiddenAliases {
 			if alias == name {
 				return cmd, true
 			}
@@ -335,7 +342,7 @@ func projectCommandRecordsHistory(args []string) bool {
 	return len(args) > 0 && strings.EqualFold(args[0], "use") && len(args) >= 2
 }
 
-func modelCommandRecordsHistory(args []string, s *Session) bool {
+func modelCommandRecordsHistory(args []string, s *AccountRuntime) bool {
 	if len(args) != 1 || s == nil || s.Config == nil {
 		return false
 	}
@@ -358,18 +365,29 @@ func ticketCommandRecordsHistory(args []string) bool {
 	}
 }
 
-func handleStatus(s *Session) string {
+func handleStatus(s *AccountRuntime) string {
 	stats, err := s.Store.TodayStats()
 	if err != nil {
 		return fmt.Sprintf("통계 조회 실패: %s", err)
 	}
+	runtimeLine := "runtime: unavailable"
+	if s.Admission != nil {
+		snapshot := s.Admission.Snapshot()
+		runtimeLine = fmt.Sprintf(
+			"runtime: running=%d queued=%d scope_running=%d scope_queued=%d",
+			snapshot.AccountRunning,
+			snapshot.AccountQueued,
+			snapshot.ScopeRunning,
+			snapshot.ScopeQueued,
+		)
+	}
 	return fmt.Sprintf(
-		"📊 오늘 실행 통계\n총 실행: %d\n성공: %d\n실패: %d\n토큰: %d",
-		stats.TotalRuns, stats.Successful, stats.Failed, stats.TotalTokens,
+		"📊 오늘 실행 통계\n총 실행: %d\n성공: %d\n실패: %d\n토큰: %d\n%s",
+		stats.TotalRuns, stats.Successful, stats.Failed, stats.TotalTokens, runtimeLine,
 	)
 }
 
-func handleSkills(s *Session) string {
+func handleSkills(s *AccountRuntime) string {
 	skills, err := core.LoadAllSkillsFrom(s.BaseDir)
 	if err != nil {
 		return fmt.Sprintf("스킬 목록 조회 실패: %s", err)
@@ -389,7 +407,7 @@ func handleSkills(s *Session) string {
 	return sb.String()
 }
 
-func handleSession(ctx context.Context, s *Session) string {
+func handleConversation(ctx context.Context, s *AccountRuntime) string {
 	conversationID := commandConversationID(ctx, s)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "conversation: %s\n", conversationID)
@@ -407,8 +425,8 @@ func handleSession(ctx context.Context, s *Session) string {
 			if payload.ChatID != "" {
 				fmt.Fprintf(&sb, "chat_id: %s\n", payload.ChatID)
 			}
-			if payload.SessionID != "" {
-				fmt.Fprintf(&sb, "session_id: %s\n", payload.SessionID)
+			if payload.SourceSessionID != "" {
+				fmt.Fprintf(&sb, "source_session_id: %s\n", payload.SourceSessionID)
 			}
 		}
 	}
@@ -425,6 +443,15 @@ func handleSession(ctx context.Context, s *Session) string {
 	if conversation, ok, err := s.Store.Conversation(conversationID); err == nil && ok {
 		if conversation.ParentConversationID != "" {
 			fmt.Fprintf(&sb, "parent_conversation: %s\n", conversation.ParentConversationID)
+		}
+		if conversation.SourceChannel != "" {
+			fmt.Fprintf(&sb, "source_channel: %s\n", conversation.SourceChannel)
+		}
+		if conversation.ChatID != "" {
+			fmt.Fprintf(&sb, "route_chat_id: %s\n", conversation.ChatID)
+		}
+		if conversation.SourceSessionID != "" {
+			fmt.Fprintf(&sb, "route_source_session_id: %s\n", conversation.SourceSessionID)
 		}
 		if conversation.RolloverReason != "" {
 			fmt.Fprintf(&sb, "rollover_reason: %s\n", conversation.RolloverReason)
@@ -463,7 +490,7 @@ func handleSession(ctx context.Context, s *Session) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func handleContext(ctx context.Context, s *Session) string {
+func handleContext(ctx context.Context, s *AccountRuntime) string {
 	conversationID := commandConversationID(ctx, s)
 	compaction := DefaultCompaction()
 	if s != nil && s.Config != nil {
@@ -507,7 +534,7 @@ func handleContext(ctx context.Context, s *Session) string {
 	return sb.String()
 }
 
-func currentModelLimits(s *Session) (int, int) {
+func currentModelLimits(s *AccountRuntime) (int, int) {
 	contextWindow := 0
 	maxTokens := 0
 	if s != nil && s.Config != nil {
@@ -529,7 +556,7 @@ func currentModelLimits(s *Session) (int, int) {
 	return contextWindow, maxTokens
 }
 
-func handleRun(ctx context.Context, name string, s *Session) string {
+func handleRun(ctx context.Context, name string, s *AccountRuntime) string {
 	if s == nil || s.Sandbox == nil {
 		return "스킬 실행을 위한 세션이 준비되지 않았습니다."
 	}
@@ -553,7 +580,7 @@ func handleRun(ctx context.Context, name string, s *Session) string {
 	return result.Output
 }
 
-func handleTeach(ctx context.Context, description string, s *Session) string {
+func handleTeach(ctx context.Context, description string, s *AccountRuntime) string {
 	result, err := HandleTeach(ctx, description, "chat", s)
 	if err != nil {
 		return fmt.Sprintf("스킬 학습 실패: %s", err)
@@ -585,7 +612,7 @@ func handleTeach(ctx context.Context, description string, s *Session) string {
 	return sb.String()
 }
 
-func handleProjectsCommand(s *Session) string {
+func handleProjectsCommand(s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "project 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -606,7 +633,7 @@ func handleProjectsCommand(s *Session) string {
 
 const currentProjectContextPrefix = "current_project:"
 
-func handleProjectCommand(ctx context.Context, args []string, s *Session) string {
+func handleProjectCommand(ctx context.Context, args []string, s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "project 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -653,7 +680,7 @@ func handleProjectCommand(ctx context.Context, args []string, s *Session) string
 	}
 }
 
-func handleTicketsCommand(ctx context.Context, args []string, s *Session) string {
+func handleTicketsCommand(ctx context.Context, args []string, s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "ticket 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -684,7 +711,7 @@ func handleTicketsCommand(ctx context.Context, args []string, s *Session) string
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func handleTicketCommand(args []string, s *Session) string {
+func handleTicketCommand(args []string, s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "ticket 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -767,7 +794,7 @@ func handleTicketCommand(args []string, s *Session) string {
 	}
 }
 
-func firstProject(s *Session) (*store.Project, bool, error) {
+func firstProject(s *AccountRuntime) (*store.Project, bool, error) {
 	projects, err := s.Store.ListProjects(false)
 	if err != nil {
 		return nil, false, err
@@ -778,7 +805,7 @@ func firstProject(s *Session) (*store.Project, bool, error) {
 	return &projects[0], true, nil
 }
 
-func currentProject(ctx context.Context, s *Session) (*store.Project, bool, error) {
+func currentProject(ctx context.Context, s *AccountRuntime) (*store.Project, bool, error) {
 	if s == nil || s.Store == nil {
 		return nil, false, nil
 	}
@@ -799,18 +826,18 @@ func currentProject(ctx context.Context, s *Session) (*store.Project, bool, erro
 	return firstProject(s)
 }
 
-func saveCurrentProject(ctx context.Context, s *Session, project *store.Project) error {
+func saveCurrentProject(ctx context.Context, s *AccountRuntime, project *store.Project) error {
 	if s == nil || s.Store == nil || project == nil {
 		return nil
 	}
 	return s.Store.SetUserContext(currentProjectContextKey(ctx, s), project.ID, "slash_command")
 }
 
-func currentProjectContextKey(ctx context.Context, s *Session) string {
+func currentProjectContextKey(ctx context.Context, s *AccountRuntime) string {
 	return currentProjectContextPrefix + commandConversationID(ctx, s)
 }
 
-func commandConversationID(ctx context.Context, s *Session) string {
+func commandConversationID(ctx context.Context, s *AccountRuntime) string {
 	if id := strings.TrimSpace(ConversationIDFromContext(ctx)); id != "" {
 		return id
 	}
@@ -840,12 +867,12 @@ func formatTicketSummary(ticket *store.Ticket) string {
 //   - 1 arg, unknown id           → "Unknown model: <id>. Available: ..." (no Set)
 //   - >=2 args    → usage
 //
-// Switch state lives in Session.activeModelOverride (atomic.Pointer) and
+// Switch state lives in AccountRuntime.activeModelOverride (atomic.Pointer) and
 // resets on daemon restart — no config.toml mutation. ID match is
 // case-sensitive (config IDs are user-authored exact strings; coercion
 // would mask typos rather than help). Special characters are not
 // validated — IDs come from config which is the trust boundary.
-func handleModel(args []string, s *Session) string {
+func handleModel(args []string, s *AccountRuntime) string {
 	if s == nil || s.Config == nil {
 		return "model 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -878,7 +905,7 @@ func handleModel(args []string, s *Session) string {
 
 // currentModelID returns the active model ID — chat-set override > config
 // default > first registered. Empty string when no models are registered.
-func currentModelID(s *Session) string {
+func currentModelID(s *AccountRuntime) string {
 	if id := s.GetActiveModel(); id != "" {
 		return id
 	}
@@ -917,7 +944,7 @@ func modelUsage() string {
 // provider, model, base_url, context_window, max_tokens. Temperature and
 // thinking flag are deliberately omitted — they are not config fields, and
 // inferring them from model-name heuristics would lie about state.
-func formatModelInfo(current string, models []core.ModelConfig, s *Session) string {
+func formatModelInfo(current string, models []core.ModelConfig, s *AccountRuntime) string {
 	var sb strings.Builder
 	if current == "" {
 		sb.WriteString("현재 모델: (없음 — 등록된 모델이 없습니다)\n")
@@ -967,7 +994,7 @@ func formatModelInfo(current string, models []core.ModelConfig, s *Session) stri
 	return sb.String()
 }
 
-func handleStaffCommand(ctx context.Context, args []string, s *Session) string {
+func handleStaffCommand(ctx context.Context, args []string, s *AccountRuntime) string {
 	if len(args) == 0 {
 		return handleStaffOverview(ctx, s)
 	}
@@ -1007,7 +1034,7 @@ func handleStaffCommand(ctx context.Context, args []string, s *Session) string {
 	}
 }
 
-func handleStaffOverview(ctx context.Context, s *Session) string {
+func handleStaffOverview(ctx context.Context, s *AccountRuntime) string {
 	var sb strings.Builder
 	sb.WriteString(handleStaffCurrent(ctx, s))
 	sb.WriteString("\n\n")
@@ -1016,7 +1043,7 @@ func handleStaffOverview(ctx context.Context, s *Session) string {
 	return sb.String()
 }
 
-func handleStaffCurrent(ctx context.Context, s *Session) string {
+func handleStaffCurrent(ctx context.Context, s *AccountRuntime) string {
 	if s == nil || s.Config == nil {
 		return "현재 staff 정보를 위한 세션이 준비되지 않았습니다."
 	}
@@ -1039,7 +1066,7 @@ func handleStaffCurrent(ctx context.Context, s *Session) string {
 	return fmt.Sprintf("current staff: %s (%s)", current, source)
 }
 
-func handleStaffList(s *Session) string {
+func handleStaffList(s *AccountRuntime) string {
 	if s == nil {
 		return "staff 목록을 위한 세션이 준비되지 않았습니다."
 	}
@@ -1071,7 +1098,7 @@ func handleStaffList(s *Session) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func handleStaffShow(idOrAlias string, s *Session) string {
+func handleStaffShow(idOrAlias string, s *AccountRuntime) string {
 	record, ok, err := resolveActiveStaffRecord(idOrAlias, s)
 	if err != nil {
 		return fmt.Sprintf("staff 조회 실패: %s", err)
@@ -1087,7 +1114,7 @@ func handleStaffShow(idOrAlias string, s *Session) string {
 		record.ID, displayName, record.Description, strings.Join(record.Aliases, ", "), yesNo(record.HasSoul))
 }
 
-func handleStaffUse(ctx context.Context, idOrAlias string, s *Session) string {
+func handleStaffUse(ctx context.Context, idOrAlias string, s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "staff 변경을 위한 저장소가 준비되지 않았습니다."
 	}
@@ -1099,7 +1126,7 @@ func handleStaffUse(ctx context.Context, idOrAlias string, s *Session) string {
 	return fmt.Sprintf("이 대화(%s)의 기본 staff를 %q로 변경했습니다.", conversationID, id)
 }
 
-func handleStaffRoutes(s *Session) string {
+func handleStaffRoutes(s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "staff route 조회를 위한 저장소가 준비되지 않았습니다."
 	}
@@ -1129,7 +1156,7 @@ func handleStaffRoutes(s *Session) string {
 			details = append(details, "chat="+conv.ChatID)
 		}
 		if conv.SourceSessionID != "" {
-			details = append(details, "session="+conv.SourceSessionID)
+			details = append(details, "source_session="+conv.SourceSessionID)
 		}
 		if len(details) > 0 {
 			sb.WriteString(" (")
@@ -1145,7 +1172,7 @@ func handleStaffRoutes(s *Session) string {
 	return out
 }
 
-func handleStaffRoute(conversationID, idOrAlias string, s *Session) string {
+func handleStaffRoute(conversationID, idOrAlias string, s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "staff route 변경을 위한 저장소가 준비되지 않았습니다."
 	}
@@ -1167,7 +1194,7 @@ func handleStaffRoute(conversationID, idOrAlias string, s *Session) string {
 	return fmt.Sprintf("대화(%s)의 기본 staff를 %q로 변경했습니다.", conversationID, id)
 }
 
-func handleStaffHire(role string, s *Session) string {
+func handleStaffHire(role string, s *AccountRuntime) string {
 	if s == nil {
 		return "staff 생성을 위한 세션이 준비되지 않았습니다."
 	}
@@ -1190,7 +1217,7 @@ func handleStaffHire(role string, s *Session) string {
 	return formatStaffDraftPreview(draft)
 }
 
-func handleStaffCancel(s *Session) string {
+func handleStaffCancel(s *AccountRuntime) string {
 	if s == nil || s.Store == nil {
 		return "staff 초안을 위한 저장소가 준비되지 않았습니다."
 	}
@@ -1206,7 +1233,7 @@ func handleStaffCancel(s *Session) string {
 	return "staff 초안을 취소했습니다."
 }
 
-func resolveActiveStaffRecord(idOrAlias string, s *Session) (core.StaffRecord, bool, error) {
+func resolveActiveStaffRecord(idOrAlias string, s *AccountRuntime) (core.StaffRecord, bool, error) {
 	if s == nil {
 		return core.StaffRecord{}, false, nil
 	}

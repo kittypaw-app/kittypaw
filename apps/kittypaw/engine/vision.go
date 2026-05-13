@@ -269,7 +269,7 @@ func sanitizeError(err error) error {
 
 // --- Skill Handlers ---
 
-func executeVision(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeVision(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "analyze":
 		if len(call.Args) == 0 {
@@ -300,7 +300,7 @@ func executeVision(ctx context.Context, call core.SkillCall, s *Session) (string
 	}
 }
 
-func executeVisionAnalyzeURL(ctx context.Context, imageURL, prompt string, s *Session) (string, error) {
+func executeVisionAnalyzeURL(ctx context.Context, imageURL, prompt string, s *AccountRuntime) (string, error) {
 	cfg := &core.Config{}
 	if s != nil && s.Config != nil {
 		cfg = s.Config
@@ -367,7 +367,7 @@ func currentImageAttachment(ctx context.Context, attachmentID string) (core.Chat
 	return core.ChatAttachment{}, fmt.Errorf("attachment %q not found", attachmentID)
 }
 
-func executeImage(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeImage(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "generate" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Image method: %s", call.Method)})
 	}

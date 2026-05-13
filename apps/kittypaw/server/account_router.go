@@ -9,16 +9,16 @@ import (
 	"github.com/jinto/kittypaw/engine"
 )
 
-// AccountRouter dispatches inbound events to account-scoped engine sessions.
+// AccountRouter dispatches inbound events to account-scoped engine runtimes.
 //
 // Lookup is strict by design: events with an empty AccountID or a AccountID
-// that does not match a registered session are dropped. There is NO default
+// that does not match a registered runtime are dropped. There is NO default
 // fallback — a silent fallback in a multi-account deployment would route
 // another user's messages into the default account's runner state (privacy
 // leak). See the account-routing privacy constraint.
 type AccountRouter struct {
 	mu        sync.RWMutex
-	sessions  map[string]*engine.Session
+	runtimes  map[string]*engine.AccountRuntime
 	dropCount atomic.Int64
 	// mismatchCount tracks per-account chat_id ownership violations (AC-T7).
 	// Keyed by the account ID the event claimed, not the real owner —
@@ -27,35 +27,35 @@ type AccountRouter struct {
 	mismatchCount sync.Map // map[string]*atomic.Int64
 }
 
-// NewAccountRouter returns an empty router. Callers must Register sessions
+// NewAccountRouter returns an empty router. Callers must Register runtimes
 // before events arrive; unregistered accounts route to nil (drop).
 func NewAccountRouter() *AccountRouter {
-	return &AccountRouter{sessions: make(map[string]*engine.Session)}
+	return &AccountRouter{runtimes: make(map[string]*engine.AccountRuntime)}
 }
 
-// Register adds or replaces the session for accountID.
-func (r *AccountRouter) Register(accountID string, sess *engine.Session) {
+// Register adds or replaces the runtime for accountID.
+func (r *AccountRouter) Register(accountID string, runtime *engine.AccountRuntime) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sessions[accountID] = sess
+	r.runtimes[accountID] = runtime
 }
 
-// Remove deletes the session for accountID. Returns true if one was present.
+// Remove deletes the runtime for accountID. Returns true if one was present.
 func (r *AccountRouter) Remove(accountID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.sessions[accountID]; !ok {
+	if _, ok := r.runtimes[accountID]; !ok {
 		return false
 	}
-	delete(r.sessions, accountID)
+	delete(r.runtimes, accountID)
 	return true
 }
 
-// Route returns the session matching event.AccountID, or nil if the event
+// Route returns the runtime matching event.AccountID, or nil if the event
 // should be dropped. Empty or unknown AccountID increments the drop counter
 // and logs an account_routing_drop event. Callers MUST check for nil and
 // stop processing rather than substitute a default.
-func (r *AccountRouter) Route(event core.Event) *engine.Session {
+func (r *AccountRouter) Route(event core.Event) *engine.AccountRuntime {
 	if event.AccountID == "" {
 		r.dropCount.Add(1)
 		slog.Warn("account_routing_drop",
@@ -65,7 +65,7 @@ func (r *AccountRouter) Route(event core.Event) *engine.Session {
 		return nil
 	}
 	r.mu.RLock()
-	sess, ok := r.sessions[event.AccountID]
+	runtime, ok := r.runtimes[event.AccountID]
 	r.mu.RUnlock()
 	if !ok {
 		r.dropCount.Add(1)
@@ -76,27 +76,27 @@ func (r *AccountRouter) Route(event core.Event) *engine.Session {
 		)
 		return nil
 	}
-	return sess
+	return runtime
 }
 
-// Sessions returns a snapshot of registered account IDs.
-func (r *AccountRouter) Sessions() []string {
+// AccountIDs returns a snapshot of registered account IDs.
+func (r *AccountRouter) AccountIDs() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	ids := make([]string, 0, len(r.sessions))
-	for id := range r.sessions {
+	ids := make([]string, 0, len(r.runtimes))
+	for id := range r.runtimes {
 		ids = append(ids, id)
 	}
 	return ids
 }
 
-// Session returns the session registered for accountID, or nil if none.
+// Runtime returns the account runtime registered for accountID, or nil if none.
 // Unlike Route, this does not count drops — use it for administrative
 // lookups (HTTP handlers, tests) rather than event dispatch.
-func (r *AccountRouter) Session(accountID string) *engine.Session {
+func (r *AccountRouter) Runtime(accountID string) *engine.AccountRuntime {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.sessions[accountID]
+	return r.runtimes[accountID]
 }
 
 // DropCount returns the cumulative number of events dropped because their
@@ -107,8 +107,8 @@ func (r *AccountRouter) DropCount() int64 {
 
 // RecordMismatch increments the per-account chat_id ownership violation
 // counter. Callers use this *after* a successful Route() when the routed
-// session's Config.AllowedChatIDs rejects the event's chat_id — the event
-// must be dropped and not fed to Session.Run (AC-T7).
+// runtime's Config.AllowedChatIDs rejects the event's chat_id — the event
+// must be dropped and not fed to AccountRuntime.Run (AC-T7).
 func (r *AccountRouter) RecordMismatch(accountID string) {
 	v, _ := r.mismatchCount.LoadOrStore(accountID, &atomic.Int64{})
 	v.(*atomic.Int64).Add(1)

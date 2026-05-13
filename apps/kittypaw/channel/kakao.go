@@ -174,10 +174,10 @@ func kakaoRelayEvent(accountID string, msg kakaoRelayMessage) (core.Event, bool)
 		return core.Event{}, false
 	}
 	payload := core.ChatPayload{
-		ChatID:      msg.ID,
-		Text:        msg.Text,
-		SessionID:   msg.UserID,
-		Attachments: msg.Attachments,
+		ChatID:          msg.ID,
+		Text:            msg.Text,
+		SourceSessionID: msg.UserID,
+		Attachments:     msg.Attachments,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

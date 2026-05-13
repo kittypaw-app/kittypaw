@@ -176,9 +176,9 @@ func (w *WebSocketChannel) readLoop(ctx context.Context, client *wsClient, event
 			}
 
 			payload := core.ChatPayload{
-				ChatID:    client.sessionID,
-				Text:      msg.Text,
-				SessionID: client.sessionID,
+				ChatID:          client.sessionID,
+				Text:            msg.Text,
+				SourceSessionID: client.sessionID,
 			}
 			raw, err := json.Marshal(payload)
 			if err != nil {

@@ -23,19 +23,19 @@ var (
 type FanoutPayload struct {
 	// Text is the message body to deliver to the target account. Required.
 	Text string `json:"text"`
-	// ChannelHint asks the target's Session to prefer a specific channel
-	// ("telegram", "kakao_talk"). Empty = the Session picks. Advisory:
+	// ChannelHint asks the target's AccountRuntime to prefer a specific channel
+	// ("telegram", "kakao_talk"). Empty = the runtime picks. Advisory:
 	// if the target has no matching channel, delivery falls back to
 	// whichever channel the target has available.
 	ChannelHint string `json:"channel_hint,omitempty"`
 }
 
-// Fanout is the cross-account push abstraction. Only a team-space Session gets
+// Fanout is the cross-account push abstraction. Only a team-space AccountRuntime gets
 // a non-nil implementation; personal accounts cannot reach other personal
 // accounts because the sandbox binding is gated on a non-nil field.
 type Fanout interface {
 	// Send delivers payload to one target account. Returns immediately
-	// after the event enqueues — the target Session runs asynchronously.
+	// after the event enqueues — the target runtime runs asynchronously.
 	Send(ctx context.Context, accountID string, p FanoutPayload) error
 	// Broadcast delivers payload to each configured team-space member.
 	// Delivery preserves config order after deduplicating member IDs.
@@ -44,8 +44,8 @@ type Fanout interface {
 
 // ChannelFanout is the default Fanout implementation. It emits
 // EventTeamSpacePush events onto the Server's eventCh, and AccountRouter
-// dispatches each one to the target Session. Decoupling the fanout
-// publisher from the Session map means a future scheduler-driven fanout
+// dispatches each one to the target AccountRuntime. Decoupling the fanout
+// publisher from the runtime map means a future scheduler-driven fanout
 // (cron → Fanout) reuses the exact same path.
 type ChannelFanout struct {
 	eventCh  chan<- Event

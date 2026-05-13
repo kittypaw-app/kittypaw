@@ -136,14 +136,14 @@ func (s *Server) handleSettingsLocaleGet(w http.ResponseWriter, r *http.Request)
 		writeError(w, status, err.Error())
 		return
 	}
-	if acct.Session == nil || acct.Session.Store == nil {
+	if acct.Runtime == nil || acct.Runtime.Store == nil {
 		writeError(w, http.StatusInternalServerError, "account store unavailable")
 		return
 	}
 
 	locale := defaultUILocale
 	saved := false
-	value, ok, err := acct.Session.Store.GetUserContext(userLocalePreferenceKey)
+	value, ok, err := acct.Runtime.Store.GetUserContext(userLocalePreferenceKey)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -174,11 +174,11 @@ func (s *Server) handleSettingsLocalePost(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid locale")
 		return
 	}
-	if acct.Session == nil || acct.Session.Store == nil {
+	if acct.Runtime == nil || acct.Runtime.Store == nil {
 		writeError(w, http.StatusInternalServerError, "account store unavailable")
 		return
 	}
-	if err := acct.Session.Store.SetUserContext(userLocalePreferenceKey, locale, "user"); err != nil {
+	if err := acct.Runtime.Store.SetUserContext(userLocalePreferenceKey, locale, "user"); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -217,7 +217,7 @@ func (s *Server) handleSettingsStaffRoutes(w http.ResponseWriter, r *http.Reques
 		writeError(w, status, err.Error())
 		return
 	}
-	if acct.Deps == nil || acct.Deps.Store == nil || acct.Session == nil {
+	if acct.Deps == nil || acct.Deps.Store == nil || acct.Runtime == nil {
 		writeError(w, http.StatusInternalServerError, "account store unavailable")
 		return
 	}
@@ -226,7 +226,7 @@ func (s *Server) handleSettingsStaffRoutes(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	base, err := core.ResolveBaseDir(acct.Session.BaseDir)
+	base, err := core.ResolveBaseDir(acct.Runtime.BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -254,7 +254,7 @@ func (s *Server) handleSettingsStaffRouteUpdate(w http.ResponseWriter, r *http.R
 		writeError(w, status, err.Error())
 		return
 	}
-	if acct.Deps == nil || acct.Deps.Store == nil || acct.Session == nil {
+	if acct.Deps == nil || acct.Deps.Store == nil || acct.Runtime == nil {
 		writeError(w, http.StatusInternalServerError, "account store unavailable")
 		return
 	}
@@ -272,7 +272,7 @@ func (s *Server) handleSettingsStaffRouteUpdate(w http.ResponseWriter, r *http.R
 	}
 	staffID := strings.TrimSpace(body.DefaultStaffID)
 	if staffID != "" {
-		base, err := core.ResolveBaseDir(acct.Session.BaseDir)
+		base, err := core.ResolveBaseDir(acct.Runtime.BaseDir)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -430,7 +430,7 @@ func (s *Server) handleSettingsWorkspacesDelete(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "workspace id is required")
 		return
 	}
-	if acct.Deps == nil || acct.Deps.Store == nil || acct.Session == nil {
+	if acct.Deps == nil || acct.Deps.Store == nil || acct.Runtime == nil {
 		writeError(w, http.StatusInternalServerError, "account workspace dependencies unavailable")
 		return
 	}
@@ -438,8 +438,8 @@ func (s *Server) handleSettingsWorkspacesDelete(w http.ResponseWriter, r *http.R
 	if acct.Deps.LiveIndexer != nil {
 		acct.Deps.LiveIndexer.RemoveWorkspace(id)
 	}
-	if acct.Session.Indexer != nil {
-		if err := acct.Session.Indexer.Remove(id); err != nil {
+	if acct.Runtime.Indexer != nil {
+		if err := acct.Runtime.Indexer.Remove(id); err != nil {
 			slog.Warn("settings workspace delete: index removal failed",
 				"account", acct.ID, "id", id, "error", err)
 		}
@@ -448,10 +448,10 @@ func (s *Server) handleSettingsWorkspacesDelete(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := acct.Session.RefreshAllowedPaths(); err != nil {
+	if err := acct.Runtime.RefreshAllowedPaths(); err != nil {
 		slog.Error("settings workspace delete: cache refresh failed, denying all paths",
 			"account", acct.ID, "error", err)
-		acct.Session.ClearAllowedPaths()
+		acct.Runtime.ClearAllowedPaths()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
@@ -493,7 +493,7 @@ func (s *Server) isSettingsReady(acct *requestAccount) bool {
 	if acct == nil || acct.Deps == nil || acct.Deps.Store == nil {
 		return false
 	}
-	cfg := acct.Session.Config
+	cfg := acct.Runtime.Config
 	if cfg == nil && acct.Deps.Account != nil {
 		cfg = acct.Deps.Account.Config
 	}
@@ -528,7 +528,7 @@ func settingsBrowseDirectoryPath(requestedPath string) (string, int, error) {
 }
 
 func (s *Server) createSettingsWorkspace(acct *requestAccount, requestedPath, alias string) (*store.Workspace, int, error) {
-	if acct == nil || acct.Deps == nil || acct.Deps.Store == nil || acct.Session == nil {
+	if acct == nil || acct.Deps == nil || acct.Deps.Store == nil || acct.Runtime == nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("account workspace dependencies unavailable")
 	}
 
@@ -558,15 +558,15 @@ func (s *Server) createSettingsWorkspace(acct *requestAccount, requestedPath, al
 	if err := acct.Deps.Store.SaveWorkspace(ws); err != nil {
 		return nil, http.StatusConflict, fmt.Errorf("workspace already registered or path conflict")
 	}
-	if err := acct.Session.RefreshAllowedPaths(); err != nil {
+	if err := acct.Runtime.RefreshAllowedPaths(); err != nil {
 		slog.Error("settings workspace create: cache refresh failed",
 			"account", acct.ID, "error", err)
 	}
 
-	if acct.Session.Indexer != nil {
+	if acct.Runtime.Indexer != nil {
 		live := acct.Deps.LiveIndexer
 		go func() {
-			if _, err := acct.Session.Indexer.Index(context.Background(), ws.ID, canonical); err != nil {
+			if _, err := acct.Runtime.Indexer.Index(context.Background(), ws.ID, canonical); err != nil {
 				slog.Warn("settings workspace create: indexing failed",
 					"account", acct.ID, "id", ws.ID, "error", err)
 			}
@@ -641,8 +641,8 @@ func settingsBaseConfig(acct *requestAccount) (*core.Config, string, error) {
 			return nil, "", fmt.Errorf("existing config.toml has syntax errors: %w", err)
 		}
 	case errors.Is(err, os.ErrNotExist):
-		if acct.Session != nil && acct.Session.Config != nil {
-			cfg = *acct.Session.Config
+		if acct.Runtime != nil && acct.Runtime.Config != nil {
+			cfg = *acct.Runtime.Config
 		} else if acct.Deps != nil && acct.Deps.Account != nil && acct.Deps.Account.Config != nil {
 			cfg = *acct.Deps.Account.Config
 		}

@@ -74,8 +74,8 @@ func TestWebSocketUsesAuthenticatedAccount(t *testing.T) {
 		"alice": &aliceCfg,
 		"bob":   &bobCfg,
 	})
-	srv.accounts.Session("alice").Provider = wsProvider{content: `return "from alice";`}
-	srv.accounts.Session("bob").Provider = wsProvider{content: `return "from bob";`}
+	srv.accounts.Runtime("alice").Provider = wsProvider{content: `return "from alice";`}
+	srv.accounts.Runtime("bob").Provider = wsProvider{content: `return "from bob";`}
 
 	cookie := loginSessionCookie(t, srv, "bob", "bob-pw")
 	httpServer := httptest.NewServer(srv.setupRoutes())
@@ -114,7 +114,7 @@ func TestWebSocketRouteOutlivesHTTPMiddlewareTimeout(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.Server.APIKey = "alice-key"
 	srv := newAuthTestServer(t, t.TempDir(), "alice", &cfg)
-	srv.accounts.Session("alice").Provider = slowWSProvider{
+	srv.accounts.Runtime("alice").Provider = slowWSProvider{
 		delay:   50 * time.Millisecond,
 		content: `return "slow done";`,
 	}
@@ -187,8 +187,8 @@ func TestWebSocketUsesAccountScopedAPIKey(t *testing.T) {
 		"alice": &aliceCfg,
 		"bob":   &bobCfg,
 	})
-	srv.accounts.Session("alice").Provider = wsProvider{content: `return "from alice";`}
-	srv.accounts.Session("bob").Provider = wsProvider{content: `return "from bob";`}
+	srv.accounts.Runtime("alice").Provider = wsProvider{content: `return "from alice";`}
+	srv.accounts.Runtime("bob").Provider = wsProvider{content: `return "from bob";`}
 
 	httpServer := httptest.NewServer(srv.setupRoutes())
 	t.Cleanup(httpServer.Close)
@@ -235,7 +235,7 @@ func TestWebSocketStopsWhenAccountRemoved(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.Server.APIKey = "alice-key"
 	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
-	srv.accounts.Session("alice").Provider = wsProvider{content: `return "from alice";`}
+	srv.accounts.Runtime("alice").Provider = wsProvider{content: `return "from alice";`}
 	cookie := loginSessionCookie(t, srv, "alice", "pw")
 	httpServer := httptest.NewServer(srv.setupRoutes())
 	t.Cleanup(httpServer.Close)

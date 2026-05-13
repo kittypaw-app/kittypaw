@@ -11,7 +11,7 @@ import (
 )
 
 func TestRecoverAccountPanic_MarksDegradedAndRecordsStamp(t *testing.T) {
-	sess := &Session{
+	sess := &AccountRuntime{
 		AccountID: "alice",
 		Health:    core.NewHealthState(),
 	}
@@ -45,11 +45,11 @@ func TestRecoverAccountPanic_NilHealthSafe(t *testing.T) {
 			t.Fatalf("RecoverAccountPanic panicked on nil Health: %v", r)
 		}
 	}()
-	RecoverAccountPanic(&Session{AccountID: "alice"}, "test.site", "boom")
+	RecoverAccountPanic(&AccountRuntime{AccountID: "alice"}, "test.site", "boom")
 }
 
 func TestMarkAccountReady_TransitionsDegradedToReady(t *testing.T) {
-	sess := &Session{
+	sess := &AccountRuntime{
 		AccountID: "alice",
 		Health:    core.NewHealthState(),
 	}
@@ -73,7 +73,7 @@ func TestMarkAccountReady_NilSafe(t *testing.T) {
 		}
 	}()
 	MarkAccountReady(nil)
-	MarkAccountReady(&Session{})
+	MarkAccountReady(&AccountRuntime{})
 }
 
 // TestAccountPanicIsolation_AC_T8 demonstrates the invariant the
@@ -83,8 +83,8 @@ func TestMarkAccountReady_NilSafe(t *testing.T) {
 // the minimum empirical proof that the recover helpers glue together
 // into the isolation contract the spec demands.
 func TestAccountPanicIsolation_AC_T8(t *testing.T) {
-	alice := &Session{AccountID: "alice", Health: core.NewHealthState()}
-	bob := &Session{AccountID: "bob", Health: core.NewHealthState()}
+	alice := &AccountRuntime{AccountID: "alice", Health: core.NewHealthState()}
+	bob := &AccountRuntime{AccountID: "bob", Health: core.NewHealthState()}
 
 	var bobTicks int32
 	var wg sync.WaitGroup
@@ -138,7 +138,7 @@ func TestSchedulerTickRecovers(t *testing.T) {
 	// Build a minimal Scheduler whose session has no Store — checkAndRun
 	// will nil-deref on Store.GetLastRun or LoadAllSkillsFrom and panic.
 	// tickOnce must catch that panic rather than propagate it.
-	sess := &Session{
+	sess := &AccountRuntime{
 		AccountID: "alice",
 		Health:    core.NewHealthState(),
 		Config:    &core.Config{},

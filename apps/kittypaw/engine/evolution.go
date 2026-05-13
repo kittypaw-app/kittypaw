@@ -21,7 +21,7 @@ type EvolutionProposal struct {
 func TriggerEvolution(
 	ctx context.Context,
 	staffID string,
-	s *Session,
+	s *AccountRuntime,
 	config *core.EvolutionConfig,
 ) error {
 	if err := core.ValidateStaffID(staffID); err != nil {

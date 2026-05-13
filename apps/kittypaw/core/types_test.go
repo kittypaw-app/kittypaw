@@ -130,10 +130,10 @@ func TestSplitChunks(t *testing.T) {
 
 func TestParsePayload(t *testing.T) {
 	payload := ChatPayload{
-		ChatID:    "chat123",
-		Text:      "hello",
-		FromName:  "alice",
-		SessionID: "sess1",
+		ChatID:          "chat123",
+		Text:            "hello",
+		FromName:        "alice",
+		SourceSessionID: "sess1",
 	}
 	raw, _ := json.Marshal(payload)
 	event := &Event{Type: EventWebChat, Payload: raw}
@@ -144,6 +144,9 @@ func TestParsePayload(t *testing.T) {
 	}
 	if got.ChatID != "chat123" || got.Text != "hello" || got.FromName != "alice" {
 		t.Errorf("ParsePayload() = %+v, want matching fields", got)
+	}
+	if got.SourceSessionID != "sess1" {
+		t.Errorf("ParsePayload() SourceSessionID = %q, want sess1", got.SourceSessionID)
 	}
 }
 

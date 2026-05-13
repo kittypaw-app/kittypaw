@@ -23,7 +23,7 @@ func TestRunPackageInjectsGmailOAuthAccessToken(t *testing.T) {
 		t.Fatalf("Save service token: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Sandbox:         sandbox.New(cfg.Sandbox),
 		Config:          &cfg,
 		BaseDir:         baseDir,
@@ -57,7 +57,7 @@ func TestRunPackageInjectsXOAuthAccessToken(t *testing.T) {
 		t.Fatalf("Save service token: %v", err)
 	}
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Sandbox:         sandbox.New(cfg.Sandbox),
 		Config:          &cfg,
 		BaseDir:         baseDir,
@@ -85,7 +85,7 @@ func TestRunPackageMissingGmailOAuthReturnsActionableError(t *testing.T) {
 	secrets := mustTestSecrets(t)
 	pm := installOAuthPackage(t, baseDir, secrets)
 	cfg := core.DefaultConfig()
-	sess := &Session{
+	sess := &AccountRuntime{
 		Sandbox:         sandbox.New(cfg.Sandbox),
 		Config:          &cfg,
 		BaseDir:         baseDir,

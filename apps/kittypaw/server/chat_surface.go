@@ -17,7 +17,7 @@ func (s *Server) handleChatBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	setupCompleted := false
 	if acct != nil && acct.Deps != nil && acct.Deps.Store != nil {
-		cfg := acct.Session.Config
+		cfg := acct.Runtime.Config
 		if cfg == nil && acct.Deps.Account != nil {
 			cfg = acct.Deps.Account.Config
 		}

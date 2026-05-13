@@ -21,7 +21,7 @@ const (
 
 // ProviderResolver maps a named model (from config [[models]]) to a Provider.
 // QueryMoA takes this as an injected dependency so tests can substitute mock
-// providers without constructing a full Session.
+// providers without constructing a full AccountRuntime.
 type ProviderResolver func(model string) llm.Provider
 
 // MoACandidate is one model's response within a MoA run. Error is non-empty
@@ -251,7 +251,7 @@ func moaTruncate(s string, max int) string {
 // QueryMoA with resolver=s.resolveProvider and budget=s.Budget. Models default
 // to s.Config.Models (all named models) when options.models is omitted;
 // synthesizer defaults to the [[models]] entry with Default=true.
-func executeMoA(ctx context.Context, call core.SkillCall, s *Session) (string, error) {
+func executeMoA(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	if call.Method != "query" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Moa method: %s", call.Method)})
 	}

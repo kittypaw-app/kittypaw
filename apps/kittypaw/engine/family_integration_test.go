@@ -50,7 +50,7 @@ func TestFamily_ShareReadE2E(t *testing.T) {
 	sbox := sandbox.New(core.SandboxConfig{TimeoutSecs: 5})
 
 	// --- alice: team-space member -> success ---
-	aliceSess := &Session{
+	aliceSess := &AccountRuntime{
 		Sandbox:         sbox,
 		Config:          alice.Config,
 		AccountID:       alice.ID,
@@ -84,7 +84,7 @@ func TestFamily_ShareReadE2E(t *testing.T) {
 
 	// --- bob: not a team-space member -> denied ---
 	logBuf.Reset()
-	bobSess := &Session{
+	bobSess := &AccountRuntime{
 		Sandbox:         sbox,
 		Config:          bob.Config,
 		AccountID:       bob.ID,
@@ -138,7 +138,7 @@ func TestFamily_FanoutE2E(t *testing.T) {
 	sbox := sandbox.New(core.SandboxConfig{TimeoutSecs: 5})
 
 	// --- family: Fanout wired → push succeeds ---
-	famSess := &Session{
+	famSess := &AccountRuntime{
 		Sandbox:         sbox,
 		Config:          family.Config,
 		AccountID:       family.ID,
@@ -185,7 +185,7 @@ func TestFamily_FanoutE2E(t *testing.T) {
 	}
 
 	// --- alice: no Fanout wired → JS global hidden ---
-	aliceSess := &Session{
+	aliceSess := &AccountRuntime{
 		Sandbox:         sbox,
 		Config:          alice.Config,
 		AccountID:       alice.ID,

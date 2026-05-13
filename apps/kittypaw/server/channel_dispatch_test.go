@@ -111,7 +111,7 @@ func dispatchTestEvent(t *testing.T, eventType core.EventType, accountID, chatID
 
 func dispatchTestChatEvent(t *testing.T, eventType core.EventType, accountID, chatID, sessionID, text string) core.Event {
 	t.Helper()
-	payload, err := json.Marshal(core.ChatPayload{ChatID: chatID, SessionID: sessionID, Text: text})
+	payload, err := json.Marshal(core.ChatPayload{ChatID: chatID, SourceSessionID: sessionID, Text: text})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
@@ -604,7 +604,7 @@ func TestRemoveAccountWorkerDrainFailureDoesNotStopChannels(t *testing.T) {
 	if _, ok := srv.spawner.GetChannel("alice", core.EventTelegram); !ok {
 		t.Fatal("telegram channel was stopped even though worker drain failed")
 	}
-	if srv.accounts.Session("alice") == nil {
+	if srv.accounts.Runtime("alice") == nil {
 		t.Fatal("alice session should remain active after failed removal")
 	}
 	if srv.isAccountRemovalInProgress("alice") {

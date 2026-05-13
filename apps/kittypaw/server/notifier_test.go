@@ -29,7 +29,7 @@ func TestServerNotifierPersistsBeforeSending(t *testing.T) {
 		t.Fatalf("TrySpawn: %v", err)
 	}
 
-	if err := srv.accounts.Session("alice").Notifier.SendNotification(ctx, core.DeliveryTarget{
+	if err := srv.accounts.Runtime("alice").Notifier.SendNotification(ctx, core.DeliveryTarget{
 		AccountID:      "alice",
 		Channel:        string(core.EventTelegram),
 		ChatID:         "chat-1",
@@ -69,7 +69,7 @@ func TestServerNotifierQueuesWhenChannelNotRunning(t *testing.T) {
 	deps := buildAccountDeps(t, root, "alice", cfg)
 	srv := New([]*AccountDeps{deps}, "test", "alice")
 
-	if err := srv.accounts.Session("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
+	if err := srv.accounts.Runtime("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
 		AccountID: "alice",
 		Channel:   string(core.EventTelegram),
 		ChatID:    "chat-1",
@@ -97,7 +97,7 @@ func TestServerNotifierRejectsExplicitChatOutsideAccount(t *testing.T) {
 	deps := buildAccountDeps(t, root, "alice", cfg)
 	srv := New([]*AccountDeps{deps}, "test", "alice")
 
-	err := srv.accounts.Session("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
+	err := srv.accounts.Runtime("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
 		AccountID: "alice",
 		Channel:   string(core.EventTelegram),
 		ChatID:    "not-alice-chat",
@@ -125,7 +125,7 @@ func TestServerNotifierRejectsUnconfiguredChannel(t *testing.T) {
 	deps := buildAccountDeps(t, root, "alice", cfg)
 	srv := New([]*AccountDeps{deps}, "test", "alice")
 
-	err := srv.accounts.Session("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
+	err := srv.accounts.Runtime("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
 		AccountID: "alice",
 		Channel:   string(core.EventTelegram),
 		ChatID:    "chat-1",
@@ -160,7 +160,7 @@ func TestServerNotifierRejectsCrossAccountTarget(t *testing.T) {
 	bobDeps := buildAccountDeps(t, root, "bob", bobCfg)
 	srv := New([]*AccountDeps{aliceDeps, bobDeps}, "test", "alice")
 
-	err := srv.accounts.Session("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
+	err := srv.accounts.Runtime("alice").Notifier.SendNotification(context.Background(), core.DeliveryTarget{
 		AccountID: "bob",
 		Channel:   string(core.EventTelegram),
 	}, "cross-account")

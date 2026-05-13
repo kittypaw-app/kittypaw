@@ -163,7 +163,7 @@ func TestFamilyMorningBrief_FansOutToAllPersonalAccounts(t *testing.T) {
 
 	go srv.dispatchLoop(ctx)
 
-	familySess := srv.accounts.Session("family")
+	familySess := srv.accounts.Runtime("family")
 	if familySess == nil {
 		t.Fatal("team-space coordinator session not registered")
 	}
@@ -247,7 +247,7 @@ func TestFamilyMorningBrief_BroadcastFansOutToAllPeers(t *testing.T) {
 
 	go srv.dispatchLoop(ctx)
 
-	familySess := srv.accounts.Session("family")
+	familySess := srv.accounts.Runtime("family")
 	if familySess == nil || familySess.Fanout == nil {
 		t.Fatal("team-space coordinator session / Fanout missing")
 	}
@@ -303,7 +303,7 @@ func TestRemoveAccountScrubsLiveTeamSpaceMembership(t *testing.T) {
 		t.Fatalf("RemoveAccount alice: %v", err)
 	}
 
-	teamSess := srv.accounts.Session("team")
+	teamSess := srv.accounts.Runtime("team")
 	if teamSess == nil || teamSess.Fanout == nil {
 		t.Fatal("team-space session / Fanout missing")
 	}
@@ -338,7 +338,7 @@ func TestTeamSpaceFanoutRejectsNonMember(t *testing.T) {
 	bobDeps := buildAccountDeps(t, root, "bob", &core.Config{})
 	srv := New([]*AccountDeps{teamDeps, aliceDeps, bobDeps}, "test")
 
-	teamSess := srv.accounts.Session("team")
+	teamSess := srv.accounts.Runtime("team")
 	if teamSess == nil || teamSess.Fanout == nil {
 		t.Fatal("team-space session / Fanout missing")
 	}
@@ -369,7 +369,7 @@ func legacyFamilyPushEvent(t *testing.T, target string, p core.FanoutPayload) co
 // that telegram channel's SendResponse with alice's AllowedChatIDs[0] as the
 // chat ID. Critically, the runner loop must NOT run (payload.Text is a
 // finished outbound message, not an inbound chat that needs LLM processing).
-// The mock's backing Session has Provider=nil — if the dispatch loop ever
+// The mock's backing runtime has Provider=nil — if the dispatch loop ever
 // routed through session.Run, the test would error or panic instead of
 // passing cleanly.
 func TestDispatchLoop_FamilyPush_DeliversToTargetChannel(t *testing.T) {

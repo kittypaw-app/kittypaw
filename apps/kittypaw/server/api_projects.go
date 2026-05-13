@@ -19,7 +19,7 @@ type projectsStoreContextKey struct{}
 
 type projectsRequestContext struct {
 	Store   *store.Store
-	Session *engine.Session
+	Runtime *engine.AccountRuntime
 	Account *core.Account
 }
 
@@ -31,7 +31,7 @@ func (s *Server) requireProjectsAPIAccess(next http.Handler) http.Handler {
 			return
 		}
 
-		ctxValue := projectsRequestContext{Store: s.store, Session: s.defaultSession()}
+		ctxValue := projectsRequestContext{Store: s.store, Runtime: s.defaultRuntime()}
 		if required {
 			acct, acctErr := s.requestAccount(r)
 			if acctErr == nil {
@@ -39,7 +39,7 @@ func (s *Server) requireProjectsAPIAccess(next http.Handler) http.Handler {
 					writeError(w, http.StatusInternalServerError, "account store unavailable")
 					return
 				}
-				ctxValue = projectsRequestContext{Store: acct.Deps.Store, Session: acct.Session, Account: acct.Deps.Account}
+				ctxValue = projectsRequestContext{Store: acct.Deps.Store, Runtime: acct.Runtime, Account: acct.Deps.Account}
 			} else if !s.apiTokenAccepted(requestAuthToken(r)) {
 				writeError(w, http.StatusUnauthorized, "unauthorized")
 				return
@@ -61,11 +61,11 @@ func (s *Server) projectsStore(r *http.Request) *store.Store {
 	return s.store
 }
 
-func (s *Server) projectsSession(r *http.Request) *engine.Session {
-	if ctxValue, ok := r.Context().Value(projectsStoreContextKey{}).(projectsRequestContext); ok && ctxValue.Session != nil {
-		return ctxValue.Session
+func (s *Server) projectsRuntime(r *http.Request) *engine.AccountRuntime {
+	if ctxValue, ok := r.Context().Value(projectsStoreContextKey{}).(projectsRequestContext); ok && ctxValue.Runtime != nil {
+		return ctxValue.Runtime
 	}
-	return s.defaultSession()
+	return s.defaultRuntime()
 }
 
 func (s *Server) handleProjectsList(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +149,7 @@ func (s *Server) handleProjectBoard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProjectGitInit(w http.ResponseWriter, r *http.Request) {
-	runtime := s.projectsSession(r).ProjectJobRuntime
+	runtime := s.projectsRuntime(r).ProjectJobRuntime
 	if runtime == nil {
 		writeError(w, http.StatusInternalServerError, "project job runtime unavailable")
 		return
@@ -441,7 +441,7 @@ func (s *Server) handleJobStart(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil && r.ContentLength != 0 && !decodeBody(w, r, &body) {
 		return
 	}
-	runtime := s.projectsSession(r).ProjectJobRuntime
+	runtime := s.projectsRuntime(r).ProjectJobRuntime
 	if runtime == nil {
 		writeError(w, http.StatusInternalServerError, "project job runtime unavailable")
 		return
@@ -462,7 +462,7 @@ func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	runtime := s.projectsSession(r).ProjectJobRuntime
+	runtime := s.projectsRuntime(r).ProjectJobRuntime
 	if runtime != nil {
 		job, err := runtime.CancelJob(r.Context(), chi.URLParam(r, "job"), body.ActorID, body.Reason)
 		if err != nil {
@@ -488,7 +488,7 @@ func (s *Server) handleJobInput(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	runtime := s.projectsSession(r).ProjectJobRuntime
+	runtime := s.projectsRuntime(r).ProjectJobRuntime
 	if runtime == nil {
 		writeError(w, http.StatusInternalServerError, "project job runtime unavailable")
 		return
@@ -502,7 +502,7 @@ func (s *Server) handleJobInput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJobLogs(w http.ResponseWriter, r *http.Request) {
-	runtime := s.projectsSession(r).ProjectJobRuntime
+	runtime := s.projectsRuntime(r).ProjectJobRuntime
 	if runtime != nil {
 		logs, err := runtime.JobLogs(chi.URLParam(r, "job"))
 		if err != nil {
@@ -623,11 +623,11 @@ func (s *Server) refreshProjectFileRoot(r *http.Request, project *store.Project)
 	if project == nil {
 		return
 	}
-	sess := s.defaultSession()
+	sess := s.defaultRuntime()
 	live := s.liveIndexer
 	if required, err := s.apiAuthRequired(); err == nil && required {
 		if acct, acctErr := s.requestAccount(r); acctErr == nil {
-			sess = acct.Session
+			sess = acct.Runtime
 			if acct.Deps != nil {
 				live = acct.Deps.LiveIndexer
 			}

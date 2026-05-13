@@ -197,9 +197,9 @@ func TestFromConfigUnsupported(t *testing.T) {
 	}
 }
 
-// --- SessionID mapping tests ---
+// --- source session ID mapping tests ---
 
-func TestKakaoSessionIDFromUserID(t *testing.T) {
+func TestKakaoSourceSessionIDFromUserID(t *testing.T) {
 	// Simulate the payload that connectAndListen would build.
 	msg := kakaoRelayMessage{
 		ID:     "action-123",
@@ -208,13 +208,13 @@ func TestKakaoSessionIDFromUserID(t *testing.T) {
 	}
 
 	payload := core.ChatPayload{
-		ChatID:    msg.ID,
-		Text:      msg.Text,
-		SessionID: msg.UserID,
+		ChatID:          msg.ID,
+		Text:            msg.Text,
+		SourceSessionID: msg.UserID,
 	}
 
-	if payload.SessionID != "kakao-user-42" {
-		t.Errorf("expected SessionID %q, got %q", "kakao-user-42", payload.SessionID)
+	if payload.SourceSessionID != "kakao-user-42" {
+		t.Errorf("expected SourceSessionID %q, got %q", "kakao-user-42", payload.SourceSessionID)
 	}
 	if payload.ChatID != "action-123" {
 		t.Errorf("expected ChatID %q, got %q", "action-123", payload.ChatID)
@@ -227,13 +227,13 @@ func TestKakaoSessionIDFromUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse payload: %v", err)
 	}
-	if parsed.SessionID != "kakao-user-42" {
-		t.Errorf("roundtrip SessionID: got %q, want %q", parsed.SessionID, "kakao-user-42")
+	if parsed.SourceSessionID != "kakao-user-42" {
+		t.Errorf("roundtrip SourceSessionID: got %q, want %q", parsed.SourceSessionID, "kakao-user-42")
 	}
 }
 
-func TestTelegramSessionIDFromUserID(t *testing.T) {
-	// Verify telegramUser.ID is included and would become SessionID.
+func TestTelegramSourceSessionIDFromUserID(t *testing.T) {
+	// Verify telegramUser.ID is included and would become SourceSessionID.
 	user := telegramUser{
 		ID:        12345678,
 		FirstName: "Test",
@@ -276,8 +276,8 @@ func TestTelegramTextUpdateFixtureBuildsEvent(t *testing.T) {
 	if payload.Text != "환율 알려줘" || payload.ChatID != "987654321" {
 		t.Fatalf("payload text/chat = %q/%q", payload.Text, payload.ChatID)
 	}
-	if payload.SessionID != "12345678" {
-		t.Fatalf("SessionID = %q, want Telegram user id", payload.SessionID)
+	if payload.SourceSessionID != "12345678" {
+		t.Fatalf("SourceSessionID = %q, want Telegram user id", payload.SourceSessionID)
 	}
 	if payload.FromName != "Jin" {
 		t.Fatalf("FromName = %q, want Jin", payload.FromName)
@@ -311,8 +311,8 @@ func TestKakaoIncomingFixtureBuildsEvent(t *testing.T) {
 	if payload.ChatID != "kakao-action-123" {
 		t.Fatalf("ChatID = %q, want relay action id", payload.ChatID)
 	}
-	if payload.SessionID != "kakao-user-42" {
-		t.Fatalf("SessionID = %q, want Kakao user id", payload.SessionID)
+	if payload.SourceSessionID != "kakao-user-42" {
+		t.Fatalf("SourceSessionID = %q, want Kakao user id", payload.SourceSessionID)
 	}
 	if payload.Text != "강남역에 비오나? 지금?" {
 		t.Fatalf("Text = %q", payload.Text)
@@ -371,7 +371,7 @@ func TestKakaoChannelWebSocketRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse payload: %v", err)
 	}
-	if payload.ChatID != "kakao-action-1" || payload.SessionID != "kakao-user-1" || payload.Text != "환율 알려줘" {
+	if payload.ChatID != "kakao-action-1" || payload.SourceSessionID != "kakao-user-1" || payload.Text != "환율 알려줘" {
 		t.Fatalf("payload = %+v", payload)
 	}
 
@@ -389,7 +389,7 @@ func TestKakaoChannelWebSocketRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSlackSessionIDFromUser(t *testing.T) {
+func TestSlackSourceSessionIDFromUser(t *testing.T) {
 	evt := slackEvent{
 		Type:    "message",
 		Text:    "hello",
@@ -398,18 +398,18 @@ func TestSlackSessionIDFromUser(t *testing.T) {
 	}
 
 	payload := core.ChatPayload{
-		ChatID:    evt.Channel,
-		Text:      evt.Text,
-		FromName:  evt.User,
-		SessionID: evt.User,
+		ChatID:          evt.Channel,
+		Text:            evt.Text,
+		FromName:        evt.User,
+		SourceSessionID: evt.User,
 	}
 
-	if payload.SessionID != "U123ABC" {
-		t.Errorf("expected SessionID %q, got %q", "U123ABC", payload.SessionID)
+	if payload.SourceSessionID != "U123ABC" {
+		t.Errorf("expected SourceSessionID %q, got %q", "U123ABC", payload.SourceSessionID)
 	}
 }
 
-func TestDiscordSessionIDFromAuthor(t *testing.T) {
+func TestDiscordSourceSessionIDFromAuthor(t *testing.T) {
 	msg := discordMessageCreate{
 		ID:        "msg-1",
 		ChannelID: "ch-1",
@@ -418,14 +418,14 @@ func TestDiscordSessionIDFromAuthor(t *testing.T) {
 	}
 
 	payload := core.ChatPayload{
-		ChatID:    msg.ChannelID,
-		Text:      msg.Content,
-		FromName:  msg.Author.Username,
-		SessionID: msg.Author.ID,
+		ChatID:          msg.ChannelID,
+		Text:            msg.Content,
+		FromName:        msg.Author.Username,
+		SourceSessionID: msg.Author.ID,
 	}
 
-	if payload.SessionID != "discord-user-99" {
-		t.Errorf("expected SessionID %q, got %q", "discord-user-99", payload.SessionID)
+	if payload.SourceSessionID != "discord-user-99" {
+		t.Errorf("expected SourceSessionID %q, got %q", "discord-user-99", payload.SourceSessionID)
 	}
 	if payload.FromName != "testbot" {
 		t.Errorf("expected FromName %q, got %q", "testbot", payload.FromName)

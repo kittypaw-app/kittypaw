@@ -41,7 +41,7 @@ func TestProjectChatScopesFileSearchToProjectRoot(t *testing.T) {
 		t.Fatalf("index B: %v", err)
 	}
 
-	sess := &Session{Store: st, Config: fullAccessConfig(), Indexer: indexer}
+	sess := &AccountRuntime{Store: st, Config: fullAccessConfig(), Indexer: indexer}
 	result := resolveFileSearchForTest(t, sess, projectA.ProjectConversationID, "sharedtoken")
 
 	if !strings.Contains(result, "a.txt") {
@@ -82,7 +82,7 @@ func TestTicketChatScopesFileSearchToTicketProjectRoot(t *testing.T) {
 		t.Fatalf("index B: %v", err)
 	}
 
-	sess := &Session{Store: st, Config: fullAccessConfig(), Indexer: indexer}
+	sess := &AccountRuntime{Store: st, Config: fullAccessConfig(), Indexer: indexer}
 	result := resolveFileSearchForTest(t, sess, ticket.TicketConversationID, "ticketshared")
 
 	if !strings.Contains(result, "ticket.txt") {
@@ -108,7 +108,7 @@ func TestGeneralChatRequiresProjectChoiceForProjectFileSearch(t *testing.T) {
 		t.Fatalf("index: %v", err)
 	}
 
-	sess := &Session{Store: st, Config: fullAccessConfig(), Indexer: indexer}
+	sess := &AccountRuntime{Store: st, Config: fullAccessConfig(), Indexer: indexer}
 	_, err = resolveSkillCall(
 		ContextWithConversationID(context.Background(), "account"),
 		core.SkillCall{SkillName: "File", Method: "search", Args: []json.RawMessage{json.RawMessage(`"generaltoken"`)}},
@@ -146,16 +146,16 @@ func TestFileSearchUsesEventConversationScopeBeforeAgentLoop(t *testing.T) {
 		t.Fatalf("index B: %v", err)
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         projectA.ProjectConversationID,
-		SessionID:      "browser-session",
-		ConversationID: projectA.ProjectConversationID,
-		Text:           "search before loop",
+		ChatID:          projectA.ProjectConversationID,
+		SourceSessionID: "browser-session",
+		ConversationID:  projectA.ProjectConversationID,
+		Text:            "search before loop",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
-	sess := &Session{Store: st, Config: fullAccessConfig(), Indexer: indexer}
+	sess := &AccountRuntime{Store: st, Config: fullAccessConfig(), Indexer: indexer}
 	result, err := resolveSkillCall(
 		ContextWithEvent(context.Background(), &event),
 		core.SkillCall{SkillName: "File", Method: "search", Args: []json.RawMessage{json.RawMessage(`"prelooptoken"`)}},
@@ -180,16 +180,16 @@ func TestConversationKeyForEventUsesScopedConversationID(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         "browser-session",
-		SessionID:      "browser-session",
-		ConversationID: project.ProjectConversationID,
-		Text:           "이 프로젝트 파일을 찾아줘",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-session",
+		ConversationID:  project.ProjectConversationID,
+		Text:            "이 프로젝트 파일을 찾아줘",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
-	sess := &Session{Store: st, AccountID: "account"}
+	sess := &AccountRuntime{Store: st, AccountID: "account"}
 
 	if got := conversationKeyForEvent(sess, &event); got != project.ProjectConversationID {
 		t.Fatalf("conversationKeyForEvent = %q, want project conversation %q", got, project.ProjectConversationID)
@@ -208,16 +208,16 @@ func TestConversationKeyForEventUsesIndexedConversationID(t *testing.T) {
 	}
 
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         "browser-session",
-		SessionID:      "browser-session",
-		ConversationID: "general:indexed",
-		Text:           "이 대화를 이어서 해줘",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-session",
+		ConversationID:  "general:indexed",
+		Text:            "이 대화를 이어서 해줘",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
-	sess := &Session{Store: st, AccountID: "account"}
+	sess := &AccountRuntime{Store: st, AccountID: "account"}
 
 	if got := conversationKeyForEvent(sess, &event); got != "general:indexed" {
 		t.Fatalf("conversationKeyForEvent = %q, want indexed conversation", got)
@@ -234,15 +234,15 @@ func TestConversationKeyForEventUsesIndexedConversationID(t *testing.T) {
 func TestConversationKeyForEventDefaultsToGeneralConversation(t *testing.T) {
 	st := openTestStore(t)
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:    "browser-session",
-		SessionID: "browser-session",
-		Text:      "일반 대화",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-session",
+		Text:            "일반 대화",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
-	sess := &Session{Store: st, AccountID: "account"}
+	sess := &AccountRuntime{Store: st, AccountID: "account"}
 
 	if got := conversationKeyForEvent(sess, &event); got != "general:web_chat:browser-session" {
 		t.Fatalf("conversationKeyForEvent = %q, want source-derived general conversation", got)
@@ -264,15 +264,15 @@ func TestConversationKeyForEventUsesActiveConversationRoute(t *testing.T) {
 		t.Fatalf("UpsertConversationRoute: %v", err)
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:    "browser-session",
-		SessionID: "browser-session",
-		Text:      "일반 대화",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-session",
+		Text:            "일반 대화",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := core.Event{Type: core.EventWebChat, Payload: payload}
-	sess := &Session{Store: st, AccountID: "account"}
+	sess := &AccountRuntime{Store: st, AccountID: "account"}
 
 	if got := conversationKeyForEvent(sess, &event); got != "general:conv_child" {
 		t.Fatalf("conversationKeyForEvent = %q, want active route conversation", got)
@@ -282,15 +282,15 @@ func TestConversationKeyForEventUsesActiveConversationRoute(t *testing.T) {
 func TestConversationKeyForEventDerivesSourceConversationForAccountEvents(t *testing.T) {
 	st := openTestStore(t)
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:    "C123ABC",
-		SessionID: "U123ABC",
-		Text:      "슬랙 채널 대화",
+		ChatID:          "C123ABC",
+		SourceSessionID: "U123ABC",
+		Text:            "슬랙 채널 대화",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := core.Event{Type: core.EventSlack, AccountID: "account", Payload: payload}
-	sess := &Session{Store: st, AccountID: "account"}
+	sess := &AccountRuntime{Store: st, AccountID: "account"}
 
 	if got := conversationKeyForEvent(sess, &event); got != "general:slack:c123abc" {
 		t.Fatalf("conversationKeyForEvent = %q, want channel-derived general conversation", got)
@@ -329,10 +329,10 @@ func TestProjectChatPromptHistoryIsScoped(t *testing.T) {
 		t.Fatalf("AddConversationTurn A: %v", err)
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         projectB.ProjectConversationID,
-		SessionID:      "browser-session",
-		ConversationID: projectB.ProjectConversationID,
-		Text:           "프로젝트 B만 보고 답해줘",
+		ChatID:          projectB.ProjectConversationID,
+		SourceSessionID: "browser-session",
+		ConversationID:  projectB.ProjectConversationID,
+		Text:            "프로젝트 B만 보고 답해줘",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -373,10 +373,10 @@ func TestProjectKickoffApprovalCreatesBriefDraftFromScan(t *testing.T) {
 		t.Fatalf("AddConversationTurn: %v", err)
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         "browser-session",
-		SessionID:      "browser-session",
-		ConversationID: project.ProjectConversationID,
-		Text:           "네네",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-session",
+		ConversationID:  project.ProjectConversationID,
+		Text:            "네네",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -441,10 +441,10 @@ func TestProjectKickoffDraftApprovalCommitsTickets(t *testing.T) {
 		t.Fatalf("AddConversationTurn: %v", err)
 	}
 	payload, err := json.Marshal(core.ChatPayload{
-		ChatID:         "browser-session",
-		SessionID:      "browser-session",
-		ConversationID: project.ProjectConversationID,
-		Text:           "네",
+		ChatID:          "browser-session",
+		SourceSessionID: "browser-session",
+		ConversationID:  project.ProjectConversationID,
+		Text:            "네",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -521,7 +521,7 @@ func TestProjectKickoffTodoScanSkipsSymlinkTargets(t *testing.T) {
 	}
 }
 
-func resolveFileSearchForTest(t *testing.T, sess *Session, conversationID, query string) string {
+func resolveFileSearchForTest(t *testing.T, sess *AccountRuntime, conversationID, query string) string {
 	t.Helper()
 	rawQuery, err := json.Marshal(query)
 	if err != nil {
@@ -590,7 +590,7 @@ func TestProjectsToolStartJobCallsRuntime(t *testing.T) {
 		BaseDir:   t.TempDir(),
 		Runner:    fakeProjectsToolRunner{ExitCode: 0, ResultText: "done"},
 	})
-	sess := &Session{Store: st, ProjectJobRuntime: rt}
+	sess := &AccountRuntime{Store: st, ProjectJobRuntime: rt}
 
 	result, err := executeProjects(context.Background(), skillCallForProjectsTest("startJob", job.ID, map[string]any{"actor_id": "pm"}), sess)
 	if err != nil {
@@ -636,7 +636,7 @@ func TestProjectsToolCancelJobStopsRuntimeJob(t *testing.T) {
 		close(block)
 		_ = rt.WaitForJob(job.ID, 2*time.Second)
 	}()
-	sess := &Session{Store: st, ProjectJobRuntime: rt}
+	sess := &AccountRuntime{Store: st, ProjectJobRuntime: rt}
 
 	if _, err := executeProjects(context.Background(), skillCallForProjectsTest("startJob", job.ID, map[string]any{"actor_id": "pm"}), sess); err != nil {
 		t.Fatalf("executeProjects(startJob) error = %v", err)
@@ -678,7 +678,7 @@ func TestProjectsToolJobLogsReturnsCurrentJobAndEvents(t *testing.T) {
 		t.Fatalf("AddJobEvent() error = %v", err)
 	}
 	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{Store: st, AccountID: "alice", BaseDir: t.TempDir(), Runner: fakeProjectsToolRunner{ExitCode: 0}})
-	sess := &Session{Store: st, ProjectJobRuntime: rt}
+	sess := &AccountRuntime{Store: st, ProjectJobRuntime: rt}
 
 	result, err := executeProjects(context.Background(), skillCallForProjectsTest("jobLogs", job.ID), sess)
 	if err != nil {
@@ -717,7 +717,7 @@ func TestExecuteProjectsAppendJobInputUsesRuntime(t *testing.T) {
 	}
 	session := &fakeProjectsToolPTYSession{InputCh: make(chan string, 1), ResultCh: make(chan JobPTYResult, 1)}
 	rt := NewProjectJobRuntime(ProjectJobRuntimeOptions{Store: st, AccountID: "alice", BaseDir: t.TempDir(), PTYRunner: fakeProjectsToolPTYRunner{Session: session}})
-	sess := &Session{Store: st, ProjectJobRuntime: rt}
+	sess := &AccountRuntime{Store: st, ProjectJobRuntime: rt}
 	if _, err := executeProjects(context.Background(), skillCallForProjectsTest("startJob", approved.ID, map[string]any{"actor_id": "pm"}), sess); err != nil {
 		t.Fatalf("executeProjects(startJob) error = %v", err)
 	}
