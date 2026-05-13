@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -291,6 +292,9 @@ func (s *AccountRuntime) RunTurn(ctx context.Context, turnID string, event core.
 	s.runTurnOwner(ctx, turnID, state, func(c context.Context) (string, error) {
 		return s.Run(c, event, opts)
 	})
+	if errors.Is(state.err, ErrRuntimeAdmissionBusy) {
+		s.turnCache.Delete(turnID)
+	}
 	return state.result, state.err
 }
 

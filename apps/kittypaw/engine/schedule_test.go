@@ -438,6 +438,65 @@ func TestRunOnceSkillDeletesAfterDeliveryFailure(t *testing.T) {
 	}
 }
 
+func TestRunSkillAdmissionBusyLeavesOnceSkillDue(t *testing.T) {
+	baseDir := t.TempDir()
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.Runtime.MaxConcurrentTurnsPerAccount = 1
+	cfg.Runtime.MaxQueuedTurnsPerAccount = 0
+	session := &AccountRuntime{
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Admission: NewRuntimeAdmission(RuntimeAdmissionConfig{
+			MaxConcurrentAccount: 1,
+			MaxQueuedAccount:     0,
+			MaxConcurrentScope:   0,
+		}),
+	}
+	lease, err := session.Admission.Acquire(context.Background(), RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "held",
+	})
+	if err != nil {
+		t.Fatalf("hold admission: %v", err)
+	}
+	defer lease.Release()
+
+	skill := &core.Skill{
+		Name:        "once-admission-busy",
+		Version:     1,
+		Description: "one-shot reminder",
+		Enabled:     true,
+		Format:      core.SkillFormatNative,
+		Trigger:     core.SkillTrigger{Type: "once"},
+	}
+	if err := core.SaveSkillTo(baseDir, skill, `return "scheduled output";`); err != nil {
+		t.Fatalf("SaveSkillTo: %v", err)
+	}
+
+	sched := NewScheduler(session, nil)
+	sched.runSkill(context.Background(), &core.SkillWithCode{
+		Skill: *skill,
+		Code:  `return "ignored";`,
+	})
+
+	if lastRun, _ := st.GetLastRun(skill.Name); lastRun != nil {
+		t.Fatalf("admission busy must not consume last_run_at, got %v", lastRun)
+	}
+	if failures, _ := st.GetFailureCount(skill.Name); failures != 0 {
+		t.Fatalf("admission busy failure_count = %d, want 0", failures)
+	}
+	got, _, err := core.LoadSkillFrom(baseDir, skill.Name)
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(%s): %v", skill.Name, err)
+	}
+	if got == nil {
+		t.Fatal("one-shot skill was deleted even though admission was busy")
+	}
+}
+
 func TestDeliverWeeklyReport_WrongDay(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	// Pick a weekday that is NOT today so the day check rejects.

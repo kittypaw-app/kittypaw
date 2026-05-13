@@ -717,6 +717,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	output, err := s.defaultRuntime().Run(r.Context(), event, nil)
 	if err != nil {
+		if isRuntimeAdmissionBusy(err) {
+			writeError(w, http.StatusTooManyRequests, "runtime busy")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

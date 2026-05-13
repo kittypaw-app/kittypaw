@@ -104,6 +104,46 @@ func TestRuntimeAdmissionScopeLimitBusy(t *testing.T) {
 	second.Release()
 }
 
+func TestRuntimeAdmissionAccountQueueCapsScopeWaiters(t *testing.T) {
+	a := NewRuntimeAdmission(RuntimeAdmissionConfig{
+		MaxConcurrentAccount: 1,
+		MaxQueuedAccount:     1,
+		MaxConcurrentScope:   1,
+	})
+	first, err := a.Acquire(context.Background(), RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "general:slack:C123",
+	})
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	defer first.Release()
+
+	secondDone := make(chan error, 1)
+	go func() {
+		lease, err := a.Acquire(context.Background(), RuntimeAdmissionRequest{
+			AccountID: "alice",
+			ScopeKey:  "general:slack:C123",
+		})
+		if err == nil {
+			lease.Release()
+		}
+		secondDone <- err
+	}()
+
+	waitUntilAdmissionQueued(t, a, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err = a.Acquire(ctx, RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "general:slack:C999",
+	})
+	if !errors.Is(err, ErrRuntimeAdmissionBusy) {
+		t.Fatalf("third Acquire err = %v, want ErrRuntimeAdmissionBusy", err)
+	}
+}
+
 func waitUntilAdmissionQueued(t *testing.T, a *RuntimeAdmission, want uint32) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

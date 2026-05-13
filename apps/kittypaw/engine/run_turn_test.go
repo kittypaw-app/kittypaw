@@ -302,6 +302,38 @@ func TestAccountRuntimeAcquireTurnAdmissionReentrant(t *testing.T) {
 	}
 }
 
+func TestRunTurnEvictsAdmissionBusyFromCache(t *testing.T) {
+	s := &AccountRuntime{
+		AccountID: "alice",
+		Admission: NewRuntimeAdmission(RuntimeAdmissionConfig{
+			MaxConcurrentAccount: 1,
+			MaxQueuedAccount:     0,
+			MaxConcurrentScope:   0,
+		}),
+	}
+	lease, err := s.Admission.Acquire(context.Background(), RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "held",
+	})
+	if err != nil {
+		t.Fatalf("hold admission: %v", err)
+	}
+	defer lease.Release()
+
+	_, err = s.RunTurn(context.Background(), "turn-busy", core.Event{
+		Type: core.EventWebChat,
+		Payload: marshalRunTurnPayload(t, core.ChatPayload{
+			SourceSessionID: "retry-session",
+		}),
+	}, nil)
+	if !errors.Is(err, ErrRuntimeAdmissionBusy) {
+		t.Fatalf("RunTurn err = %v, want ErrRuntimeAdmissionBusy", err)
+	}
+	if _, exists := s.turnCache.Load("turn-busy"); exists {
+		t.Fatal("transient admission busy error must not remain in turn cache")
+	}
+}
+
 func marshalRunTurnPayload(t *testing.T, payload core.ChatPayload) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(payload)

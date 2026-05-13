@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -513,12 +514,6 @@ func (s *Scheduler) isDue(skill *core.Skill) bool {
 }
 
 func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
-	if err := s.runtime.Store.SetLastRun(sk.Skill.Name, time.Now()); err != nil {
-		slog.Error("scheduler: SetLastRun failed, aborting to prevent duplicate execution",
-			"name", sk.Skill.Name, "trigger", sk.Skill.Trigger.Type, "error", err)
-		return
-	}
-
 	// Create a synthetic event
 	payload, _ := json.Marshal(core.ChatPayload{
 		Text:   "skill:" + sk.Skill.Name,
@@ -529,8 +524,25 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 		Payload: payload,
 	}
 
+	admissionCtx, admissionLease, err := s.runtime.acquireTurnAdmission(ctx, event)
+	if err != nil {
+		if errors.Is(err, ErrRuntimeAdmissionBusy) {
+			slog.Warn("scheduler: account runtime busy, leaving skill due", "name", sk.Skill.Name)
+		} else {
+			slog.Error("scheduler: admission failed, leaving skill due", "name", sk.Skill.Name, "error", err)
+		}
+		return
+	}
+	defer admissionLease.Release()
+
+	if err := s.runtime.Store.SetLastRun(sk.Skill.Name, time.Now()); err != nil {
+		slog.Error("scheduler: SetLastRun failed, aborting to prevent duplicate execution",
+			"name", sk.Skill.Name, "trigger", sk.Skill.Trigger.Type, "error", err)
+		return
+	}
+
 	target := sk.Skill.Trigger.Delivery
-	runCtx := ContextWithDeliveryTarget(ctx, target)
+	runCtx := ContextWithDeliveryTarget(admissionCtx, target)
 	state := &deliveryState{}
 	runCtx = contextWithDeliveryState(runCtx, state)
 	output, err := s.runtime.Run(runCtx, event, nil)

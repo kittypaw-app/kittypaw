@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/jinto/kittypaw/browser"
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/engine"
 	"github.com/jinto/kittypaw/sandbox"
 	"github.com/jinto/kittypaw/store"
 )
@@ -278,6 +280,39 @@ func TestServerNewUsesMasterAPIKey(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"api_key":"master-key"`) {
 		t.Fatalf("bootstrap body = %q, want master api key", rec.Body.String())
+	}
+}
+
+func TestHandleChatAdmissionBusyReturns429(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	cfg.Workspace.LiveIndex = false
+	cfg.Runtime.MaxConcurrentTurnsPerAccount = 1
+	cfg.Runtime.MaxQueuedTurnsPerAccount = 0
+	deps := buildAccountDeps(t, root, "alice", &cfg)
+	srv := New([]*AccountDeps{deps}, "test", "alice")
+
+	lease, err := srv.defaultRuntime().Admission.Acquire(context.Background(), engine.RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "held",
+	})
+	if err != nil {
+		t.Fatalf("hold admission: %v", err)
+	}
+	defer lease.Release()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat", strings.NewReader(`{"text":"hello","session_id":"s1"}`))
+	rec := httptest.NewRecorder()
+	srv.handleChat(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, body = %q; want 429", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "runtime busy") {
+		t.Fatalf("body = %q, want runtime busy", rec.Body.String())
+	}
+	if _, err := srv.defaultRuntime().Admission.Acquire(context.Background(), engine.RuntimeAdmissionRequest{AccountID: "alice", ScopeKey: "verify"}); !errors.Is(err, engine.ErrRuntimeAdmissionBusy) {
+		t.Fatalf("admission should still be held during assertion, got %v", err)
 	}
 }
 

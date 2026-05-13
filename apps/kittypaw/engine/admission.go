@@ -74,12 +74,31 @@ func (a *RuntimeAdmission) Acquire(ctx context.Context, req RuntimeAdmissionRequ
 		return nil, nil
 	}
 	scope := a.scopeGate(req.ScopeKey)
-	scopeLease, err := scope.acquire(ctx)
+
+	accountLease, accountOK := a.account.tryAcquire()
+	if accountOK {
+		scopeLease, scopeOK := scope.tryAcquire()
+		if scopeOK {
+			return &RuntimeAdmissionLease{release: func() {
+				accountLease.Release()
+				scopeLease.Release()
+			}}, nil
+		}
+		accountLease.Release()
+	}
+
+	if !a.account.reserveQueueSlot() {
+		return nil, ErrRuntimeAdmissionBusy
+	}
+	defer a.account.releaseQueueSlot()
+
+	scopeLease, err := scope.wait(ctx)
 	if err != nil {
+		scopeLease.Release()
 		return nil, err
 	}
 
-	accountLease, err := a.account.acquire(ctx)
+	accountLease, err = a.account.waitReserved(ctx)
 	if err != nil {
 		scopeLease.Release()
 		return nil, err
@@ -158,17 +177,43 @@ func (g *admissionGate) acquire(ctx context.Context) (*RuntimeAdmissionLease, er
 	if g == nil || g.slots == nil {
 		return &RuntimeAdmissionLease{}, nil
 	}
-	select {
-	case g.slots <- struct{}{}:
-		return &RuntimeAdmissionLease{release: func() { <-g.slots }}, nil
-	default:
+	if lease, ok := g.tryAcquire(); ok {
+		return lease, nil
 	}
-
 	if !g.reserveQueueSlot() {
 		return nil, ErrRuntimeAdmissionBusy
 	}
 	defer g.releaseQueueSlot()
+	return g.waitReserved(ctx)
+}
 
+func (g *admissionGate) tryAcquire() (*RuntimeAdmissionLease, bool) {
+	if g == nil || g.slots == nil {
+		return &RuntimeAdmissionLease{}, true
+	}
+	select {
+	case g.slots <- struct{}{}:
+		return &RuntimeAdmissionLease{release: func() { <-g.slots }}, true
+	default:
+		return nil, false
+	}
+}
+
+func (g *admissionGate) wait(ctx context.Context) (*RuntimeAdmissionLease, error) {
+	if g == nil || g.slots == nil {
+		return &RuntimeAdmissionLease{}, nil
+	}
+	g.mu.Lock()
+	g.queued++
+	g.mu.Unlock()
+	defer g.releaseQueueSlot()
+	return g.waitReserved(ctx)
+}
+
+func (g *admissionGate) waitReserved(ctx context.Context) (*RuntimeAdmissionLease, error) {
+	if g == nil || g.slots == nil {
+		return &RuntimeAdmissionLease{}, nil
+	}
 	select {
 	case g.slots <- struct{}{}:
 		return &RuntimeAdmissionLease{release: func() { <-g.slots }}, nil
