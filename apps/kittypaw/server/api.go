@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -815,7 +816,12 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(chi.URLParam(r, "key"))
+	key, err := url.PathUnescape(chi.URLParam(r, "key"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid memory key")
+		return
+	}
+	key = strings.TrimSpace(key)
 	if key == "" {
 		writeError(w, http.StatusBadRequest, "memory key is required")
 		return

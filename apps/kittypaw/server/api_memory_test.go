@@ -101,3 +101,23 @@ func TestMemoryAPIManagesPromptSafeUserMemory(t *testing.T) {
 		t.Fatal("forget-all must not delete setup rows")
 	}
 }
+
+func TestMemoryAPIDeleteDecodesEscapedSlashKey(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	key := "memory:project/foo"
+	if err := srv.store.SetUserMemory(key, "Project note", "runner"); err != nil {
+		t.Fatalf("SetUserMemory: %v", err)
+	}
+
+	var deleted struct {
+		Success bool `json:"success"`
+		Deleted bool `json:"deleted"`
+	}
+	projectsAPIRequest(t, srv, http.MethodDelete, "/api/v1/memory/"+url.PathEscape(key), nil, http.StatusOK, &deleted)
+	if !deleted.Success || !deleted.Deleted {
+		t.Fatalf("delete response = %+v, want success/deleted", deleted)
+	}
+	if _, ok, _ := srv.store.GetUserContext(key); ok {
+		t.Fatal("slash-containing memory key still exists after delete")
+	}
+}
