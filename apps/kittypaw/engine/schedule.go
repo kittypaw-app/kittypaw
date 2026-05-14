@@ -14,6 +14,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/store"
 )
 
 // Scheduler runs scheduled skills at their configured intervals.
@@ -41,6 +42,8 @@ type SchedulerSnapshot struct {
 	Capacity uint32   `json:"capacity"`
 	Inflight []string `json:"inflight"`
 }
+
+const scheduledRunLeaseDuration = 2 * turnRunMaxTime
 
 // NewScheduler creates a scheduler that uses the given account runtime for execution.
 // pkgManager may be nil if packages are not configured.
@@ -333,7 +336,8 @@ func (s *Scheduler) checkAndRun(ctx context.Context) {
 			continue
 		}
 
-		if s.isDue(&sk.Manifest) {
+		state := s.skillScheduleState(&sk.Manifest, time.Now())
+		if state.Due && state.NextRun != nil {
 			if _, loaded := s.inflight.LoadOrStore(sk.Manifest.Name, struct{}{}); loaded {
 				slog.Debug("scheduler: skill still running, skipping", "name", sk.Manifest.Name)
 				continue
@@ -344,16 +348,29 @@ func (s *Scheduler) checkAndRun(ctx context.Context) {
 				slog.Warn("scheduler: account scheduled job cap reached, skipping tick", "name", sk.Manifest.Name)
 				continue
 			}
+			run, claimed, err := s.claimScheduledRun(sk.Manifest.Name, "skill", sk.Manifest.Name, sk.Manifest.Trigger.Type, *state.NextRun)
+			if err != nil {
+				releaseSlot()
+				s.inflight.Delete(sk.Manifest.Name)
+				slog.Error("scheduler: scheduled run claim failed", "name", sk.Manifest.Name, "error", err)
+				continue
+			}
+			if !claimed {
+				releaseSlot()
+				s.inflight.Delete(sk.Manifest.Name)
+				slog.Debug("scheduler: scheduled run already claimed", "name", sk.Manifest.Name)
+				continue
+			}
 			slog.Info("scheduler: running skill", "name", sk.Manifest.Name, "trigger", sk.Manifest.Trigger.Type)
 			s.wg.Add(1)
-			go func(sk core.SkillManifestWithCode) {
+			go func(sk core.SkillManifestWithCode, run *store.ScheduledRun) {
 				defer s.wg.Done()
 				defer releaseSlot()
 				defer s.inflight.Delete(sk.Manifest.Name)
 				runWithAccountRecover(s.runtime, "scheduler.runSkill", func() {
-					s.runSkill(ctx, &sk)
+					s.runSkillWithScheduledRun(ctx, &sk, run)
 				})
-			}(sk)
+			}(sk, run)
 		}
 	}
 
@@ -380,7 +397,8 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 
 		schedName := "pkg:" + pkg.Meta.ID
 		lastRun, _ := s.runtime.Store.GetLastRun(schedName)
-		if !cronIsDue(pkg.Meta.Cron, lastRun) {
+		nextRun, ok := nextScheduledRun(pkg.Meta.Cron, lastRun, time.Now())
+		if !ok || time.Now().Before(nextRun) {
 			continue
 		}
 
@@ -393,17 +411,29 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 			slog.Warn("scheduler: account scheduled job cap reached, skipping tick", "id", pkg.Meta.ID)
 			continue
 		}
+		run, claimed, err := s.claimScheduledRun(schedName, "package", pkg.Meta.ID, "package", nextRun)
+		if err != nil {
+			releaseSlot()
+			s.inflight.Delete(schedName)
+			slog.Error("scheduler: package scheduled run claim failed", "id", pkg.Meta.ID, "error", err)
+			continue
+		}
+		if !claimed {
+			releaseSlot()
+			s.inflight.Delete(schedName)
+			continue
+		}
 
 		slog.Info("scheduler: running package", "id", pkg.Meta.ID)
 		s.wg.Add(1)
-		go func(pkg core.SkillPackage) {
+		go func(pkg core.SkillPackage, run *store.ScheduledRun) {
 			defer s.wg.Done()
 			defer releaseSlot()
 			defer s.inflight.Delete("pkg:" + pkg.Meta.ID)
 			runWithAccountRecover(s.runtime, "scheduler.runPackage", func() {
-				s.runPackage(ctx, &pkg)
+				s.runPackageWithScheduledRun(ctx, &pkg, run)
 			})
-		}(pkg)
+		}(pkg, run)
 	}
 }
 
@@ -423,17 +453,26 @@ func (s *Scheduler) acquireScheduledSlot() (func(), bool) {
 // to Telegram if the package has telegram config. Packages return their formatted
 // message — the scheduler handles delivery.
 func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
+	s.runPackageWithScheduledRun(ctx, pkg, nil)
+}
+
+func (s *Scheduler) runPackageWithScheduledRun(ctx context.Context, pkg *core.SkillPackage, run *store.ScheduledRun) {
 	schedName := "pkg:" + pkg.Meta.ID
-	if err := s.runtime.Store.SetLastRun(schedName, time.Now()); err != nil {
-		slog.Error("scheduler: SetLastRun failed for package", "id", pkg.Meta.ID, "error", err)
-		return
+	if run == nil {
+		if err := s.runtime.Store.SetLastRun(schedName, time.Now()); err != nil {
+			slog.Error("scheduler: SetLastRun failed for package", "id", pkg.Meta.ID, "error", err)
+			return
+		}
 	}
 
 	// Execute package directly (no LLM loop).
 	resultJSON, err := runSkillOrPackage(ctx, pkg.Meta.ID, s.runtime)
 	if err != nil {
 		slog.Error("scheduler: package execution failed", "id", pkg.Meta.ID, "error", err)
-		_ = s.runtime.Store.IncrementFailureCount(schedName)
+		if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, err) {
+			s.setLastRunFromScheduledRun(schedName, run)
+			_ = s.runtime.Store.IncrementFailureCount(schedName)
+		}
 		return
 	}
 
@@ -441,16 +480,22 @@ func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
 	var result map[string]any
 	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
 		slog.Error("scheduler: parse result failed", "id", pkg.Meta.ID, "error", err)
+		if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, err) {
+			s.setLastRunFromScheduledRun(schedName, run)
+			_ = s.runtime.Store.IncrementFailureCount(schedName)
+		}
 		return
 	}
 	if errMsg, ok := result["error"].(string); ok && errMsg != "" {
 		slog.Error("scheduler: package returned error", "id", pkg.Meta.ID, "error", errMsg)
-		_ = s.runtime.Store.IncrementFailureCount(schedName)
+		if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, errors.New(errMsg)) {
+			s.setLastRunFromScheduledRun(schedName, run)
+			_ = s.runtime.Store.IncrementFailureCount(schedName)
+		}
 		return
 	}
 
 	output, _ := result["output"].(string)
-	_ = s.runtime.Store.ResetFailureCount(schedName)
 
 	// Dispatch output to Telegram if configured.
 	if output != "" && s.pkgManager != nil {
@@ -478,6 +523,10 @@ func (s *Scheduler) runPackage(ctx context.Context, pkg *core.SkillPackage) {
 		if chainErr := s.executeChainSteps(ctx, pkg, output); chainErr != nil {
 			slog.Error("scheduler: chain execution failed", "id", pkg.Meta.ID, "error", chainErr)
 		}
+	}
+	if s.finishScheduledRun(run, store.ScheduledRunStatusSucceeded, nil) {
+		s.setLastRunFromScheduledRun(schedName, run)
+		_ = s.runtime.Store.ResetFailureCount(schedName)
 	}
 }
 
@@ -531,16 +580,91 @@ func (s *Scheduler) executePackageCode(ctx context.Context, pkg *core.SkillPacka
 }
 
 func (s *Scheduler) isDue(skill *core.SkillManifest) bool {
+	return s.skillScheduleState(skill, time.Now()).Due
+}
+
+func (s *Scheduler) skillScheduleState(skill *core.SkillManifest, now time.Time) SkillScheduleState {
 	lastRun, err := s.runtime.Store.GetLastRun(skill.Name)
 	if err != nil {
-		return false
+		return SkillScheduleState{}
 	}
 
 	failCount, _ := s.runtime.Store.GetFailureCount(skill.Name)
-	return SkillScheduleStateFor(skill, lastRun, failCount, time.Now()).Due
+	return SkillScheduleStateFor(skill, lastRun, failCount, now)
+}
+
+func (s *Scheduler) claimScheduledRun(jobKey, jobType, jobID, triggerType string, dueAt time.Time) (*store.ScheduledRun, bool, error) {
+	if s == nil || s.runtime == nil || s.runtime.Store == nil {
+		return nil, true, nil
+	}
+	return s.runtime.Store.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        jobKey,
+		JobType:       jobType,
+		JobID:         jobID,
+		TriggerType:   triggerType,
+		DueAt:         dueAt,
+		Now:           time.Now(),
+		LeaseDuration: scheduledRunLeaseDuration,
+	})
+}
+
+func (s *Scheduler) releaseScheduledRun(run *store.ScheduledRun, reason string) {
+	if run == nil || s == nil || s.runtime == nil || s.runtime.Store == nil {
+		return
+	}
+	if ok, err := s.runtime.Store.ReleaseScheduledRunClaim(run.ID, run.ClaimToken, time.Now(), reason); err != nil {
+		slog.Error("scheduler: release scheduled run claim failed", "run_id", run.ID, "error", err)
+	} else if !ok {
+		slog.Warn("scheduler: scheduled run claim was not released", "run_id", run.ID)
+	}
+}
+
+func (s *Scheduler) finishScheduledRun(run *store.ScheduledRun, status string, runErr error) bool {
+	if run == nil || s == nil || s.runtime == nil || s.runtime.Store == nil {
+		return true
+	}
+	errorClass, errorMessage := scheduledRunErrorDetails(runErr)
+	if ok, err := s.runtime.Store.FinishScheduledRun(run.ID, run.ClaimToken, status, errorClass, errorMessage, time.Now()); err != nil {
+		slog.Error("scheduler: finish scheduled run failed", "run_id", run.ID, "status", status, "error", err)
+		return false
+	} else if !ok {
+		slog.Warn("scheduler: scheduled run claim was not finished", "run_id", run.ID, "status", status)
+		return false
+	}
+	return true
+}
+
+func (s *Scheduler) setLastRunFromScheduledRun(jobKey string, run *store.ScheduledRun) {
+	if run == nil || s == nil || s.runtime == nil || s.runtime.Store == nil {
+		return
+	}
+	lastRunAt := time.Now().UTC()
+	if run.StartedAt != nil {
+		lastRunAt = run.StartedAt.UTC()
+	} else if run.ClaimedAt != nil {
+		lastRunAt = run.ClaimedAt.UTC()
+	}
+	if err := s.runtime.Store.SetLastRun(jobKey, lastRunAt); err != nil {
+		slog.Error("scheduler: SetLastRun failed after scheduled run",
+			"job_key", jobKey, "run_id", run.ID, "last_run_at", lastRunAt, "due_at", run.DueAt, "error", err)
+	}
+}
+
+func scheduledRunErrorDetails(err error) (string, string) {
+	if err == nil {
+		return "", ""
+	}
+	if errors.Is(err, ErrRuntimeAdmissionBusy) {
+		return "runtime_admission_busy", err.Error()
+	}
+	return strings.TrimPrefix(fmt.Sprintf("%T", err), "*"), err.Error()
 }
 
 func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillManifestWithCode) {
+	s.runSkillWithScheduledRun(ctx, sk, nil)
+}
+
+func (s *Scheduler) runSkillWithScheduledRun(ctx context.Context, sk *core.SkillManifestWithCode, run *store.ScheduledRun) {
 	// Create a synthetic event
 	payload, _ := json.Marshal(core.ChatPayload{
 		Text:   "skill:" + sk.Manifest.Name,
@@ -558,14 +682,17 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillManifestWithCode
 		} else {
 			slog.Error("scheduler: admission failed, leaving skill due", "name", sk.Manifest.Name, "error", err)
 		}
+		s.releaseScheduledRun(run, err.Error())
 		return
 	}
 	defer admissionLease.Release()
 
-	if err := s.runtime.Store.SetLastRun(sk.Manifest.Name, time.Now()); err != nil {
-		slog.Error("scheduler: SetLastRun failed, aborting to prevent duplicate execution",
-			"name", sk.Manifest.Name, "trigger", sk.Manifest.Trigger.Type, "error", err)
-		return
+	if run == nil {
+		if err := s.runtime.Store.SetLastRun(sk.Manifest.Name, time.Now()); err != nil {
+			slog.Error("scheduler: SetLastRun failed, aborting to prevent duplicate execution",
+				"name", sk.Manifest.Name, "trigger", sk.Manifest.Trigger.Type, "error", err)
+			return
+		}
 	}
 
 	target := sk.Manifest.Trigger.Delivery
@@ -575,7 +702,10 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillManifestWithCode
 	output, err := s.runtime.Run(runCtx, event, nil)
 	if err != nil {
 		slog.Error("scheduler: skill execution failed", "name", sk.Manifest.Name, "error", err)
-		_ = s.runtime.Store.IncrementFailureCount(sk.Manifest.Name)
+		if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, err) {
+			s.setLastRunFromScheduledRun(sk.Manifest.Name, run)
+			_ = s.runtime.Store.IncrementFailureCount(sk.Manifest.Name)
+		}
 
 		// Auto-delete one-shot skills even on failure.
 		if sk.Manifest.Trigger.Type == "once" {
@@ -587,12 +717,13 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillManifestWithCode
 		return
 	}
 
-	_ = s.runtime.Store.ResetFailureCount(sk.Manifest.Name)
-
 	if strings.TrimSpace(output) != "" && !notificationSent(runCtx) && s.runtime.Notifier != nil && !target.IsZero() {
 		if err := s.runtime.Notifier.SendNotification(ctx, target, output); err != nil {
 			slog.Error("scheduler: skill output delivery failed", "name", sk.Manifest.Name, "error", err)
-			_ = s.runtime.Store.IncrementFailureCount(sk.Manifest.Name)
+			if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, err) {
+				s.setLastRunFromScheduledRun(sk.Manifest.Name, run)
+				_ = s.runtime.Store.IncrementFailureCount(sk.Manifest.Name)
+			}
 			if sk.Manifest.Trigger.Type == "once" {
 				if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Manifest.Name); delErr != nil {
 					slog.Error("scheduler: failed to delete one-shot skill after delivery failure", "name", sk.Manifest.Name, "error", delErr)
@@ -600,6 +731,10 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillManifestWithCode
 			}
 			return
 		}
+	}
+	if s.finishScheduledRun(run, store.ScheduledRunStatusSucceeded, nil) {
+		s.setLastRunFromScheduledRun(sk.Manifest.Name, run)
+		_ = s.runtime.Store.ResetFailureCount(sk.Manifest.Name)
 	}
 
 	// Delete one-shot skills after successful execution

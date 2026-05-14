@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 40 {
-		t.Fatalf("expected 40 migrations, got %d", count)
+	if count != 41 {
+		t.Fatalf("expected 41 migrations, got %d", count)
 	}
 }
 
@@ -2430,6 +2430,138 @@ func TestScheduling(t *testing.T) {
 	fc, _ = st.GetFailureCount("cron-skill")
 	if fc != 0 {
 		t.Errorf("failure count after reset: got %d, want 0", fc)
+	}
+}
+
+func TestScheduledRunClaimLeasePreventsDuplicateAndRecoversExpired(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC)
+	dueAt := time.Date(2026, 5, 15, 9, 5, 0, 0, time.UTC)
+	req := ClaimScheduledRunRequest{
+		JobKey:        "daily-reminder",
+		JobType:       "skill",
+		JobID:         "daily-reminder",
+		TriggerType:   "schedule",
+		DueAt:         dueAt,
+		Now:           now,
+		LeaseDuration: time.Minute,
+	}
+
+	run, claimed, err := st.ClaimScheduledRun(req)
+	if err != nil {
+		t.Fatalf("ClaimScheduledRun: %v", err)
+	}
+	if !claimed {
+		t.Fatal("first claim should be acquired")
+	}
+	if run.ID == 0 || run.Status != ScheduledRunStatusRunning || run.Attempt != 1 {
+		t.Fatalf("run = %+v, want running attempt 1 with id", run)
+	}
+	if run.ClaimToken == "" {
+		t.Fatalf("claim token missing: %+v", run)
+	}
+
+	req.Now = now.Add(30 * time.Second)
+	_, claimed, err = st.ClaimScheduledRun(req)
+	if err != nil {
+		t.Fatalf("second ClaimScheduledRun: %v", err)
+	}
+	if claimed {
+		t.Fatal("unexpired lease should not be claimed twice")
+	}
+
+	req.Now = now.Add(2 * time.Minute)
+	reclaimed, claimed, err := st.ClaimScheduledRun(req)
+	if err != nil {
+		t.Fatalf("expired ClaimScheduledRun: %v", err)
+	}
+	if !claimed {
+		t.Fatal("expired lease should be reclaimable")
+	}
+	if reclaimed.ID != run.ID {
+		t.Fatalf("reclaimed id = %d, want same run id %d", reclaimed.ID, run.ID)
+	}
+	if reclaimed.Attempt != 2 {
+		t.Fatalf("attempt = %d, want 2", reclaimed.Attempt)
+	}
+	if reclaimed.ClaimToken == run.ClaimToken {
+		t.Fatal("reclaim should rotate claim token")
+	}
+
+	ok, err := st.FinishScheduledRun(reclaimed.ID, reclaimed.ClaimToken, ScheduledRunStatusSucceeded, "", "", now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("FinishScheduledRun: %v", err)
+	}
+	if !ok {
+		t.Fatal("finish should update matching claim")
+	}
+	finished, ok, err := st.GetScheduledRun(reclaimed.ID)
+	if err != nil {
+		t.Fatalf("GetScheduledRun: %v", err)
+	}
+	if !ok {
+		t.Fatal("finished run missing")
+	}
+	if finished.Status != ScheduledRunStatusSucceeded || finished.FinishedAt == nil {
+		t.Fatalf("finished run = %+v, want succeeded with finished_at", finished)
+	}
+
+	req.Now = now.Add(4 * time.Minute)
+	_, claimed, err = st.ClaimScheduledRun(req)
+	if err != nil {
+		t.Fatalf("terminal duplicate ClaimScheduledRun: %v", err)
+	}
+	if claimed {
+		t.Fatal("terminal run for same due_at should not be claimed again")
+	}
+}
+
+func TestScheduledRunReleaseMakesClaimAvailableImmediately(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+	req := ClaimScheduledRunRequest{
+		JobKey:        "once-reminder",
+		JobType:       "skill",
+		JobID:         "once-reminder",
+		TriggerType:   "once",
+		DueAt:         now,
+		Now:           now,
+		LeaseDuration: time.Hour,
+	}
+
+	run, claimed, err := st.ClaimScheduledRun(req)
+	if err != nil {
+		t.Fatalf("ClaimScheduledRun: %v", err)
+	}
+	if !claimed {
+		t.Fatal("first claim should be acquired")
+	}
+	ok, err := st.ReleaseScheduledRunClaim(run.ID, run.ClaimToken, now.Add(time.Second), "admission busy")
+	if err != nil {
+		t.Fatalf("ReleaseScheduledRunClaim: %v", err)
+	}
+	if !ok {
+		t.Fatal("release should update matching claim")
+	}
+
+	req.Now = now.Add(2 * time.Second)
+	reclaimed, claimed, err := st.ClaimScheduledRun(req)
+	if err != nil {
+		t.Fatalf("reclaim after release: %v", err)
+	}
+	if !claimed {
+		t.Fatal("released run should be reclaimable before original lease expiry")
+	}
+	if reclaimed.ID != run.ID || reclaimed.Attempt != 2 {
+		t.Fatalf("reclaimed run = %+v, want same id attempt 2", reclaimed)
+	}
+
+	ok, err = st.FinishScheduledRun(reclaimed.ID, run.ClaimToken, ScheduledRunStatusSucceeded, "", "", now.Add(3*time.Second))
+	if err != nil {
+		t.Fatalf("FinishScheduledRun with old token: %v", err)
+	}
+	if ok {
+		t.Fatal("old claim token should not finish reclaimed run")
 	}
 }
 

@@ -546,6 +546,124 @@ func TestRunSkillAdmissionBusyLeavesOnceSkillDue(t *testing.T) {
 	}
 }
 
+func TestRunSkillAdmissionBusyReleasesScheduledRunClaim(t *testing.T) {
+	baseDir := t.TempDir()
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.Runtime.MaxConcurrentTurnsPerAccount = 1
+	cfg.Runtime.MaxQueuedTurnsPerAccount = 0
+	session := &AccountRuntime{
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Admission: NewRuntimeAdmission(RuntimeAdmissionConfig{
+			MaxConcurrentAccount: 1,
+			MaxQueuedAccount:     0,
+			MaxConcurrentScope:   0,
+		}),
+	}
+	lease, err := session.Admission.Acquire(context.Background(), RuntimeAdmissionRequest{
+		AccountID: "alice",
+		ScopeKey:  "held",
+	})
+	if err != nil {
+		t.Fatalf("hold admission: %v", err)
+	}
+	defer lease.Release()
+
+	skill := &core.SkillManifest{
+		Name:        "once-admission-busy",
+		Version:     1,
+		Description: "one-shot reminder",
+		Enabled:     true,
+		Format:      core.SkillFormatScript,
+		Trigger:     core.SkillTrigger{Type: "once"},
+	}
+	if err := core.SaveSkillTo(baseDir, skill, `return "scheduled output";`); err != nil {
+		t.Fatalf("SaveSkillTo: %v", err)
+	}
+	dueAt := time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC)
+	run, claimed, err := st.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        skill.Name,
+		JobType:       "skill",
+		JobID:         skill.Name,
+		TriggerType:   skill.Trigger.Type,
+		DueAt:         dueAt,
+		Now:           dueAt,
+		LeaseDuration: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("ClaimScheduledRun: %v", err)
+	}
+	if !claimed {
+		t.Fatal("scheduled run claim not acquired")
+	}
+
+	sched := NewScheduler(session, nil)
+	sched.runSkillWithScheduledRun(context.Background(), &core.SkillManifestWithCode{
+		Manifest: *skill,
+		Code:     `return "ignored";`,
+	}, run)
+
+	reclaimed, claimed, err := st.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        skill.Name,
+		JobType:       "skill",
+		JobID:         skill.Name,
+		TriggerType:   skill.Trigger.Type,
+		DueAt:         dueAt,
+		Now:           dueAt.Add(time.Second),
+		LeaseDuration: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("reclaim after admission busy: %v", err)
+	}
+	if !claimed {
+		t.Fatal("admission busy should release scheduled run claim immediately")
+	}
+	if reclaimed.ID != run.ID {
+		t.Fatalf("reclaimed id = %d, want %d", reclaimed.ID, run.ID)
+	}
+	if lastRun, _ := st.GetLastRun(skill.Name); lastRun != nil {
+		t.Fatalf("admission busy must not consume last_run_at, got %v", lastRun)
+	}
+}
+
+func TestScheduledRunRecordsAttemptTimeAsLastRun(t *testing.T) {
+	st := newTestStore(t)
+	dueAt := time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC)
+	attemptAt := time.Date(2026, 5, 15, 10, 30, 0, 0, time.UTC)
+	run, claimed, err := st.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        "late-scheduled-skill",
+		JobType:       "skill",
+		JobID:         "late-scheduled-skill",
+		TriggerType:   "schedule",
+		DueAt:         dueAt,
+		Now:           attemptAt,
+		LeaseDuration: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("ClaimScheduledRun: %v", err)
+	}
+	if !claimed {
+		t.Fatal("scheduled run claim not acquired")
+	}
+
+	sched := NewScheduler(&AccountRuntime{Store: st, Config: &core.Config{}}, nil)
+	sched.setLastRunFromScheduledRun("late-scheduled-skill", run)
+
+	lastRun, err := st.GetLastRun("late-scheduled-skill")
+	if err != nil {
+		t.Fatalf("GetLastRun: %v", err)
+	}
+	if lastRun == nil {
+		t.Fatal("last_run_at missing")
+	}
+	if !lastRun.Equal(attemptAt) {
+		t.Fatalf("last_run_at = %s, want attempt time %s, not due_at %s", *lastRun, attemptAt, dueAt)
+	}
+}
+
 func TestDeliverWeeklyReport_WrongDay(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	// Pick a weekday that is NOT today so the day check rejects.
