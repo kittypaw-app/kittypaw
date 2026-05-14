@@ -462,6 +462,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 				r.Get("/conversations/{id}", s.handleConversationInfo)
 				r.Patch("/conversations/{id}", s.handleConversationUpdate)
 				r.Get("/conversations/{id}/messages", s.handleConversationMessages)
+				r.Get("/conversations/{id}/tool-traces", s.handleConversationToolTraces)
 
 				// Config
 				r.Get("/config/check", s.handleConfigCheck)

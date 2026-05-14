@@ -229,13 +229,45 @@ type SkillCall struct {
 // Result is the raw JSON string returned by the resolver so callers can replay
 // or inspect the exact tool output without parsing assistant prose.
 type ToolTrace struct {
-	ID        string            `json:"id"`
-	SkillName string            `json:"skill_name"`
-	Method    string            `json:"method"`
-	Args      []json.RawMessage `json:"args,omitempty"`
-	Result    json.RawMessage   `json:"result,omitempty"`
-	Error     string            `json:"error,omitempty"`
-	Success   bool              `json:"success"`
+	ID              string            `json:"id"`
+	SkillName       string            `json:"skill_name"`
+	Method          string            `json:"method"`
+	Args            []json.RawMessage `json:"args,omitempty"`
+	Result          json.RawMessage   `json:"result,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	Success         bool              `json:"success"`
+	Redacted        bool              `json:"redacted,omitempty"`
+	RedactionReason string            `json:"redaction_reason,omitempty"`
+}
+
+// RedactToolTracesForDisplay removes raw tool args/results/errors from traces
+// before exposing them through user-facing API/UI/export surfaces. The raw
+// trace remains available in the store for local debugging and replay.
+func RedactToolTracesForDisplay(traces []ToolTrace) []ToolTrace {
+	if len(traces) == 0 {
+		return traces
+	}
+	out := make([]ToolTrace, len(traces))
+	for i := range traces {
+		out[i] = RedactToolTraceForDisplay(traces[i])
+	}
+	return out
+}
+
+func RedactToolTraceForDisplay(trace ToolTrace) ToolTrace {
+	if len(trace.Args) == 0 && len(trace.Result) == 0 && trace.Error == "" {
+		return trace
+	}
+	trace.Args = nil
+	if len(trace.Result) > 0 {
+		trace.Result = json.RawMessage(`{"redacted":true}`)
+	}
+	if trace.Error != "" {
+		trace.Error = "[REDACTED]"
+	}
+	trace.Redacted = true
+	trace.RedactionReason = "raw_tool_trace_hidden"
+	return trace
 }
 
 // Observation holds data from a Runner.observe() call in the sandbox.

@@ -129,6 +129,18 @@ type ConversationTurnRecord struct {
 	Timestamp      string           `json:"timestamp"`
 }
 
+type ToolTraceIndexRecord struct {
+	ID             int64  `json:"id"`
+	ConversationID string `json:"conversation_id"`
+	TurnID         int64  `json:"turn_id"`
+	TraceID        string `json:"trace_id"`
+	SkillName      string `json:"skill_name"`
+	Method         string `json:"method"`
+	Success        bool   `json:"success"`
+	ErrorClass     string `json:"error_class,omitempty"`
+	CreatedAt      string `json:"created_at"`
+}
+
 type conversationCompaction struct {
 	StartTurnID int64
 	EndTurnID   int64
@@ -1079,6 +1091,7 @@ func (s *Store) ForgetConversation() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	_, _ = s.db.Exec("DELETE FROM conversation_tool_trace_index")
 	_, _ = s.db.Exec("DELETE FROM conversation_checkpoints")
 	_, _ = s.db.Exec("DELETE FROM conversation_compactions")
 	return res.RowsAffected()
@@ -1092,6 +1105,7 @@ func (s *Store) ForgetConversationByID(conversationID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	_, _ = s.db.Exec("DELETE FROM conversation_tool_trace_index WHERE conversation_id = ?", conversationID)
 	_, _ = s.db.Exec("DELETE FROM conversation_checkpoints WHERE conversation_id = ?", conversationID)
 	_, _ = s.db.Exec("DELETE FROM conversation_compactions WHERE conversation_id = ?", conversationID)
 	return res.RowsAffected()
@@ -1262,7 +1276,7 @@ func (s *Store) CompactConversationByID(conversationID string, keepRecent int) (
 }
 
 func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn, conversationID string) error {
-	_, err := exec.Exec(`
+	res, err := exec.Exec(`
 		INSERT INTO v2_conversation_turns
 			(conversation_id, role, content, code, result, tool_trace_json, staff_id, channel, channel_user_id, chat_id, message_id, timestamp)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1279,7 +1293,102 @@ func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn, convers
 		turn.MessageID,
 		turn.Timestamp,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if len(turn.ToolTraces) == 0 {
+		return nil
+	}
+	turnID, err := res.LastInsertId()
+	if err != nil || turnID == 0 {
+		return err
+	}
+	return insertToolTraceIndex(exec, normalizeConversationID(conversationID), turnID, turn.Timestamp, turn.ToolTraces)
+}
+
+func insertToolTraceIndex(exec sqlExecer, conversationID string, turnID int64, timestamp string, traces []core.ToolTrace) error {
+	createdAt := strings.TrimSpace(timestamp)
+	if createdAt == "" {
+		createdAt = projectNow()
+	}
+	for _, trace := range traces {
+		if _, err := exec.Exec(`
+			INSERT INTO conversation_tool_trace_index (
+				conversation_id, turn_id, trace_id, skill_name, method, success, error_class, created_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			conversationID, turnID, strings.TrimSpace(trace.ID),
+			strings.TrimSpace(trace.SkillName), strings.TrimSpace(trace.Method),
+			boolInt(trace.Success), toolTraceErrorClass(trace), createdAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func toolTraceErrorClass(trace core.ToolTrace) string {
+	if trace.Success {
+		return ""
+	}
+	msg := strings.ToLower(strings.TrimSpace(trace.Error))
+	switch {
+	case msg == "":
+		return "failed"
+	case strings.Contains(msg, "permission"), strings.Contains(msg, "not allowed"), strings.Contains(msg, "denied"):
+		return "permission"
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline"):
+		return "timeout"
+	case strings.Contains(msg, "rate limit"), strings.Contains(msg, "429"):
+		return "rate_limit"
+	case strings.Contains(msg, "not found"):
+		return "not_found"
+	default:
+		return "error"
+	}
+}
+
+func (s *Store) ListToolTraceIndexForConversation(conversationID string, limit int) ([]ToolTraceIndexRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.Query(`
+		SELECT id, conversation_id, turn_id, trace_id, skill_name, method, success, error_class, created_at
+		FROM conversation_tool_trace_index
+		WHERE conversation_id = ?
+		ORDER BY id DESC
+		LIMIT ?`, normalizeConversationID(conversationID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ToolTraceIndexRecord
+	for rows.Next() {
+		var rec ToolTraceIndexRecord
+		var success int
+		if err := rows.Scan(&rec.ID, &rec.ConversationID, &rec.TurnID, &rec.TraceID, &rec.SkillName, &rec.Method, &success, &rec.ErrorClass, &rec.CreatedAt); err != nil {
+			return nil, err
+		}
+		rec.Success = success != 0
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
 }
 
 func (s *Store) loadConversationStateTurnsForConversation(conversationID string, limit int) ([]core.ConversationTurn, error) {
@@ -2216,6 +2325,9 @@ func (s *Store) RollbackToCheckpoint(checkpointID int64) (int, error) {
 	}
 	_, _ = s.db.Exec(
 		"DELETE FROM conversation_compactions WHERE conversation_id = ? AND end_turn_id > ?",
+		normalizeConversationID(conversationID), turnID)
+	_, _ = s.db.Exec(
+		"DELETE FROM conversation_tool_trace_index WHERE conversation_id = ? AND turn_id > ?",
 		normalizeConversationID(conversationID), turnID)
 	n, err := res.RowsAffected()
 	return int(n), err

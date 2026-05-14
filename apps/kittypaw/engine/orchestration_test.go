@@ -317,6 +317,9 @@ func TestExecuteRunnerDelegateRunsFullToolLoopAndAudit(t *testing.T) {
 			t.Fatalf("audit metadata missing %q: %s", want, audit.MetadataJSON)
 		}
 	}
+	if strings.Contains(audit.MetadataJSON, "delegate-tool-ok") || !strings.Contains(audit.MetadataJSON, `"redacted":true`) {
+		t.Fatalf("audit metadata should contain redacted tool trace, got: %s", audit.MetadataJSON)
+	}
 }
 
 func TestExecuteRunnerDelegateAppliesStaffAllowedSkills(t *testing.T) {

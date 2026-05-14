@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 36 {
-		t.Fatalf("expected 36 migrations, got %d", count)
+	if count != 37 {
+		t.Fatalf("expected 37 migrations, got %d", count)
 	}
 }
 
@@ -452,9 +452,67 @@ func TestConversationTurnPersistsToolTraces(t *testing.T) {
 		t.Fatalf("trace result = %s", got.Result)
 	}
 
+	index, err := st.ListToolTraceIndexForConversation(DefaultConversationID, 10)
+	if err != nil {
+		t.Fatalf("ListToolTraceIndexForConversation: %v", err)
+	}
+	if len(index) != 1 {
+		t.Fatalf("trace index = %+v, want one row", index)
+	}
+	if index[0].ConversationID != DefaultConversationID || index[0].TurnID == 0 || index[0].TraceID != trace.ID || index[0].SkillName != "File" || index[0].Method != "edit" || !index[0].Success {
+		t.Fatalf("trace index row = %+v, want File.edit success metadata", index[0])
+	}
+
 	turn := records[0].Turn()
 	if len(turn.ToolTraces) != 1 || turn.ToolTraces[0].ID != trace.ID {
 		t.Fatalf("Turn() lost tool traces: %+v", turn.ToolTraces)
+	}
+}
+
+func TestToolTraceIndexMigrationBackfillsExistingRawTraces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kittypaw.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open initial: %v", err)
+	}
+	if err := st.EnsureConversation("general:legacy-trace", "general", "legacy-trace"); err != nil {
+		t.Fatalf("EnsureConversation: %v", err)
+	}
+	if _, err := st.db.Exec(`DROP TABLE conversation_tool_trace_index`); err != nil {
+		t.Fatalf("drop trace index: %v", err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM _migrations WHERE filename = '036_conversation_tool_trace_index.sql'`); err != nil {
+		t.Fatalf("delete migration row: %v", err)
+	}
+	if _, err := st.db.Exec(`
+		INSERT INTO v2_conversation_turns (
+			conversation_id, role, content, tool_trace_json, timestamp
+		)
+		VALUES (?, ?, ?, ?, ?)`,
+		"general:legacy-trace", "assistant", "legacy trace",
+		`[{"id":"skill_call_legacy","skill_name":"Env","method":"get","args":["OPENAI_API_KEY"],"result":{"value":"sk-legacy-secret"},"success":true}]`,
+		"2026-05-14 10:00:00"); err != nil {
+		t.Fatalf("insert legacy trace turn: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close initial: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open migrated: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close() })
+
+	index, err := reopened.ListToolTraceIndexForConversation("general:legacy-trace", 10)
+	if err != nil {
+		t.Fatalf("ListToolTraceIndexForConversation: %v", err)
+	}
+	if len(index) != 1 {
+		t.Fatalf("trace index = %+v, want backfilled legacy row", index)
+	}
+	if index[0].TraceID != "skill_call_legacy" || index[0].SkillName != "Env" || index[0].Method != "get" || !index[0].Success {
+		t.Fatalf("backfilled index row = %+v, want Env.get success", index[0])
 	}
 }
 

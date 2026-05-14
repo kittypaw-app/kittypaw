@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"testing"
@@ -104,6 +105,84 @@ func TestConversationsAPIListsInfoAndMessages(t *testing.T) {
 	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/conversations/"+escapedID+"/messages", nil, http.StatusOK, &messages)
 	if len(messages.Turns) != 1 || messages.Turns[0].Content != "project message" {
 		t.Fatalf("messages = %+v, want project message", messages.Turns)
+	}
+}
+
+func TestConversationMessagesAPIRedactsToolTraceResults(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	trace := core.ToolTrace{
+		ID:        "skill_call_1",
+		SkillName: "Env",
+		Method:    "get",
+		Args:      []json.RawMessage{json.RawMessage(`"OPENAI_API_KEY"`)},
+		Result:    json.RawMessage(`{"value":"sk-secret-value"}`),
+		Success:   true,
+	}
+	if err := srv.store.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: store.DefaultConversationID,
+		Role:           core.RoleAssistant,
+		Content:        "checked env",
+		ToolTraces:     []core.ToolTrace{trace},
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("add trace turn: %v", err)
+	}
+
+	var raw struct {
+		Turns []struct {
+			ToolTraces []core.ToolTrace `json:"tool_traces"`
+		} `json:"turns"`
+	}
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/conversations/"+url.PathEscape(store.DefaultConversationID)+"/messages", nil, http.StatusOK, &raw)
+	if len(raw.Turns) != 1 || len(raw.Turns[0].ToolTraces) != 1 {
+		t.Fatalf("messages = %+v, want one tool trace", raw.Turns)
+	}
+	got := raw.Turns[0].ToolTraces[0]
+	if !got.Redacted {
+		t.Fatalf("trace = %+v, want redacted trace", got)
+	}
+	if string(got.Result) == `{"value":"sk-secret-value"}` || string(got.Result) == "" {
+		t.Fatalf("redacted trace result = %s, want non-secret marker", got.Result)
+	}
+
+	records, err := srv.store.ListConversationTurnsForConversation(store.DefaultConversationID, 10)
+	if err != nil {
+		t.Fatalf("ListConversationTurnsForConversation: %v", err)
+	}
+	if len(records) != 1 || string(records[0].ToolTraces[0].Result) != `{"value":"sk-secret-value"}` {
+		t.Fatalf("raw stored trace = %+v, want original result preserved", records)
+	}
+}
+
+func TestConversationToolTracesAPIListsIndexedMetadataOnly(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	if err := srv.store.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: store.DefaultConversationID,
+		Role:           core.RoleAssistant,
+		Content:        "checked env",
+		ToolTraces: []core.ToolTrace{{
+			ID:        "skill_call_1",
+			SkillName: "Env",
+			Method:    "get",
+			Args:      []json.RawMessage{json.RawMessage(`"OPENAI_API_KEY"`)},
+			Result:    json.RawMessage(`{"value":"sk-secret-value"}`),
+			Success:   true,
+		}},
+		Timestamp: "1",
+	}); err != nil {
+		t.Fatalf("add trace turn: %v", err)
+	}
+
+	var body struct {
+		ToolTraces []store.ToolTraceIndexRecord `json:"tool_traces"`
+	}
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/conversations/"+url.PathEscape(store.DefaultConversationID)+"/tool-traces", nil, http.StatusOK, &body)
+	if len(body.ToolTraces) != 1 {
+		t.Fatalf("tool traces = %+v, want one index row", body.ToolTraces)
+	}
+	got := body.ToolTraces[0]
+	if got.ConversationID != store.DefaultConversationID || got.TraceID != "skill_call_1" || got.SkillName != "Env" || got.Method != "get" || !got.Success {
+		t.Fatalf("tool trace index row = %+v, want Env.get success metadata", got)
 	}
 }
 

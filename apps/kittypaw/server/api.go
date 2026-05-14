@@ -197,6 +197,7 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	turns = redactConversationTurnRecords(turns)
 	turnsOut := any(turns)
 	if turns == nil {
 		turnsOut = []any{}
@@ -456,11 +457,59 @@ func (s *Server) handleConversationMessages(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	turns = redactConversationTurnRecords(turns)
 	out := any(turns)
 	if turns == nil {
 		out = []any{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"turns": out})
+}
+
+func redactConversationTurnRecords(turns []store.ConversationTurnRecord) []store.ConversationTurnRecord {
+	if len(turns) == 0 {
+		return turns
+	}
+	out := make([]store.ConversationTurnRecord, len(turns))
+	copy(out, turns)
+	for i := range out {
+		out[i].ToolTraces = core.RedactToolTracesForDisplay(out[i].ToolTraces)
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/conversations/{id}/tool-traces
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleConversationToolTraces(w http.ResponseWriter, r *http.Request) {
+	conversationID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if conversationID == "" {
+		writeError(w, http.StatusBadRequest, "conversation id is required")
+		return
+	}
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	if _, ok, err := s.store.Conversation(conversationID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
+		writeError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	traces, err := s.store.ListToolTraceIndexForConversation(conversationID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := any(traces)
+	if traces == nil {
+		out = []any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tool_traces": out})
 }
 
 // ---------------------------------------------------------------------------

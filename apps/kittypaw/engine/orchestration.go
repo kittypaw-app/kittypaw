@@ -448,7 +448,7 @@ func recordDelegationExecution(s *AccountRuntime, task PMTaskSpec, result Delega
 		"duration_ms":              time.Since(start).Milliseconds(),
 	}
 	if traces := latestDelegateToolTraces(s.Store, delegateConversationID); len(traces) > 0 {
-		metadata["tool_traces"] = traces
+		metadata["tool_traces"] = core.RedactToolTracesForDisplay(traces)
 	}
 	metadataJSON := ""
 	if data, err := json.Marshal(metadata); err == nil {
