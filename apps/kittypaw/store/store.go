@@ -44,7 +44,13 @@ type WorkspaceFTSRow struct {
 // DTO structs
 // ---------------------------------------------------------------------------
 
-const DefaultConversationID = "general:account"
+const (
+	DefaultConversationID                   = "general:account"
+	ConversationTitleSourceManual           = "manual"
+	ConversationTitleSourceAutoFirstMessage = "auto_first_message"
+)
+
+const maxConversationTitleRunes = 80
 
 // ConversationRecord describes a first-class conversation/thread.
 type ConversationRecord struct {
@@ -53,6 +59,7 @@ type ConversationRecord struct {
 	ScopeType            string `json:"scope_type"`
 	ScopeID              string `json:"scope_id"`
 	Title                string `json:"title"`
+	TitleSource          string `json:"title_source,omitempty"`
 	DefaultStaffID       string `json:"default_staff_id,omitempty"`
 	SourceChannel        string `json:"source_channel,omitempty"`
 	SourceSessionID      string `json:"source_session_id,omitempty"`
@@ -419,6 +426,29 @@ func normalizeConversationScope(scopeType, scopeID string) (string, string) {
 	return scopeType, scopeID
 }
 
+func normalizeConversationTitle(title string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	title = strings.Trim(title, " \t\r\n`\"'")
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	runes := []rune(title)
+	if len(runes) <= maxConversationTitleRunes {
+		return title
+	}
+	title = strings.TrimSpace(string(runes[:maxConversationTitleRunes]))
+	return strings.TrimRight(title, " .,;:!?/\\-_")
+}
+
+func autoConversationTitleFromContent(content string) string {
+	title := normalizeConversationTitle(content)
+	if title == "" {
+		return ""
+	}
+	return title
+}
+
 func ensureConversationTx(exec sqlExecer, conversationID, scopeType, scopeID, now string) error {
 	conversationID = normalizeConversationID(conversationID)
 	scopeType, scopeID = normalizeConversationScope(scopeType, scopeID)
@@ -512,6 +542,11 @@ func (s *Store) CreateConversation(req CreateConversationRequest) (*Conversation
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	title := normalizeConversationTitle(req.Title)
+	titleSource := ""
+	if title != "" {
+		titleSource = ConversationTitleSourceManual
+	}
 
 	if _, err := tx.Exec(`
 		INSERT INTO conversation_scope (conversation_id, scope_type, scope_id, created_at, updated_at)
@@ -521,13 +556,13 @@ func (s *Store) CreateConversation(req CreateConversationRequest) (*Conversation
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO conversations (
-			id, scope_type, scope_id, title, default_staff_id,
+			id, scope_type, scope_id, title, title_source, default_staff_id,
 			source_channel, source_session_id, chat_id,
 			parent_conversation_id, rollover_reason, rollover_from_turn_id,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		conversationID, scopeType, scopeID, strings.TrimSpace(req.Title),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		conversationID, scopeType, scopeID, title, titleSource,
 		strings.TrimSpace(req.DefaultStaffID), strings.TrimSpace(req.SourceChannel),
 		strings.TrimSpace(req.SourceSessionID), strings.TrimSpace(req.ChatID),
 		strings.TrimSpace(req.ParentConversationID), strings.TrimSpace(req.RolloverReason),
@@ -544,7 +579,7 @@ func (s *Store) CreateConversation(req CreateConversationRequest) (*Conversation
 // Conversation returns one conversation record.
 func (s *Store) Conversation(conversationID string) (*ConversationRecord, bool, error) {
 	rec, err := scanConversationRecord(s.db.QueryRow(`
-		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title,
+		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title, c.title_source,
 		       c.default_staff_id, c.source_channel, c.source_session_id,
 		       c.chat_id, c.parent_conversation_id, c.rollover_reason,
 		       c.rollover_from_turn_id, c.archived_at, c.created_at, c.updated_at,
@@ -600,13 +635,42 @@ func (s *Store) SetConversationDefaultStaff(conversationID, staffID string) (*Co
 	return rec, err
 }
 
+// SetConversationTitle updates a conversation title and marks it as user-authored.
+func (s *Store) SetConversationTitle(conversationID, title string) (*ConversationRecord, error) {
+	conversationID = normalizeConversationID(conversationID)
+	title = normalizeConversationTitle(title)
+	if conversationID == "" {
+		return nil, errors.New("conversation id is required")
+	}
+	if title == "" {
+		return nil, errors.New("conversation title is required")
+	}
+	res, err := s.db.Exec(`
+		UPDATE conversations
+		SET title = ?, title_source = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		title, ConversationTitleSourceManual, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, errors.New("conversation not found")
+	}
+	rec, _, err := s.Conversation(conversationID)
+	return rec, err
+}
+
 // ListConversations returns non-archived conversations ordered by activity.
 func (s *Store) ListConversations(limit int) ([]ConversationRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.Query(`
-		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title,
+		SELECT c.id, c.account_id, c.scope_type, c.scope_id, c.title, c.title_source,
 		       c.default_staff_id, c.source_channel, c.source_session_id,
 		       c.chat_id, c.parent_conversation_id, c.rollover_reason,
 		       c.rollover_from_turn_id, c.archived_at, c.created_at, c.updated_at,
@@ -645,7 +709,7 @@ func scanConversationRecord(row interface {
 }) (*ConversationRecord, error) {
 	var rec ConversationRecord
 	if err := row.Scan(
-		&rec.ID, &rec.AccountID, &rec.ScopeType, &rec.ScopeID, &rec.Title,
+		&rec.ID, &rec.AccountID, &rec.ScopeType, &rec.ScopeID, &rec.Title, &rec.TitleSource,
 		&rec.DefaultStaffID, &rec.SourceChannel, &rec.SourceSessionID,
 		&rec.ChatID, &rec.ParentConversationID, &rec.RolloverReason,
 		&rec.RolloverFromTurnID, &rec.ArchivedAt, &rec.CreatedAt, &rec.UpdatedAt,
@@ -954,6 +1018,11 @@ func (s *Store) AddConversationTurn(turn *core.ConversationTurn) error {
 	if err := ensureConversationTx(tx, identity.ID, identity.ScopeType, identity.ScopeID, projectNow()); err != nil {
 		return err
 	}
+	if turn.Role == core.RoleUser {
+		if err := maybeSetAutoConversationTitleTx(tx, identity.ID, turn.Content); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO conversation_state (id, updated_at)
 		VALUES (1, datetime('now'))
@@ -969,6 +1038,39 @@ func (s *Store) AddConversationTurn(turn *core.ConversationTurn) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func maybeSetAutoConversationTitleTx(tx *sql.Tx, conversationID, content string) error {
+	title := autoConversationTitleFromContent(content)
+	if title == "" {
+		return nil
+	}
+
+	var currentTitle, titleSource string
+	var messageCount int
+	if err := tx.QueryRow(`
+		SELECT c.title, c.title_source, COUNT(t.id)
+		FROM conversations c
+		LEFT JOIN v2_conversation_turns t ON t.conversation_id = c.id
+		WHERE c.id = ?
+		GROUP BY c.id`,
+		conversationID).Scan(&currentTitle, &titleSource, &messageCount); err != nil {
+		return err
+	}
+	if messageCount != 0 || strings.TrimSpace(titleSource) != "" {
+		return nil
+	}
+
+	currentTitle = strings.TrimSpace(currentTitle)
+	if currentTitle != "" && !(conversationID == DefaultConversationID && currentTitle == "General") {
+		return nil
+	}
+	_, err := tx.Exec(`
+		UPDATE conversations
+		SET title = ?, title_source = ?
+		WHERE id = ?`,
+		title, ConversationTitleSourceAutoFirstMessage, conversationID)
+	return err
 }
 
 // ForgetConversation clears all account conversation turns and checkpoints.

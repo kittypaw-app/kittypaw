@@ -30,8 +30,82 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 35 {
-		t.Fatalf("expected 35 migrations, got %d", count)
+	if count != 36 {
+		t.Fatalf("expected 36 migrations, got %d", count)
+	}
+}
+
+func TestConversationTitleAutoSetFromFirstUserTurn(t *testing.T) {
+	st := openTestStore(t)
+
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: "general:auto-title",
+		Role:           core.RoleUser,
+		Content:        "Gemini에서 OpenAI로 provider 바꾸는 작업 도와줘\n\n세부 내용",
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("AddConversationTurn: %v", err)
+	}
+
+	conv, ok, err := st.Conversation("general:auto-title")
+	if err != nil || !ok {
+		t.Fatalf("Conversation ok=%v err=%v", ok, err)
+	}
+	if conv.Title != "Gemini에서 OpenAI로 provider 바꾸는 작업 도와줘 세부 내용" {
+		t.Fatalf("Title = %q", conv.Title)
+	}
+	if conv.TitleSource != "auto_first_message" {
+		t.Fatalf("TitleSource = %q, want auto_first_message", conv.TitleSource)
+	}
+}
+
+func TestConversationTitleAutoSetReplacesDefaultPlaceholder(t *testing.T) {
+	st := openTestStore(t)
+
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: DefaultConversationID,
+		Role:           core.RoleUser,
+		Content:        "오늘 회의록 정리해줘",
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("AddConversationTurn: %v", err)
+	}
+
+	conv, ok, err := st.Conversation(DefaultConversationID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation ok=%v err=%v", ok, err)
+	}
+	if conv.Title != "오늘 회의록 정리해줘" {
+		t.Fatalf("Title = %q, want auto title", conv.Title)
+	}
+}
+
+func TestConversationTitleAutoDoesNotOverwriteManualTitle(t *testing.T) {
+	st := openTestStore(t)
+	conv, err := st.CreateConversation(CreateConversationRequest{
+		ScopeType: "general",
+		ScopeID:   "manual-title",
+		Title:     "수동 제목",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	if err := st.AddConversationTurn(&core.ConversationTurn{
+		ConversationID: conv.ID,
+		Role:           core.RoleUser,
+		Content:        "자동 제목 후보",
+		Timestamp:      "1",
+	}); err != nil {
+		t.Fatalf("AddConversationTurn: %v", err)
+	}
+
+	got, ok, err := st.Conversation(conv.ID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation ok=%v err=%v", ok, err)
+	}
+	if got.Title != "수동 제목" || got.TitleSource != "manual" {
+		t.Fatalf("conversation = %+v, want manual title preserved", got)
 	}
 }
 

@@ -162,6 +162,31 @@ func TestConversationsAPIUpdatesDefaultStaffID(t *testing.T) {
 	}
 }
 
+func TestConversationsAPIUpdatesTitle(t *testing.T) {
+	srv := newProjectsAPITestServer(t)
+	conv, err := srv.store.CreateConversation(store.CreateConversationRequest{
+		ScopeType: "general",
+		ScopeID:   "rename",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	var updated struct {
+		Conversation struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			TitleSource string `json:"title_source"`
+		} `json:"conversation"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPatch, "/api/v1/conversations/"+url.PathEscape(conv.ID), map[string]string{
+		"title": "Provider Migration",
+	}, http.StatusOK, &updated)
+	if updated.Conversation.ID != conv.ID || updated.Conversation.Title != "Provider Migration" || updated.Conversation.TitleSource != "manual" {
+		t.Fatalf("updated conversation = %+v, want manual title", updated.Conversation)
+	}
+}
+
 func seedServerActiveStaff(t *testing.T, base, id, soul string) {
 	t.Helper()
 	if err := core.WriteStaffDraft(base, core.StaffMetaFile{ID: id}, soul); err != nil {

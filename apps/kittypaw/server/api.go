@@ -353,17 +353,29 @@ func (s *Server) handleConversationUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body struct {
+		Title          *string `json:"title"`
 		DefaultStaffID *string `json:"default_staff_id"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.DefaultStaffID == nil {
-		writeError(w, http.StatusBadRequest, "default_staff_id is required")
+	if body.Title == nil && body.DefaultStaffID == nil {
+		writeError(w, http.StatusBadRequest, "title or default_staff_id is required")
 		return
 	}
-	staffID := strings.TrimSpace(*body.DefaultStaffID)
-	if staffID != "" {
+	title := ""
+	if body.Title != nil {
+		title = strings.TrimSpace(*body.Title)
+		if title == "" {
+			writeError(w, http.StatusBadRequest, "conversation title is required")
+			return
+		}
+	}
+	staffID := ""
+	if body.DefaultStaffID != nil {
+		staffID = strings.TrimSpace(*body.DefaultStaffID)
+	}
+	if body.DefaultStaffID != nil && staffID != "" {
 		sess := s.defaultRuntime()
 		if sess == nil {
 			writeError(w, http.StatusInternalServerError, "session unavailable")
@@ -385,13 +397,32 @@ func (s *Server) handleConversationUpdate(w http.ResponseWriter, r *http.Request
 		}
 		staffID = resolved
 	}
-	conversation, err := s.store.SetConversationDefaultStaff(conversationID, staffID)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeError(w, http.StatusNotFound, err.Error())
+	var conversation *store.ConversationRecord
+	var err error
+	if body.Title != nil {
+		conversation, err = s.store.SetConversationTitle(conversationID, title)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
+	}
+	if body.DefaultStaffID != nil {
+		conversation, err = s.store.SetConversationDefaultStaff(conversationID, staffID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if conversation == nil {
+		writeError(w, http.StatusInternalServerError, "conversation update failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conversation": conversation})

@@ -518,6 +518,52 @@ func TestConversationCommandShowsRolloverMetadata(t *testing.T) {
 	}
 }
 
+func TestConversationCommandRenamesCurrentConversation(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/conversation rename Provider Migration", sess)
+	if !handled {
+		t.Fatal("/conversation rename was not handled")
+	}
+	if !strings.Contains(out, "Provider Migration") {
+		t.Fatalf("/conversation rename output = %q, want new title", out)
+	}
+
+	conv, ok, err := st.Conversation(store.DefaultConversationID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation ok=%v err=%v", ok, err)
+	}
+	if conv.Title != "Provider Migration" || conv.TitleSource != "manual" {
+		t.Fatalf("conversation = %+v, want manual title", conv)
+	}
+}
+
+func TestConversationCommandRenamesLazilyCreatedSourceConversation(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
+	event := slashCommandEvent(t, "/conversation rename Fresh Thread")
+	conversationID := conversationKeyForEvent(sess, &event)
+
+	out, err := sess.Run(context.Background(), event, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(out, "실패") || !strings.Contains(out, "Fresh Thread") {
+		t.Fatalf("/conversation rename output = %q, want successful rename", out)
+	}
+
+	conv, ok, err := st.Conversation(conversationID)
+	if err != nil || !ok {
+		t.Fatalf("Conversation(%q) ok=%v err=%v", conversationID, ok, err)
+	}
+	if conv.Title != "Fresh Thread" || conv.TitleSource != "manual" {
+		t.Fatalf("conversation = %+v, want manual title", conv)
+	}
+}
+
 func TestConversationCommandKeepsSessionAlias(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()

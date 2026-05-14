@@ -114,12 +114,17 @@ var slashCommandRegistry = []slashCommand{
 	},
 	{
 		Name:          "/conversation",
-		Usage:         "/conversation",
-		Summary:       "현재 대화 진단 정보",
+		Usage:         "/conversation [rename <title>]",
+		Summary:       "현재 대화 진단 정보 및 제목 변경",
 		HiddenAliases: []string{"/session"},
-		Risk:          "read",
-		Handler: func(ctx context.Context, _ []string, s *AccountRuntime) slashCommandResult {
-			return slashCommandText(handleConversation(ctx, s))
+		Risk:          "mixed",
+		History:       true,
+		Details: []string{
+			"/conversation",
+			"/conversation rename <title>",
+		},
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
+			return slashCommandResult{Text: handleConversationCommand(ctx, args, s), RecordHistory: conversationCommandRecordsHistory(args)}
 		},
 	},
 	{
@@ -441,6 +446,12 @@ func handleConversation(ctx context.Context, s *AccountRuntime) string {
 	}
 
 	if conversation, ok, err := s.Store.Conversation(conversationID); err == nil && ok {
+		if conversation.Title != "" {
+			fmt.Fprintf(&sb, "title: %s\n", conversation.Title)
+		}
+		if conversation.TitleSource != "" {
+			fmt.Fprintf(&sb, "title_source: %s\n", conversation.TitleSource)
+		}
 		if conversation.ParentConversationID != "" {
 			fmt.Fprintf(&sb, "parent_conversation: %s\n", conversation.ParentConversationID)
 		}
@@ -488,6 +499,60 @@ func handleConversation(ctx context.Context, s *AccountRuntime) string {
 	latest := checkpoints[0]
 	fmt.Fprintf(&sb, "checkpoint: #%d %s (turn: %d)", latest.ID, latest.Label, latest.TurnID)
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleConversationCommand(ctx context.Context, args []string, s *AccountRuntime) string {
+	if len(args) == 0 {
+		return handleConversation(ctx, s)
+	}
+	switch strings.ToLower(args[0]) {
+	case "rename":
+		if len(args) == 1 {
+			return "사용법: /conversation rename <title>"
+		}
+		return handleConversationRename(ctx, strings.Join(args[1:], " "), s)
+	default:
+		return "사용법: /conversation [rename <title>]"
+	}
+}
+
+func handleConversationRename(ctx context.Context, title string, s *AccountRuntime) string {
+	if s == nil || s.Store == nil {
+		return "store가 준비되지 않았습니다."
+	}
+	conversationID := commandConversationID(ctx, s)
+	if err := ensureConversationExistsForRename(s, conversationID); err != nil {
+		return fmt.Sprintf("대화 제목 변경 실패: %s", err)
+	}
+	conversation, err := s.Store.SetConversationTitle(conversationID, title)
+	if err != nil {
+		return fmt.Sprintf("대화 제목 변경 실패: %s", err)
+	}
+	return fmt.Sprintf("대화 제목을 %q로 변경했습니다.", conversation.Title)
+}
+
+func ensureConversationExistsForRename(s *AccountRuntime, conversationID string) error {
+	if s == nil || s.Store == nil {
+		return nil
+	}
+	if scope, ok, err := s.Store.ConversationScope(conversationID); err != nil {
+		return err
+	} else if ok {
+		return s.Store.EnsureConversation(scope.ConversationID, scope.ScopeType, scope.ScopeID)
+	}
+	if _, ok, err := s.Store.Conversation(conversationID); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
+	if strings.HasPrefix(conversationID, "general:") {
+		return s.Store.EnsureConversation(conversationID, "general", strings.TrimPrefix(conversationID, "general:"))
+	}
+	return nil
+}
+
+func conversationCommandRecordsHistory(args []string) bool {
+	return len(args) > 0 && strings.EqualFold(args[0], "rename")
 }
 
 func handleContext(ctx context.Context, s *AccountRuntime) string {
