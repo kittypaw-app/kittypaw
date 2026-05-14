@@ -720,6 +720,52 @@ func TestCompactConversationByIDOnlySummarizesThatConversation(t *testing.T) {
 	}
 }
 
+func TestCompactConversationFallbackSummarySkipsSecretLookingSnippets(t *testing.T) {
+	st := openTestStore(t)
+
+	for _, content := range []string{
+		"The API key is sk-secret-1234567890 and should not be repeated.",
+		"Goal: continue provider migration without leaking credentials.",
+		"old assistant response",
+		"recent-0",
+		"recent-1",
+	} {
+		role := core.RoleUser
+		if content == "old assistant response" {
+			role = core.RoleAssistant
+		}
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			Role:      role,
+			Content:   content,
+			Timestamp: content,
+		}); err != nil {
+			t.Fatalf("AddConversationTurn(%q): %v", content, err)
+		}
+	}
+
+	compacted, err := st.CompactConversation(2)
+	if err != nil {
+		t.Fatalf("CompactConversation: %v", err)
+	}
+	if compacted != 3 {
+		t.Fatalf("compacted = %d, want 3", compacted)
+	}
+	state, err := st.LoadConversationState()
+	if err != nil {
+		t.Fatalf("LoadConversationState: %v", err)
+	}
+	if len(state.Turns) != 3 {
+		t.Fatalf("turns = %+v, want summary + 2 recent", state.Turns)
+	}
+	summary := state.Turns[0].Content
+	if strings.Contains(summary, "sk-secret") || strings.Contains(summary, "API key") {
+		t.Fatalf("summary leaked secret-looking snippet:\n%s", summary)
+	}
+	if !strings.Contains(summary, "provider migration") {
+		t.Fatalf("summary lost safe goal snippet:\n%s", summary)
+	}
+}
+
 func conversationTurnContents(turns []core.ConversationTurn) []string {
 	out := make([]string, 0, len(turns))
 	for _, turn := range turns {

@@ -627,7 +627,7 @@ func handleCompactCommand(ctx context.Context, args []string, s *AccountRuntime)
 		keepRecent = n
 	}
 	conversationID := commandConversationID(ctx, s)
-	compacted, err := s.Store.CompactConversationByID(conversationID, keepRecent)
+	compacted, err := compactConversationWithSemanticSummary(ctx, s, conversationID, keepRecent)
 	if err != nil {
 		return fmt.Sprintf("compact 실행 실패: %s", err), false
 	}

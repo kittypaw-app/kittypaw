@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/llm"
 	"github.com/jinto/kittypaw/sandbox"
 	"github.com/jinto/kittypaw/store"
 )
@@ -536,6 +537,85 @@ func TestCompactCommandCompactsCurrentConversation(t *testing.T) {
 	}
 	if got := len(generalState.Turns); got != 5 {
 		t.Fatalf("general turns = %d, want un-compacted 5", got)
+	}
+}
+
+func TestCompactCommandStoresSemanticSummaryWhenProviderAvailable(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	provider := &mockProvider{responses: []*llm.Response{mockResp("## Current Goal\nPreserve the provider migration decision and pending tests.")}}
+	sess := &AccountRuntime{Store: st, Config: &cfg, Provider: provider, AccountID: "alice"}
+
+	for i := 0; i < 5; i++ {
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			ConversationID: "project:alpha",
+			Role:           core.RoleUser,
+			Content:        "Move all vendor API calls behind one provider boundary.",
+			Timestamp:      string(rune('a' + i)),
+		}); err != nil {
+			t.Fatalf("AddConversationTurn(project %d): %v", i, err)
+		}
+	}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), "project:alpha"), "/compact 2", sess)
+	if !handled {
+		t.Fatal("/compact was not handled")
+	}
+	if !strings.Contains(out, "turns_compacted: 3") {
+		t.Fatalf("/compact output = %q, want compacted count", out)
+	}
+	if provider.callIdx != 1 {
+		t.Fatalf("provider calls = %d, want 1 semantic compaction call", provider.callIdx)
+	}
+
+	state, err := st.LoadConversationStateForChat("project:alpha")
+	if err != nil {
+		t.Fatalf("LoadConversationStateForChat(project): %v", err)
+	}
+	if len(state.Turns) != 3 {
+		t.Fatalf("state turns = %d, want summary + 2 recent", len(state.Turns))
+	}
+	summary := state.Turns[0].Content
+	if !strings.Contains(summary, "Preserve the provider migration decision") {
+		t.Fatalf("summary = %q, want semantic provider summary", summary)
+	}
+	if strings.Contains(summary, "오래된 대화 3개") {
+		t.Fatalf("summary = %q, want semantic summary instead of deterministic count", summary)
+	}
+}
+
+func TestCompactCommandFallsBackToDeterministicSummaryWhenSemanticSummaryFails(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{Store: st, Config: &cfg, Provider: &mockProvider{}, AccountID: "alice"}
+
+	for i := 0; i < 5; i++ {
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			ConversationID: store.DefaultConversationID,
+			Role:           core.RoleUser,
+			Content:        "keep this conversation compactable",
+			Timestamp:      string(rune('a' + i)),
+		}); err != nil {
+			t.Fatalf("AddConversationTurn(%d): %v", i, err)
+		}
+	}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), store.DefaultConversationID), "/compact 2", sess)
+	if !handled {
+		t.Fatal("/compact was not handled")
+	}
+	if !strings.Contains(out, "turns_compacted: 3") {
+		t.Fatalf("/compact output = %q, want fallback compaction success", out)
+	}
+
+	state, err := st.LoadConversationState()
+	if err != nil {
+		t.Fatalf("LoadConversationState: %v", err)
+	}
+	if len(state.Turns) != 3 ||
+		!strings.Contains(state.Turns[0].Content, "오래된 대화 3개") ||
+		!strings.Contains(state.Turns[0].Content, "keep this conversation compactable") {
+		t.Fatalf("state turns = %+v, want semantic fallback summary + 2 recent", state.Turns)
 	}
 }
 

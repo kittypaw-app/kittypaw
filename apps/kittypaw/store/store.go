@@ -148,6 +148,17 @@ type conversationCompaction struct {
 	CreatedAt   string
 }
 
+// ConversationCompactionPlan is the immutable target range for a conversation
+// compaction. The store owns range selection and insertion; callers may provide
+// a semantic summary for this exact range without reimplementing scope rules.
+type ConversationCompactionPlan struct {
+	ConversationID string
+	KeepRecent     int
+	OldTurns       []ConversationTurnRecord
+	StartTurnID    int64
+	EndTurnID      int64
+}
+
 // ExecutionRecord captures one skill execution for history/analysis.
 type ExecutionRecord struct {
 	ID            int64
@@ -1242,20 +1253,66 @@ func (s *Store) CompactConversation(keepRecent int) (int, error) {
 // CompactConversationByID records a summary for one conversation while
 // preserving every raw turn in v2_conversation_turns.
 func (s *Store) CompactConversationByID(conversationID string, keepRecent int) (int, error) {
+	plan, err := s.PrepareConversationCompaction(conversationID, keepRecent)
+	if err != nil {
+		return 0, err
+	}
+	return s.SaveConversationCompaction(plan, "")
+}
+
+// PrepareConversationCompaction selects the older turn range that would be
+// compacted for one conversation. It performs the same scoped/idempotent range
+// checks as CompactConversationByID, but leaves summary generation to callers.
+func (s *Store) PrepareConversationCompaction(conversationID string, keepRecent int) (ConversationCompactionPlan, error) {
 	if keepRecent <= 0 {
 		keepRecent = 40
 	}
 	conversationID = normalizeConversationID(conversationID)
+	plan := ConversationCompactionPlan{
+		ConversationID: conversationID,
+		KeepRecent:     keepRecent,
+	}
 	records, err := s.listAllConversationTurnsForConversation(conversationID)
 	if err != nil {
-		return 0, err
+		return plan, err
 	}
 	if len(records) <= keepRecent {
-		return 0, nil
+		return plan, nil
 	}
 
 	old := records[:len(records)-keepRecent]
 	endTurnID := old[len(old)-1].ID
+	latest, ok, err := s.latestConversationCompactionForConversation(conversationID)
+	if err != nil {
+		return plan, err
+	}
+	if ok && latest.EndTurnID >= endTurnID {
+		return plan, nil
+	}
+	plan.OldTurns = old
+	plan.StartTurnID = old[0].ID
+	plan.EndTurnID = endTurnID
+	return plan, nil
+}
+
+// SaveConversationCompaction persists a prepared compaction range. If summary
+// is blank, it falls back to the deterministic count-based summary.
+func (s *Store) SaveConversationCompaction(plan ConversationCompactionPlan, summary string) (int, error) {
+	if len(plan.OldTurns) == 0 {
+		return 0, nil
+	}
+	conversationID := normalizeConversationID(plan.ConversationID)
+	if conversationID == "" {
+		conversationID = DefaultConversationID
+	}
+	startTurnID := plan.StartTurnID
+	if startTurnID == 0 {
+		startTurnID = plan.OldTurns[0].ID
+	}
+	endTurnID := plan.EndTurnID
+	if endTurnID == 0 {
+		endTurnID = plan.OldTurns[len(plan.OldTurns)-1].ID
+	}
 	latest, ok, err := s.latestConversationCompactionForConversation(conversationID)
 	if err != nil {
 		return 0, err
@@ -1263,16 +1320,18 @@ func (s *Store) CompactConversationByID(conversationID string, keepRecent int) (
 	if ok && latest.EndTurnID >= endTurnID {
 		return 0, nil
 	}
-
-	summary := summarizeCompactedTurns(old)
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		summary = summarizeCompactedTurns(plan.OldTurns)
+	}
 	if _, err := s.db.Exec(`
 		INSERT INTO conversation_compactions (conversation_id, start_turn_id, end_turn_id, summary)
 		VALUES (?, ?, ?, ?)`,
-		conversationID, old[0].ID, endTurnID, summary,
+		conversationID, startTurnID, endTurnID, summary,
 	); err != nil {
 		return 0, err
 	}
-	return len(old), nil
+	return len(plan.OldTurns), nil
 }
 
 func insertConversationTurn(exec sqlExecer, turn *core.ConversationTurn, conversationID string) error {
@@ -1549,11 +1608,20 @@ func (r ConversationTurnRecord) Turn() core.ConversationTurn {
 
 func summarizeCompactedTurns(records []ConversationTurnRecord) string {
 	var userCount, assistantCount, codeCount, successCount, failureCount int
+	var userSnippets []string
+	var correctionSnippets []string
+	var errorSnippets []string
 	channels := map[string]bool{}
 	for i := range records {
 		switch records[i].Role {
 		case core.RoleUser:
 			userCount++
+			if snippet := conversationCompactionSnippet(records[i].Content); snippet != "" {
+				userSnippets = appendConversationCompactionSnippet(userSnippets, snippet, 6)
+				if conversationCompactionLooksLikeCorrection(snippet) {
+					correctionSnippets = appendConversationCompactionSnippet(correctionSnippets, snippet, 4)
+				}
+			}
 		case core.RoleAssistant:
 			assistantCount++
 			if records[i].Code != "" {
@@ -1564,6 +1632,9 @@ func summarizeCompactedTurns(records []ConversationTurnRecord) string {
 				successCount++
 			} else if strings.Contains(result, "error") || strings.Contains(result, "fail") {
 				failureCount++
+				if snippet := conversationCompactionSnippet(records[i].Result); snippet != "" {
+					errorSnippets = appendConversationCompactionSnippet(errorSnippets, snippet, 4)
+				}
 			}
 		}
 		if records[i].Channel != "" {
@@ -1579,10 +1650,64 @@ func summarizeCompactedTurns(records []ConversationTurnRecord) string {
 	if len(channelNames) > 0 {
 		channelText = strings.Join(channelNames, ", ")
 	}
-	return fmt.Sprintf(
+	var sb strings.Builder
+	fmt.Fprintf(&sb,
 		"[이전 대화 요약] 오래된 대화 %d개를 압축했습니다. 사용자 메시지 %d개, 어시스턴트 메시지 %d개, 코드 실행 %d번, 성공 %d번, 실패 %d번, 채널: %s.",
 		len(records), userCount, assistantCount, codeCount, successCount, failureCount, channelText,
 	)
+	appendConversationCompactionSection(&sb, "사용자 목표/요청", userSnippets)
+	appendConversationCompactionSection(&sb, "사용자 수정/제약", correctionSnippets)
+	appendConversationCompactionSection(&sb, "오류/실패", errorSnippets)
+	return sb.String()
+}
+
+func appendConversationCompactionSection(sb *strings.Builder, title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	sb.WriteString("\n")
+	sb.WriteString(title)
+	sb.WriteString(":")
+	for _, item := range items {
+		sb.WriteString("\n- ")
+		sb.WriteString(item)
+	}
+}
+
+func appendConversationCompactionSnippet(items []string, item string, limit int) []string {
+	if item == "" || len(items) >= limit {
+		return items
+	}
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func conversationCompactionSnippet(text string) string {
+	return core.SafePromptSummarySnippet(text, 180)
+}
+
+func conversationCompactionLooksLikeCorrection(text string) bool {
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"correction",
+		"constraint",
+		"do not",
+		"don't",
+		"수정",
+		"아니",
+		"하지 말",
+		"말고",
+		"제약",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // CountUserMessagesTotal returns the total number of user-role messages in the

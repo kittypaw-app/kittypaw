@@ -117,11 +117,20 @@ func turnToMessage(turn *core.ConversationTurn, truncateTo int) (core.LlmMessage
 
 func summarizeOldTurns(turns []core.ConversationTurn) core.LlmMessage {
 	var userCount, assistantCount, codeCount, successCount, failureCount int
+	var userSnippets []string
+	var correctionSnippets []string
+	var errorSnippets []string
 
 	for i := range turns {
 		switch turns[i].Role {
 		case core.RoleUser:
 			userCount++
+			if snippet := compactionSummarySnippet(turns[i].Content); snippet != "" {
+				userSnippets = appendLimited(userSnippets, snippet, 6)
+				if looksLikeCorrection(snippet) {
+					correctionSnippets = appendLimited(correctionSnippets, snippet, 4)
+				}
+			}
 		case core.RoleAssistant:
 			assistantCount++
 			if turns[i].Code != "" {
@@ -132,18 +141,75 @@ func summarizeOldTurns(turns []core.ConversationTurn) core.LlmMessage {
 				successCount++
 			} else if strings.Contains(r, "error") || strings.Contains(r, "fail") {
 				failureCount++
+				if snippet := compactionSummarySnippet(turns[i].Result); snippet != "" {
+					errorSnippets = appendLimited(errorSnippets, snippet, 4)
+				}
 			}
 		}
 	}
 
 	total := userCount + assistantCount
+	var sb strings.Builder
+	fmt.Fprintf(&sb,
+		"[이전 대화 요약] 지금까지 %d번 대화 (%d번 사용자, %d번 어시스턴트), 코드 실행 %d번, 성공 %d번, 실패 %d번.",
+		total, userCount, assistantCount, codeCount, successCount, failureCount,
+	)
+	appendCompactionSummarySection(&sb, "사용자 목표/요청", userSnippets)
+	appendCompactionSummarySection(&sb, "사용자 수정/제약", correctionSnippets)
+	appendCompactionSummarySection(&sb, "오류/실패", errorSnippets)
 	return core.LlmMessage{
-		Role: core.RoleSystem,
-		Content: fmt.Sprintf(
-			"[이전 대화 요약] 지금까지 %d번 대화 (%d번 사용자, %d번 어시스턴트), 코드 실행 %d번, 성공 %d번, 실패 %d번.",
-			total, userCount, assistantCount, codeCount, successCount, failureCount,
-		),
+		Role:    core.RoleSystem,
+		Content: sb.String(),
 	}
+}
+
+func appendCompactionSummarySection(sb *strings.Builder, title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	sb.WriteString("\n")
+	sb.WriteString(title)
+	sb.WriteString(":")
+	for _, item := range items {
+		sb.WriteString("\n- ")
+		sb.WriteString(item)
+	}
+}
+
+func appendLimited(items []string, item string, limit int) []string {
+	if item == "" || len(items) >= limit {
+		return items
+	}
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func compactionSummarySnippet(text string) string {
+	return core.SafePromptSummarySnippet(text, 180)
+}
+
+func looksLikeCorrection(text string) bool {
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"correction",
+		"constraint",
+		"do not",
+		"don't",
+		"수정",
+		"아니",
+		"하지 말",
+		"말고",
+		"제약",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func truncate(s string, maxLen int) string {
