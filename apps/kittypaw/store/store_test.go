@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 38 {
-		t.Fatalf("expected 38 migrations, got %d", count)
+	if count != 39 {
+		t.Fatalf("expected 39 migrations, got %d", count)
 	}
 }
 
@@ -2430,6 +2430,54 @@ func TestPendingResponsesRoundTrip(t *testing.T) {
 	remaining, _ := st.DequeuePendingResponses(10)
 	if len(remaining) != 1 {
 		t.Fatalf("expected 1 after delivery, got %d", len(remaining))
+	}
+}
+
+func TestOutboundDeliveriesRoundTripRedactsPreview(t *testing.T) {
+	st := openTestStore(t)
+
+	id, err := st.CreateOutboundDelivery(OutboundDeliveryWrite{
+		AccountID:         "alice",
+		EventType:         "telegram",
+		ChatID:            "chat-1",
+		Source:            OutboundDeliverySourceNotify,
+		Status:            OutboundDeliveryStatusQueued,
+		Response:          "hello api_key=sk-secret-1234567890",
+		PendingResponseID: 42,
+	})
+	if err != nil {
+		t.Fatalf("create delivery: %v", err)
+	}
+	if id <= 0 {
+		t.Fatalf("delivery id = %d, want positive", id)
+	}
+
+	if err := st.UpdateOutboundDeliveryStatus(id, OutboundDeliveryStatusDelivered, "", ""); err != nil {
+		t.Fatalf("mark delivered: %v", err)
+	}
+
+	rows, err := st.ListOutboundDeliveries(OutboundDeliveryQuery{AccountID: "alice", Limit: 10})
+	if err != nil {
+		t.Fatalf("list deliveries: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("deliveries = %+v, want one row", rows)
+	}
+	row := rows[0]
+	if row.ID != id || row.AccountID != "alice" || row.EventType != "telegram" || row.ChatID != "chat-1" {
+		t.Fatalf("delivery identity = %+v", row)
+	}
+	if row.Source != OutboundDeliverySourceNotify || row.Status != OutboundDeliveryStatusDelivered {
+		t.Fatalf("delivery source/status = %+v", row)
+	}
+	if row.PendingResponseID != 42 {
+		t.Fatalf("pending response id = %d, want 42", row.PendingResponseID)
+	}
+	if row.ResponsePreview != "[redacted]" {
+		t.Fatalf("response preview = %q, want redacted marker", row.ResponsePreview)
+	}
+	if row.DeliveredAt == "" || row.UpdatedAt == "" {
+		t.Fatalf("timestamps not updated: %+v", row)
 	}
 }
 

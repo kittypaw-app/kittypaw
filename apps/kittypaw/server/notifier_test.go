@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/store"
 )
 
 func TestServerNotifierPersistsBeforeSending(t *testing.T) {
@@ -56,6 +57,25 @@ func TestServerNotifierPersistsBeforeSending(t *testing.T) {
 	if len(pending) != 0 {
 		t.Fatalf("pending responses after successful send = %+v, want empty", pending)
 	}
+	deliveries, err := srv.store.ListOutboundDeliveries(store.OutboundDeliveryQuery{
+		AccountID: "alice",
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("ListOutboundDeliveries: %v", err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one row", deliveries)
+	}
+	gotDelivery := deliveries[0]
+	if gotDelivery.Source != store.OutboundDeliverySourceNotify ||
+		gotDelivery.Status != store.OutboundDeliveryStatusDelivered ||
+		gotDelivery.EventType != string(core.EventTelegram) ||
+		gotDelivery.ChatID != "chat-1" ||
+		gotDelivery.ResponsePreview != "hello" ||
+		gotDelivery.PendingResponseID <= 0 {
+		t.Fatalf("delivery row = %+v", gotDelivery)
+	}
 }
 
 func TestServerNotifierQueuesWhenChannelNotRunning(t *testing.T) {
@@ -83,6 +103,20 @@ func TestServerNotifierQueuesWhenChannelNotRunning(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].AccountID != "alice" || pending[0].EventType != string(core.EventTelegram) || pending[0].ChatID != "chat-1" || pending[0].Response != "queued" {
 		t.Fatalf("pending = %+v", pending)
+	}
+	deliveries, err := srv.store.ListOutboundDeliveries(store.OutboundDeliveryQuery{
+		AccountID: "alice",
+		Status:    store.OutboundDeliveryStatusQueued,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("ListOutboundDeliveries: %v", err)
+	}
+	if len(deliveries) != 1 ||
+		deliveries[0].Source != store.OutboundDeliverySourceNotify ||
+		deliveries[0].PendingResponseID != pending[0].ID ||
+		deliveries[0].ResponsePreview != "queued" {
+		t.Fatalf("queued delivery row = %+v, pending = %+v", deliveries, pending)
 	}
 }
 

@@ -308,6 +308,66 @@ type PendingResponse struct {
 	NextRetry  string
 }
 
+type OutboundDeliveryStatus string
+
+const (
+	OutboundDeliveryStatusQueued    OutboundDeliveryStatus = "queued"
+	OutboundDeliveryStatusSending   OutboundDeliveryStatus = "sending"
+	OutboundDeliveryStatusDelivered OutboundDeliveryStatus = "delivered"
+	OutboundDeliveryStatusFailed    OutboundDeliveryStatus = "failed"
+	OutboundDeliveryStatusDropped   OutboundDeliveryStatus = "dropped"
+)
+
+type OutboundDeliverySource string
+
+const (
+	OutboundDeliverySourceChannelReply  OutboundDeliverySource = "channel_reply"
+	OutboundDeliverySourceNotify        OutboundDeliverySource = "notify"
+	OutboundDeliverySourceTeamSpacePush OutboundDeliverySource = "team_space_push"
+	OutboundDeliverySourceRetry         OutboundDeliverySource = "retry"
+)
+
+// OutboundDeliveryRecord is a durable delivery ledger row. It stores only a
+// prompt-safe preview of the outbound text, never the full response body.
+type OutboundDeliveryRecord struct {
+	ID                int64                  `json:"id"`
+	AccountID         string                 `json:"account_id"`
+	EventType         string                 `json:"event_type"`
+	ChatID            string                 `json:"chat_id"`
+	Source            OutboundDeliverySource `json:"source"`
+	Status            OutboundDeliveryStatus `json:"status"`
+	ResponsePreview   string                 `json:"response_preview,omitempty"`
+	PendingResponseID int64                  `json:"pending_response_id,omitempty"`
+	RetryCount        int                    `json:"retry_count"`
+	ErrorClass        string                 `json:"error_class,omitempty"`
+	ErrorMessage      string                 `json:"error_message,omitempty"`
+	CreatedAt         string                 `json:"created_at"`
+	UpdatedAt         string                 `json:"updated_at"`
+	DeliveredAt       string                 `json:"delivered_at,omitempty"`
+}
+
+type OutboundDeliveryWrite struct {
+	AccountID         string
+	EventType         string
+	ChatID            string
+	Source            OutboundDeliverySource
+	Status            OutboundDeliveryStatus
+	Response          string
+	ResponsePreview   string
+	PendingResponseID int64
+	RetryCount        int
+	ErrorClass        string
+	ErrorMessage      string
+}
+
+type OutboundDeliveryQuery struct {
+	AccountID string
+	Status    OutboundDeliveryStatus
+	Source    OutboundDeliverySource
+	EventType string
+	Limit     int
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -3508,6 +3568,182 @@ func (s *Store) CleanupExpiredResponses(hours int) (int, error) {
 	}
 	n, _ := result.RowsAffected()
 	return int(n), nil
+}
+
+// ---------------------------------------------------------------------------
+// Outbound delivery ledger
+// ---------------------------------------------------------------------------
+
+const (
+	outboundDeliveryPreviewRunes = 180
+	outboundDeliveryErrorRunes   = 500
+)
+
+func (s *Store) CreateOutboundDelivery(req OutboundDeliveryWrite) (int64, error) {
+	status := req.Status
+	if status == "" {
+		status = OutboundDeliveryStatusQueued
+	}
+	source := req.Source
+	if source == "" {
+		source = OutboundDeliverySourceNotify
+	}
+	rawPreview := req.Response
+	if strings.TrimSpace(rawPreview) == "" {
+		rawPreview = req.ResponsePreview
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO outbound_deliveries (
+			account_id, event_type, chat_id, source, status, response_preview,
+			pending_response_id, retry_count, error_class, error_message, delivered_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'delivered' THEN datetime('now') ELSE '' END)`,
+		strings.TrimSpace(req.AccountID),
+		strings.TrimSpace(req.EventType),
+		strings.TrimSpace(req.ChatID),
+		string(source),
+		string(status),
+		safeOutboundDeliveryText(rawPreview, outboundDeliveryPreviewRunes),
+		req.PendingResponseID,
+		req.RetryCount,
+		strings.TrimSpace(req.ErrorClass),
+		safeOutboundDeliveryText(req.ErrorMessage, outboundDeliveryErrorRunes),
+		string(status),
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (s *Store) UpdateOutboundDeliveryStatus(id int64, status OutboundDeliveryStatus, errorClass, errorMessage string) error {
+	if id <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`
+		UPDATE outbound_deliveries
+		SET status = ?,
+		    error_class = ?,
+		    error_message = ?,
+		    delivered_at = CASE WHEN ? = 'delivered' AND delivered_at = '' THEN datetime('now') ELSE delivered_at END,
+		    updated_at = datetime('now')
+		WHERE id = ?`,
+		string(status),
+		strings.TrimSpace(errorClass),
+		safeOutboundDeliveryText(errorMessage, outboundDeliveryErrorRunes),
+		string(status),
+		id,
+	)
+	return err
+}
+
+func (s *Store) UpdateOutboundDeliveryForPendingResponse(pendingResponseID int64, status OutboundDeliveryStatus, retryCount int, errorClass, errorMessage string) error {
+	if pendingResponseID <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`
+		UPDATE outbound_deliveries
+		SET status = ?,
+		    retry_count = ?,
+		    error_class = ?,
+		    error_message = ?,
+		    delivered_at = CASE WHEN ? = 'delivered' AND delivered_at = '' THEN datetime('now') ELSE delivered_at END,
+		    updated_at = datetime('now')
+		WHERE pending_response_id = ?`,
+		string(status),
+		retryCount,
+		strings.TrimSpace(errorClass),
+		safeOutboundDeliveryText(errorMessage, outboundDeliveryErrorRunes),
+		string(status),
+		pendingResponseID,
+	)
+	return err
+}
+
+func (s *Store) ListOutboundDeliveries(q OutboundDeliveryQuery) ([]OutboundDeliveryRecord, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	clauses := []string{"1 = 1"}
+	args := []any{}
+	if accountID := strings.TrimSpace(q.AccountID); accountID != "" {
+		clauses = append(clauses, "account_id = ?")
+		args = append(args, accountID)
+	}
+	if q.Status != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, string(q.Status))
+	}
+	if q.Source != "" {
+		clauses = append(clauses, "source = ?")
+		args = append(args, string(q.Source))
+	}
+	if eventType := strings.TrimSpace(q.EventType); eventType != "" {
+		clauses = append(clauses, "event_type = ?")
+		args = append(args, eventType)
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.Query(`
+		SELECT id, account_id, event_type, chat_id, source, status, response_preview,
+		       pending_response_id, retry_count, error_class, error_message,
+		       created_at, updated_at, delivered_at
+		FROM outbound_deliveries
+		WHERE `+strings.Join(clauses, " AND ")+`
+		ORDER BY id DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OutboundDeliveryRecord
+	for rows.Next() {
+		var rec OutboundDeliveryRecord
+		var source, status string
+		if err := rows.Scan(
+			&rec.ID,
+			&rec.AccountID,
+			&rec.EventType,
+			&rec.ChatID,
+			&source,
+			&status,
+			&rec.ResponsePreview,
+			&rec.PendingResponseID,
+			&rec.RetryCount,
+			&rec.ErrorClass,
+			&rec.ErrorMessage,
+			&rec.CreatedAt,
+			&rec.UpdatedAt,
+			&rec.DeliveredAt,
+		); err != nil {
+			return nil, err
+		}
+		rec.Source = OutboundDeliverySource(source)
+		rec.Status = OutboundDeliveryStatus(status)
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func safeOutboundDeliveryText(text string, maxRunes int) string {
+	text = strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	if text == "" {
+		return ""
+	}
+	snippet := core.SafePromptSummarySnippet(text, maxRunes)
+	if snippet == "" {
+		return "[redacted]"
+	}
+	return snippet
 }
 
 // ---------------------------------------------------------------------------

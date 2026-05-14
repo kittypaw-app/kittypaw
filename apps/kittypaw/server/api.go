@@ -136,6 +136,34 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/deliveries
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleDeliveriesList(w http.ResponseWriter, r *http.Request) {
+	acct, err := s.requestAccount(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	limit := memoryLimitFromRequest(r, 50, 500)
+	rows, err := acct.Deps.Store.ListOutboundDeliveries(store.OutboundDeliveryQuery{
+		AccountID: acct.ID,
+		Status:    store.OutboundDeliveryStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
+		Source:    store.OutboundDeliverySource(strings.TrimSpace(r.URL.Query().Get("source"))),
+		EventType: strings.TrimSpace(r.URL.Query().Get("channel")),
+		Limit:     limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []store.OutboundDeliveryRecord{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deliveries": rows})
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/executions
 // ---------------------------------------------------------------------------
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/engine"
+	"github.com/jinto/kittypaw/store"
 )
 
 type serverNotifier struct {
@@ -66,9 +67,19 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		if channelType == core.EventKakaoTalk {
 			return fmt.Errorf("delivery channel %s is not running", channelType)
 		}
-		if err := s.store.EnqueueResponse(accountID, string(channelType), chatID, text); err != nil {
+		id, err := s.store.EnqueueResponseWithID(accountID, string(channelType), chatID, text)
+		if err != nil {
 			return err
 		}
+		s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			AccountID:         accountID,
+			EventType:         string(channelType),
+			ChatID:            chatID,
+			Source:            store.OutboundDeliverySourceNotify,
+			Status:            store.OutboundDeliveryStatusQueued,
+			Response:          text,
+			PendingResponseID: id,
+		})
 		publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
 			"reason": "spawner_unavailable",
 		})
@@ -79,9 +90,19 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		if channelType == core.EventKakaoTalk {
 			return fmt.Errorf("delivery channel %s is not running", channelType)
 		}
-		if err := s.store.EnqueueResponse(accountID, string(channelType), chatID, text); err != nil {
+		id, err := s.store.EnqueueResponseWithID(accountID, string(channelType), chatID, text)
+		if err != nil {
 			return err
 		}
+		s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			AccountID:         accountID,
+			EventType:         string(channelType),
+			ChatID:            chatID,
+			Source:            store.OutboundDeliverySourceNotify,
+			Status:            store.OutboundDeliveryStatusQueued,
+			Response:          text,
+			PendingResponseID: id,
+		})
 		publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
 			"reason": "channel_not_running",
 		})
@@ -91,6 +112,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 	outbound := core.ParseOutboundResponse(text)
 	var pendingID int64
 	var pendingQueued bool
+	var deliveryID int64
 	if channelType != core.EventKakaoTalk {
 		id, err := s.store.EnqueueResponseWithID(accountID, string(channelType), chatID, outbound.Text)
 		if err != nil {
@@ -99,17 +121,48 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		} else {
 			pendingID = id
 			pendingQueued = true
+			deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+				AccountID:         accountID,
+				EventType:         string(channelType),
+				ChatID:            chatID,
+				Source:            store.OutboundDeliverySourceNotify,
+				Status:            store.OutboundDeliveryStatusQueued,
+				Response:          outbound.Text,
+				PendingResponseID: id,
+			})
 			publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, nil)
 		}
+	} else {
+		deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			AccountID: accountID,
+			EventType: string(channelType),
+			ChatID:    chatID,
+			Source:    store.OutboundDeliverySourceNotify,
+			Status:    store.OutboundDeliveryStatusSending,
+			Response:  outbound.Text,
+		})
 	}
 
 	if err := sendChannelResponse(ctx, ch, chatID, outbound, target.ReplyToMessage); err != nil {
 		slog.Error("notify: send failed",
 			"account", accountID, "channel", channelType, "chat_id", chatID, "error", err)
 		if channelType != core.EventKakaoTalk && !pendingQueued {
-			if qErr := s.store.EnqueueResponse(accountID, string(channelType), chatID, outbound.Text); qErr != nil {
+			id, qErr := s.store.EnqueueResponseWithID(accountID, string(channelType), chatID, outbound.Text)
+			if qErr != nil {
+				s.markOutboundDelivery(deliveryID, accountID, store.OutboundDeliveryStatusFailed, "send_failed", err.Error())
 				return fmt.Errorf("send failed: %v; enqueue failed: %w", err, qErr)
 			}
+			deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+				AccountID:         accountID,
+				EventType:         string(channelType),
+				ChatID:            chatID,
+				Source:            store.OutboundDeliverySourceNotify,
+				Status:            store.OutboundDeliveryStatusQueued,
+				Response:          outbound.Text,
+				PendingResponseID: id,
+				ErrorClass:        "send_failed",
+				ErrorMessage:      err.Error(),
+			})
 			publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
 				"reason": "send_failed",
 			})
@@ -118,6 +171,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 			})
 			return nil
 		}
+		s.markOutboundDelivery(deliveryID, accountID, store.OutboundDeliveryStatusFailed, "send_failed", err.Error())
 		if pendingQueued {
 			publishDeliveryEvent(s, accountID, EventStreamDeliveryFailed, channelType, chatID, map[string]string{
 				"error_class": "send_failed",
@@ -134,6 +188,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		}
 		publishDeliveryEvent(s, accountID, EventStreamDeliveryDelivered, channelType, chatID, nil)
 	}
+	s.markOutboundDelivery(deliveryID, accountID, store.OutboundDeliveryStatusDelivered, "", "")
 	return nil
 }
 

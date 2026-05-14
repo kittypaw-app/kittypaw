@@ -497,6 +497,19 @@ func TestMemoryCommandExposesManagementSubcommands(t *testing.T) {
 	}
 }
 
+func TestChannelsCommandExposesDeliveriesSubcommand(t *testing.T) {
+	root := newRootCmd()
+	cmd, _, err := root.Find([]string{"channels", "deliveries"})
+	if err != nil || cmd == nil {
+		t.Fatalf("Find(channels deliveries) = %v, %v", cmd, err)
+	}
+	for _, flag := range []string{"limit", "status", "channel", "source", "json"} {
+		if cmd.Flag(flag) == nil {
+			t.Fatalf("channels deliveries missing --%s", flag)
+		}
+	}
+}
+
 func TestResolveCLIAccountExplicit(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)

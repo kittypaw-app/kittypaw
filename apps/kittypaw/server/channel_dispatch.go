@@ -10,6 +10,7 @@ import (
 	"github.com/jinto/kittypaw/channel"
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/engine"
+	"github.com/jinto/kittypaw/store"
 )
 
 const (
@@ -170,7 +171,8 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 			"type", job.event.Type, "account", job.event.AccountID)
 		queued := job.event.Type == core.EventKakaoTalk
 		if job.event.Type != core.EventKakaoTalk {
-			if err := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, response); err != nil {
+			id, err := s.store.EnqueueResponseWithID(job.event.AccountID, string(job.event.Type), job.payload.ChatID, response)
+			if err != nil {
 				slog.Error("channel event: enqueue response failed", "error", err)
 				s.releaseDurableInboundEvent(job.event.AccountID, job.inboundID, err.Error())
 				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryFailed, job.event.Type, job.payload.ChatID, map[string]string{
@@ -178,6 +180,15 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 					"reason":      "channel_not_running",
 				})
 			} else {
+				s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+					AccountID:         job.event.AccountID,
+					EventType:         string(job.event.Type),
+					ChatID:            job.payload.ChatID,
+					Source:            store.OutboundDeliverySourceChannelReply,
+					Status:            store.OutboundDeliveryStatusQueued,
+					Response:          response,
+					PendingResponseID: id,
+				})
 				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
 					"reason": "channel_not_running",
 				})
@@ -191,6 +202,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 	outbound := core.ParseOutboundResponse(response)
 	var pendingID int64
 	var pendingQueued bool
+	var deliveryID int64
 	if job.event.Type != core.EventKakaoTalk {
 		id, qErr := s.store.EnqueueResponseWithID(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text)
 		if qErr != nil {
@@ -198,8 +210,26 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		} else {
 			pendingID = id
 			pendingQueued = true
+			deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+				AccountID:         job.event.AccountID,
+				EventType:         string(job.event.Type),
+				ChatID:            job.payload.ChatID,
+				Source:            store.OutboundDeliverySourceChannelReply,
+				Status:            store.OutboundDeliveryStatusQueued,
+				Response:          outbound.Text,
+				PendingResponseID: id,
+			})
 			publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, nil)
 		}
+	} else {
+		deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			AccountID: job.event.AccountID,
+			EventType: string(job.event.Type),
+			ChatID:    job.payload.ChatID,
+			Source:    store.OutboundDeliverySourceChannelReply,
+			Status:    store.OutboundDeliveryStatusSending,
+			Response:  outbound.Text,
+		})
 	}
 	if err := sendChannelResponse(ctx, job.ch, job.payload.ChatID, outbound, job.payload.ReplyToMessageID); err != nil {
 		slog.Error("channel event: send response failed",
@@ -209,16 +239,30 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 			"error", err,
 		)
 		if job.event.Type != core.EventKakaoTalk && !pendingQueued {
-			if qErr := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text); qErr != nil {
+			id, qErr := s.store.EnqueueResponseWithID(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text)
+			if qErr != nil {
 				slog.Error("channel event: enqueue response failed", "error", qErr)
+				s.markOutboundDelivery(deliveryID, job.event.AccountID, store.OutboundDeliveryStatusFailed, "send_failed", err.Error())
 				s.releaseDurableInboundEvent(job.event.AccountID, job.inboundID, qErr.Error())
 				return
 			} else {
+				deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+					AccountID:         job.event.AccountID,
+					EventType:         string(job.event.Type),
+					ChatID:            job.payload.ChatID,
+					Source:            store.OutboundDeliverySourceChannelReply,
+					Status:            store.OutboundDeliveryStatusQueued,
+					Response:          outbound.Text,
+					PendingResponseID: id,
+					ErrorClass:        "send_failed",
+					ErrorMessage:      err.Error(),
+				})
 				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
 					"reason": "send_failed",
 				})
 			}
 		}
+		s.markOutboundDelivery(deliveryID, job.event.AccountID, store.OutboundDeliveryStatusFailed, "send_failed", err.Error())
 		publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryFailed, job.event.Type, job.payload.ChatID, map[string]string{
 			"error_class": "send_failed",
 		})
@@ -236,6 +280,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		}
 		publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryDelivered, job.event.Type, job.payload.ChatID, nil)
 	}
+	s.markOutboundDelivery(deliveryID, job.event.AccountID, store.OutboundDeliveryStatusDelivered, "", "")
 	handled = true
 }
 
@@ -267,10 +312,21 @@ func (s *Server) sendOrQueueChannelFailure(ctx context.Context, job channelEvent
 	if job.event.Type == core.EventKakaoTalk {
 		return
 	}
-	if qErr := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, message); qErr != nil {
+	id, qErr := s.store.EnqueueResponseWithID(job.event.AccountID, string(job.event.Type), job.payload.ChatID, message)
+	if qErr != nil {
 		slog.Error("channel event: enqueue failure response failed", "error", qErr)
 		return
 	}
+	s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+		AccountID:         job.event.AccountID,
+		EventType:         string(job.event.Type),
+		ChatID:            job.payload.ChatID,
+		Source:            store.OutboundDeliverySourceChannelReply,
+		Status:            store.OutboundDeliveryStatusQueued,
+		Response:          message,
+		PendingResponseID: id,
+		ErrorClass:        "turn_failed",
+	})
 	publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
 		"reason": "failure_response",
 	})

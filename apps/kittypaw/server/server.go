@@ -435,6 +435,11 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 		})
 
 		r.Route("/api/v1", func(r chi.Router) {
+			// Account-scoped endpoints that authenticate by resolving the
+			// request account from the provided token must sit outside the
+			// default/master API-key middleware.
+			r.Get("/deliveries", s.handleDeliveriesList)
+
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireAPIKey)
 
@@ -874,11 +879,21 @@ func (s *Server) deliverTeamSpacePush(ctx context.Context, event core.Event) {
 		return
 	}
 
+	deliveryID := s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+		AccountID: event.AccountID,
+		EventType: string(channelType),
+		ChatID:    chatID,
+		Source:    store.OutboundDeliverySourceTeamSpacePush,
+		Status:    store.OutboundDeliveryStatusSending,
+		Response:  p.Text,
+	})
 	if err := ch.SendResponse(ctx, chatID, p.Text, ""); err != nil {
+		s.markOutboundDelivery(deliveryID, event.AccountID, store.OutboundDeliveryStatusFailed, "send_failed", err.Error())
 		s.enqueueTeamSpacePushForRetry(event.AccountID, channelType, chatID, p.Text,
 			fmt.Sprintf("send failed: %v", err))
 		return
 	}
+	s.markOutboundDelivery(deliveryID, event.AccountID, store.OutboundDeliveryStatusDelivered, "", "")
 
 	slog.Info("team_space_push_delivered",
 		"from", "team_space", "to", event.AccountID, "channel", channelType, "chat_id", chatID)
@@ -892,11 +907,44 @@ func (s *Server) enqueueTeamSpacePushForRetry(accountID string, channelType core
 	slog.Warn("team_space_push: deferred to retry queue",
 		"account", accountID, "channel", channelType, "reason", reason)
 	if channelType == core.EventKakaoTalk {
+		s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			AccountID:    accountID,
+			EventType:    string(channelType),
+			ChatID:       chatID,
+			Source:       store.OutboundDeliverySourceTeamSpacePush,
+			Status:       store.OutboundDeliveryStatusDropped,
+			Response:     text,
+			ErrorClass:   "not_retryable",
+			ErrorMessage: reason,
+		})
 		return
 	}
-	if qErr := s.store.EnqueueResponse(accountID, string(channelType), chatID, text); qErr != nil {
+	id, qErr := s.store.EnqueueResponseWithID(accountID, string(channelType), chatID, text)
+	if qErr != nil {
 		slog.Error("team_space_push: enqueue failed", "account", accountID, "channel", channelType, "error", qErr)
+		s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			AccountID:    accountID,
+			EventType:    string(channelType),
+			ChatID:       chatID,
+			Source:       store.OutboundDeliverySourceTeamSpacePush,
+			Status:       store.OutboundDeliveryStatusFailed,
+			Response:     text,
+			ErrorClass:   "enqueue_failed",
+			ErrorMessage: qErr.Error(),
+		})
+		return
 	}
+	s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+		AccountID:         accountID,
+		EventType:         string(channelType),
+		ChatID:            chatID,
+		Source:            store.OutboundDeliverySourceTeamSpacePush,
+		Status:            store.OutboundDeliveryStatusQueued,
+		Response:          text,
+		PendingResponseID: id,
+		ErrorClass:        "deferred",
+		ErrorMessage:      reason,
+	})
 }
 
 // resolveTeamSpacePushChannel picks which target channel a team-space push lands on.
@@ -990,17 +1038,23 @@ func (s *Server) retryPendingResponses(ctx context.Context) {
 					// Channel absent — do NOT drop. Leave in queue for next tick.
 					continue
 				}
+				s.markPendingOutboundDelivery(accountID, p.ID, store.OutboundDeliveryStatusSending, p.RetryCount, "", "")
 				if err := sendChannelResponse(ctx, ch, p.ChatID, core.OutboundResponse{Text: p.Response}, ""); err != nil {
 					slog.Warn("retry: send failed",
 						"id", p.ID, "retry", p.RetryCount, "error", err)
 					if kept, rErr := s.store.IncrementResponseRetry(p.ID); rErr != nil {
 						slog.Error("retry: increment failed", "id", p.ID, "error", rErr)
+						s.markPendingOutboundDelivery(accountID, p.ID, store.OutboundDeliveryStatusFailed, p.RetryCount, "retry_increment_failed", rErr.Error())
 					} else if !kept {
 						slog.Warn("retry: max retries exceeded, dropping", "id", p.ID)
+						s.markPendingOutboundDelivery(accountID, p.ID, store.OutboundDeliveryStatusDropped, p.RetryCount+1, "max_retries_exceeded", err.Error())
+					} else {
+						s.markPendingOutboundDelivery(accountID, p.ID, store.OutboundDeliveryStatusQueued, p.RetryCount+1, "send_failed", err.Error())
 					}
 				} else {
 					slog.Info("retry: delivered pending response",
 						"id", p.ID, "chat_id", p.ChatID)
+					s.markPendingOutboundDelivery(accountID, p.ID, store.OutboundDeliveryStatusDelivered, p.RetryCount, "", "")
 					_ = s.store.MarkResponseDelivered(p.ID)
 				}
 			}

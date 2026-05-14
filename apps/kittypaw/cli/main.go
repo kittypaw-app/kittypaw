@@ -2393,6 +2393,7 @@ func newChannelsCmd() *cobra.Command {
 	}
 	addPersistentAccountFlag(cmd)
 	cmd.AddCommand(newChannelsListCmd())
+	cmd.AddCommand(newChannelsDeliveriesCmd())
 	return cmd
 }
 
@@ -2430,6 +2431,76 @@ func newChannelsListCmd() *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+func newChannelsDeliveriesCmd() *cobra.Command {
+	var limit int
+	var status string
+	var channel string
+	var source string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "deliveries",
+		Short: "List outbound delivery history",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.Deliveries(limit, strings.TrimSpace(status), strings.TrimSpace(channel), strings.TrimSpace(source))
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				encoded, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(encoded))
+				return nil
+			}
+			printDeliveryRows(jsonSlice(res, "deliveries"))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "number of delivery records")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status: queued, sending, delivered, failed, dropped")
+	cmd.Flags().StringVar(&channel, "channel", "", "filter by channel/event type")
+	cmd.Flags().StringVar(&source, "source", "", "filter by source: channel_reply, notify, team_space_push, retry")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
+	return cmd
+}
+
+func printDeliveryRows(rows []map[string]any) {
+	if len(rows) == 0 {
+		fmt.Println("No deliveries found.")
+		return
+	}
+	fmt.Printf("%s %s %s %s %s %s %s\n",
+		padW("ID", 6),
+		padW("STATUS", 10),
+		padW("CHANNEL", 12),
+		padW("SOURCE", 16),
+		padW("RETRIES", 7),
+		padW("UPDATED", 20),
+		"PREVIEW",
+	)
+	fmt.Println(strings.Repeat("-", 104))
+	for _, r := range rows {
+		preview := jsonStr(r, "response_preview")
+		if preview == "" {
+			preview = jsonStr(r, "error_message")
+		}
+		fmt.Printf("%s %s %s %s %s %s %s\n",
+			padW(fmt.Sprintf("%d", jsonInt(r, "id")), 6),
+			padW(truncW(jsonStr(r, "status"), 10), 10),
+			padW(truncW(jsonStr(r, "event_type"), 12), 12),
+			padW(truncW(jsonStr(r, "source"), 16), 16),
+			padW(fmt.Sprintf("%d", jsonInt(r, "retry_count")), 7),
+			padW(truncW(jsonStr(r, "updated_at"), 20), 20),
+			truncW(preview, 72),
+		)
 	}
 }
 

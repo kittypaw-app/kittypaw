@@ -70,6 +70,25 @@ func (c *Client) Executions(skill string, limit int) (map[string]any, error) {
 	return c.get(path)
 }
 
+// Deliveries returns recent outbound delivery ledger rows.
+func (c *Client) Deliveries(limit int, status, channel, source string) (map[string]any, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	values := url.Values{}
+	values.Set("limit", fmt.Sprintf("%d", limit))
+	if status != "" {
+		values.Set("status", status)
+	}
+	if channel != "" {
+		values.Set("channel", channel)
+	}
+	if source != "" {
+		values.Set("source", source)
+	}
+	return c.get("/api/v1/deliveries?" + values.Encode())
+}
+
 // ChatHistory returns recent account-wide conversation turns.
 func (c *Client) ChatHistory(limit int) (map[string]any, error) {
 	return c.ChatHistoryForConversation(limit, "")
