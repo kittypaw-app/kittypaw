@@ -3,15 +3,38 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jinto/kittypaw/core"
 )
+
+type flakyTelegramSink struct {
+	calls  atomic.Int64
+	events chan core.Event
+}
+
+func newFlakyTelegramSink() *flakyTelegramSink {
+	return &flakyTelegramSink{events: make(chan core.Event, 1)}
+}
+
+func (s *flakyTelegramSink) PublishEvent(ctx context.Context, event core.Event) error {
+	if s.calls.Add(1) == 1 {
+		return errors.New("sqlite busy")
+	}
+	select {
+	case s.events <- event:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func TestTelegramPhotoUpdateEmitsImageAttachment(t *testing.T) {
 	var getFileRequested bool
@@ -165,6 +188,64 @@ func TestTelegramDocumentUpdateEmitsFileAttachment(t *testing.T) {
 	}
 	if !getFileRequested {
 		t.Fatal("expected getFile request for document attachment")
+	}
+}
+
+func TestTelegramStartRetriesTransientSinkFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+			_, _ = io.WriteString(w, `{
+				"ok": true,
+				"result": [{
+					"update_id": 1003,
+					"message": {
+						"message_id": 44,
+						"from": {"id": 12345678, "first_name": "Jin"},
+						"chat": {"id": 987654321},
+						"text": "재시도해줘"
+					}
+				}]
+			}`)
+		case strings.HasSuffix(r.URL.Path, "/sendChatAction"):
+			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+		default:
+			t.Fatalf("unexpected telegram path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	ch := NewTelegram("acct", "secret-token")
+	ch.apiBase = srv.URL + "/bot"
+	ch.client = srv.Client()
+	sink := newFlakyTelegramSink()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- ch.StartWithEventSink(ctx, sink) }()
+
+	select {
+	case event := <-sink.events:
+		cancel()
+		if event.SourceEventID != "telegram:update:1003" {
+			t.Fatalf("SourceEventID = %q, want telegram:update:1003", event.SourceEventID)
+		}
+		payload, err := event.ParsePayload()
+		if err != nil {
+			t.Fatalf("parse payload: %v", err)
+		}
+		if payload.Text != "재시도해줘" {
+			t.Fatalf("payload text = %q", payload.Text)
+		}
+	case err := <-errCh:
+		t.Fatalf("telegram stopped after transient sink failure: %v", err)
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for telegram retry")
+	}
+	if got := sink.calls.Load(); got != 2 {
+		t.Fatalf("sink calls = %d, want first failure plus retry", got)
 	}
 }
 

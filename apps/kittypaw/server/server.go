@@ -40,6 +40,8 @@ type Server struct {
 	accountRegistry    *core.AccountRegistry // shared cross-account registry (Share.read / Fanout)
 	eventCh            chan core.Event       // shared event channel between channels and dispatch loop
 	eventStream        *eventStreamBroker
+	inboundWake        chan struct{}
+	inboundDrainMu     sync.Mutex
 	accountMu          sync.Mutex // serializes AddAccount/RemoveAccount — validation→register→reconcile must not interleave
 	channelWorkersMu   sync.Mutex
 	channelWorkers     map[string]*channelEventWorker
@@ -138,6 +140,7 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 		accountRegistry: registry,
 		eventCh:         eventCh,
 		eventStream:     newEventStreamBroker(),
+		inboundWake:     make(chan struct{}, inboundEventWakeBufSize),
 		channelWorkers:  make(map[string]*channelEventWorker),
 		accountDeps:     depsByID,
 		removingAccount: make(map[string]bool),
@@ -639,7 +642,7 @@ func (s *Server) StartChannels(ctx context.Context) error {
 		return fmt.Errorf("team-space membership validation: %w", err)
 	}
 
-	s.spawner = NewChannelSpawner(ctx, s.eventCh)
+	s.spawner = NewChannelSpawner(ctx, s.eventCh, s)
 	for accountID, configs := range accountChannels {
 		if len(configs) == 0 {
 			continue
@@ -650,6 +653,7 @@ func (s *Server) StartChannels(ctx context.Context) error {
 		}
 	}
 	go s.dispatchLoop(ctx)
+	go s.drainInboundEvents(ctx)
 	go s.retryPendingResponses(ctx)
 	return nil
 }
@@ -682,12 +686,14 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			payload, err := event.ParsePayload()
 			if err != nil {
 				slog.Warn("channel event: bad payload", "type", event.Type, "error", err)
+				s.failDurableInboundEvent(event.AccountID, event.DurableInboundID, "bad_payload")
 				continue
 			}
 
 			runtime := s.accounts.Route(event)
 			if runtime == nil {
 				// Drop was already logged + counted by AccountRouter.
+				s.failDurableInboundEvent(event.AccountID, event.DurableInboundID, "unknown_account")
 				continue
 			}
 			if s.isAccountRemovalInProgress(event.AccountID) {
@@ -695,6 +701,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 					"type", event.Type,
 					"account", event.AccountID,
 				)
+				s.releaseDurableInboundEvent(event.AccountID, event.DurableInboundID, "account_removal_in_progress")
 				continue
 			}
 
@@ -717,6 +724,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 					"chat_id", payload.ChatID,
 					"type", event.Type,
 				)
+				s.completeDurableInboundEvent(event.AccountID, event.DurableInboundID)
 				continue
 			}
 			if !core.UserBelongsToAccount(runtime.Config, payload.SourceSessionID) {
@@ -727,6 +735,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 					"session_id", payload.SourceSessionID,
 					"type", event.Type,
 				)
+				s.completeDurableInboundEvent(event.AccountID, event.DurableInboundID)
 				continue
 			}
 
@@ -785,6 +794,7 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 			s.enqueueChannelEvent(ctx, channelEventJob{
 				event:       event,
 				payload:     payload,
+				inboundID:   event.DurableInboundID,
 				runtime:     runtime,
 				baseRunOpts: baseRunOpts,
 				ch:          ch,

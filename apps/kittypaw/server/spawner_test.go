@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jinto/kittypaw/channel"
 	"github.com/jinto/kittypaw/core"
 )
 
@@ -36,6 +38,54 @@ func (s *stubChannel) SendResponse(_ context.Context, chatID, response, _ string
 }
 
 func (s *stubChannel) Name() string { return s.name }
+
+type recordingEventSink struct {
+	events chan core.Event
+}
+
+func newRecordingEventSink() *recordingEventSink {
+	return &recordingEventSink{events: make(chan core.Event, 1)}
+}
+
+func (s *recordingEventSink) PublishEvent(ctx context.Context, event core.Event) error {
+	select {
+	case s.events <- event:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type sinkAwareStubChannel struct {
+	*stubChannel
+}
+
+func newSinkAwareStub(name string) *sinkAwareStubChannel {
+	return &sinkAwareStubChannel{stubChannel: newStub(name)}
+}
+
+func (s *sinkAwareStubChannel) StartWithEventSink(ctx context.Context, sink channel.EventSink) error {
+	close(s.started)
+	if err := sink.PublishEvent(ctx, core.Event{Type: core.EventTelegram, AccountID: testAccount}); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type exitingStubChannel struct {
+	*stubChannel
+	err error
+}
+
+func newExitingStub(name string, err error) *exitingStubChannel {
+	return &exitingStubChannel{stubChannel: newStub(name), err: err}
+}
+
+func (s *exitingStubChannel) Start(_ context.Context, _ chan<- core.Event) error {
+	close(s.started)
+	return s.err
+}
 
 // waitStarted blocks until the stub's Start method has been entered.
 func (s *stubChannel) waitStarted(t *testing.T) {
@@ -80,6 +130,56 @@ func TestTrySpawn_StartsChannel(t *testing.T) {
 
 	// Cleanup.
 	sp.Stop(testAccount, "telegram")
+}
+
+func TestTrySpawn_UsesDurableEventSinkWhenAvailable(t *testing.T) {
+	eventCh := make(chan core.Event, 8)
+	sink := newRecordingEventSink()
+	sp := NewChannelSpawner(context.Background(), eventCh, sink)
+
+	stub := newSinkAwareStub("telegram")
+	cfg := core.ChannelConfig{ChannelType: core.ChannelTelegram, Token: "tok"}
+	if err := sp.TrySpawn(testAccount, stub, cfg); err != nil {
+		t.Fatalf("TrySpawn: %v", err)
+	}
+	stub.waitStarted(t)
+
+	select {
+	case event := <-sink.events:
+		if event.Type != core.EventTelegram || event.AccountID != testAccount {
+			t.Fatalf("sink event = %+v, want telegram/%s", event, testAccount)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("channel did not publish through durable event sink")
+	}
+	select {
+	case event := <-eventCh:
+		t.Fatalf("legacy event channel received %+v, want durable sink path", event)
+	default:
+	}
+
+	sp.Stop(testAccount, "telegram")
+}
+
+func TestTrySpawn_RemovesUnexpectedlyStoppedChannel(t *testing.T) {
+	eventCh := make(chan core.Event, 8)
+	sp := NewChannelSpawner(context.Background(), eventCh)
+
+	stub := newExitingStub("telegram", errors.New("boom"))
+	cfg := core.ChannelConfig{ChannelType: core.ChannelTelegram, Token: "tok"}
+	if err := sp.TrySpawn(testAccount, stub, cfg); err != nil {
+		t.Fatalf("TrySpawn: %v", err)
+	}
+	stub.waitStarted(t)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := sp.GetChannel(testAccount, core.EventTelegram); !ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("unexpectedly stopped channel remained registered")
 }
 
 func TestTrySpawn_Idempotent(t *testing.T) {

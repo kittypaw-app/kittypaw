@@ -74,10 +74,14 @@ func (s *SlackChannel) MaxResponseLength() int { return slackMaxResponseChunk }
 
 // Start connects to Slack via Socket Mode and listens for message events.
 func (s *SlackChannel) Start(ctx context.Context, eventCh chan<- core.Event) error {
+	return s.StartWithEventSink(ctx, NewEventChanSink(eventCh))
+}
+
+func (s *SlackChannel) StartWithEventSink(ctx context.Context, sink EventSink) error {
 	slog.Info("slack: connecting via socket mode")
 
 	for {
-		err := s.runSocketMode(ctx, eventCh)
+		err := s.runSocketMode(ctx, sink)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -110,7 +114,7 @@ func (s *SlackChannel) SendResponse(ctx context.Context, chatID, response, _ str
 
 // --- internal ---
 
-func (s *SlackChannel) runSocketMode(ctx context.Context, eventCh chan<- core.Event) error {
+func (s *SlackChannel) runSocketMode(ctx context.Context, sink EventSink) error {
 	// Step 1: get a WebSocket URL via apps.connections.open.
 	wsURL, err := s.connectionsOpen(ctx)
 	if err != nil {
@@ -140,30 +144,38 @@ func (s *SlackChannel) runSocketMode(ctx context.Context, eventCh chan<- core.Ev
 			continue
 		}
 
-		// Acknowledge every envelope that has an ID.
-		if env.EnvelopeID != "" {
-			ack, _ := json.Marshal(map[string]string{"envelope_id": env.EnvelopeID})
-			_ = conn.Write(ctx, websocket.MessageText, ack)
-		}
-
 		switch env.Type {
 		case "hello":
 			slog.Info("slack: received hello")
+			_ = s.ackEnvelope(ctx, conn, env.EnvelopeID)
 
 		case "disconnect":
+			_ = s.ackEnvelope(ctx, conn, env.EnvelopeID)
 			slog.Info("slack: received disconnect, will reconnect")
 			return nil
 
 		case "events_api":
-			s.handleEventPayload(ctx, env, eventCh)
+			if err := s.handleEventPayload(ctx, env, sink); err != nil {
+				return err
+			}
+			_ = s.ackEnvelope(ctx, conn, env.EnvelopeID)
 
 		default:
 			// Ignore interactive, slash_commands, etc. for now.
+			_ = s.ackEnvelope(ctx, conn, env.EnvelopeID)
 		}
 	}
 }
 
-func (s *SlackChannel) handleEventPayload(ctx context.Context, env slackEnvelope, eventCh chan<- core.Event) {
+func (s *SlackChannel) ackEnvelope(ctx context.Context, conn *websocket.Conn, envelopeID string) error {
+	if envelopeID == "" {
+		return nil
+	}
+	ack, _ := json.Marshal(map[string]string{"envelope_id": envelopeID})
+	return conn.Write(ctx, websocket.MessageText, ack)
+}
+
+func (s *SlackChannel) handleEventPayload(ctx context.Context, env slackEnvelope, sink EventSink) error {
 	// The event can be at the top level or nested inside payload.
 	evt := env.Event
 	if evt == nil && len(env.Payload) > 0 {
@@ -176,12 +188,12 @@ func (s *SlackChannel) handleEventPayload(ctx context.Context, env slackEnvelope
 	}
 
 	if evt == nil || evt.Type != "message" {
-		return
+		return nil
 	}
 
 	// Skip bot messages (no user field).
 	if evt.User == "" || evt.Text == "" {
-		return
+		return nil
 	}
 
 	s.mu.Lock()
@@ -198,19 +210,21 @@ func (s *SlackChannel) handleEventPayload(ctx context.Context, env slackEnvelope
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("slack: marshal payload", "error", err)
-		return
+		return err
 	}
 
+	sourceEventID := ""
+	if env.EnvelopeID != "" {
+		sourceEventID = "slack:envelope:" + env.EnvelopeID
+	}
 	event := core.Event{
-		Type:      core.EventSlack,
-		AccountID: s.accountID,
-		Payload:   raw,
+		Type:          core.EventSlack,
+		AccountID:     s.accountID,
+		SourceEventID: sourceEventID,
+		Payload:       raw,
 	}
 
-	select {
-	case eventCh <- event:
-	case <-ctx.Done():
-	}
+	return sink.PublishEvent(ctx, event)
 }
 
 func (s *SlackChannel) connectionsOpen(ctx context.Context) (string, error) {

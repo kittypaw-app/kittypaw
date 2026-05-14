@@ -53,6 +53,7 @@ type ChannelSpawner struct {
 	reconcileMu sync.Mutex // serializes Reconcile calls
 	running     map[spawnerKey]*runningChannel
 	eventCh     chan<- core.Event
+	eventSink   channel.EventSink
 	baseCtx     context.Context // long-lived context for channel goroutines
 }
 
@@ -60,11 +61,16 @@ type ChannelSpawner struct {
 // channel it starts. baseCtx should be a long-lived context (e.g., from
 // signal.NotifyContext) — all channel goroutines derive their contexts
 // from it, regardless of the caller's context.
-func NewChannelSpawner(baseCtx context.Context, eventCh chan<- core.Event) *ChannelSpawner {
+func NewChannelSpawner(baseCtx context.Context, eventCh chan<- core.Event, eventSink ...channel.EventSink) *ChannelSpawner {
+	var sink channel.EventSink
+	if len(eventSink) > 0 {
+		sink = eventSink[0]
+	}
 	return &ChannelSpawner{
-		running: make(map[spawnerKey]*runningChannel),
-		eventCh: eventCh,
-		baseCtx: baseCtx,
+		running:   make(map[spawnerKey]*runningChannel),
+		eventCh:   eventCh,
+		eventSink: sink,
+		baseCtx:   baseCtx,
 	}
 }
 
@@ -96,8 +102,21 @@ func (s *ChannelSpawner) TrySpawn(accountID string, ch channel.Channel, cfg core
 	slog.Info("channel spawned",
 		"account", accountID, "name", key.ChannelType)
 	go func() {
-		defer close(done)
-		if err := ch.Start(chCtx, s.eventCh); err != nil && chCtx.Err() == nil {
+		defer func() {
+			s.mu.Lock()
+			if s.running[key] == rc {
+				delete(s.running, key)
+			}
+			s.mu.Unlock()
+			close(done)
+		}()
+		var err error
+		if starter, ok := ch.(channel.EventSinkStarter); ok && s.eventSink != nil {
+			err = starter.StartWithEventSink(chCtx, s.eventSink)
+		} else {
+			err = ch.Start(chCtx, s.eventCh)
+		}
+		if err != nil && chCtx.Err() == nil {
 			slog.Error("channel stopped unexpectedly",
 				"account", accountID, "name", key.ChannelType, "error", err)
 		}

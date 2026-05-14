@@ -88,10 +88,14 @@ func (d *DiscordChannel) MaxResponseLength() int { return discordMaxMessage }
 
 // Start connects to the Discord Gateway and listens for MESSAGE_CREATE events.
 func (d *DiscordChannel) Start(ctx context.Context, eventCh chan<- core.Event) error {
+	return d.StartWithEventSink(ctx, NewEventChanSink(eventCh))
+}
+
+func (d *DiscordChannel) StartWithEventSink(ctx context.Context, sink EventSink) error {
 	slog.Info("discord: connecting to gateway")
 
 	for {
-		err := d.runGateway(ctx, eventCh)
+		err := d.runGateway(ctx, sink)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -124,7 +128,7 @@ func (d *DiscordChannel) SendResponse(ctx context.Context, chatID, response, _ s
 
 // --- internal ---
 
-func (d *DiscordChannel) runGateway(ctx context.Context, eventCh chan<- core.Event) error {
+func (d *DiscordChannel) runGateway(ctx context.Context, sink EventSink) error {
 	conn, _, err := websocket.Dial(ctx, discordGatewayURL, nil)
 	if err != nil {
 		return fmt.Errorf("gateway dial: %w", err)
@@ -186,25 +190,27 @@ func (d *DiscordChannel) runGateway(ctx context.Context, eventCh chan<- core.Eve
 		}
 
 		if gw.Op == 0 && gw.T == "MESSAGE_CREATE" {
-			d.handleMessage(ctx, gw.D, eventCh)
+			if err := d.handleMessage(ctx, gw.D, sink); err != nil {
+				return err
+			}
 		}
 		// TODO: handle RESUMED, RECONNECT (op 7), INVALID_SESSION (op 9)
 	}
 }
 
-func (d *DiscordChannel) handleMessage(ctx context.Context, data json.RawMessage, eventCh chan<- core.Event) {
+func (d *DiscordChannel) handleMessage(ctx context.Context, data json.RawMessage, sink EventSink) error {
 	var msg discordMessageCreate
 	if err := json.Unmarshal(data, &msg); err != nil {
 		slog.Warn("discord: unmarshal message", "error", err)
-		return
+		return nil
 	}
 
 	// Ignore bot messages.
 	if msg.Author.Bot {
-		return
+		return nil
 	}
 	if msg.Content == "" {
-		return
+		return nil
 	}
 
 	d.mu.Lock()
@@ -220,19 +226,17 @@ func (d *DiscordChannel) handleMessage(ctx context.Context, data json.RawMessage
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("discord: marshal payload", "error", err)
-		return
+		return err
 	}
 
 	event := core.Event{
-		Type:      core.EventDiscord,
-		AccountID: d.accountID,
-		Payload:   raw,
+		Type:          core.EventDiscord,
+		AccountID:     d.accountID,
+		SourceEventID: "discord:message:" + msg.ID,
+		Payload:       raw,
 	}
 
-	select {
-	case eventCh <- event:
-	case <-ctx.Done():
-	}
+	return sink.PublishEvent(ctx, event)
 }
 
 func (d *DiscordChannel) heartbeatLoop(ctx context.Context, conn *websocket.Conn, interval time.Duration) {

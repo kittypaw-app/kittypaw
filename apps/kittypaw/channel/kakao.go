@@ -89,6 +89,10 @@ func relayHost(wsURL string) string {
 // Start connects to the relay via WebSocket and emits incoming messages as events.
 // Reconnects automatically on connection loss.
 func (k *KakaoChannel) Start(ctx context.Context, eventCh chan<- core.Event) error {
+	return k.StartWithEventSink(ctx, NewEventChanSink(eventCh))
+}
+
+func (k *KakaoChannel) StartWithEventSink(ctx context.Context, sink EventSink) error {
 	// The WS endpoint embeds a session bearer token in its path; log host only.
 	slog.Info("kakao: connecting to relay", "host", relayHost(k.wsEndpoint))
 
@@ -104,7 +108,7 @@ func (k *KakaoChannel) Start(ctx context.Context, eventCh chan<- core.Event) err
 		}
 
 		connStart := time.Now()
-		err := k.connectAndListen(ctx, eventCh)
+		err := k.connectAndListen(ctx, sink)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -127,7 +131,7 @@ func (k *KakaoChannel) Start(ctx context.Context, eventCh chan<- core.Event) err
 
 // connectAndListen establishes a WebSocket connection and reads messages until
 // the connection drops or context is canceled.
-func (k *KakaoChannel) connectAndListen(ctx context.Context, eventCh chan<- core.Event) error {
+func (k *KakaoChannel) connectAndListen(ctx context.Context, sink EventSink) error {
 	conn, _, err := websocket.Dial(ctx, k.wsURL(), nil)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
@@ -160,11 +164,12 @@ func (k *KakaoChannel) connectAndListen(ctx context.Context, eventCh chan<- core
 		if !ok {
 			continue
 		}
+		if msg.ID != "" {
+			event.SourceEventID = "kakao:message:" + msg.ID
+		}
 
-		select {
-		case eventCh <- event:
-		case <-ctx.Done():
-			return ctx.Err()
+		if err := sink.PublishEvent(ctx, event); err != nil {
+			return err
 		}
 	}
 }

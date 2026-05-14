@@ -23,12 +23,14 @@ const (
 var channelWorkerStopTimeout = 10 * time.Second
 
 type channelEventJob struct {
-	event       core.Event
-	payload     core.ChatPayload
-	runtime     *engine.AccountRuntime
-	baseRunOpts *engine.RunOptions
-	ch          channel.Channel
-	chOK        bool
+	event            core.Event
+	payload          core.ChatPayload
+	inboundID        int64
+	inboundLeaseDone chan struct{}
+	runtime          *engine.AccountRuntime
+	baseRunOpts      *engine.RunOptions
+	ch               channel.Channel
+	chOK             bool
 }
 
 type channelEventWorker struct {
@@ -40,8 +42,12 @@ type channelEventWorker struct {
 
 func (s *Server) enqueueChannelEvent(ctx context.Context, job channelEventJob) {
 	worker := s.channelWorker(ctx, channelWorkerKey(job.event))
+	if job.inboundID > 0 {
+		job.inboundLeaseDone = make(chan struct{})
+	}
 	select {
 	case worker.jobs <- job:
+		s.startDurableInboundLeaseKeeper(worker.ctx, job.event.AccountID, job.inboundID, job.inboundLeaseDone)
 	case <-ctx.Done():
 	default:
 		slog.Warn("channel event: worker queue full",
@@ -57,6 +63,7 @@ func (s *Server) enqueueChannelEvent(ctx context.Context, job channelEventJob) {
 			ErrorClass:     "channel_queue_full",
 		})
 		s.sendOrQueueChannelFailure(ctx, job, channelQueueOverflowResponse)
+		s.completeDurableInboundEvent(job.event.AccountID, job.inboundID)
 	}
 }
 
@@ -104,6 +111,16 @@ func (s *Server) runChannelWorker(key string, worker *channelEventWorker) {
 }
 
 func (s *Server) processChannelEvent(ctx context.Context, key string, job channelEventJob) {
+	if job.inboundLeaseDone != nil {
+		defer close(job.inboundLeaseDone)
+	}
+	handled := false
+	defer func() {
+		if handled {
+			s.completeDurableInboundEvent(job.event.AccountID, job.inboundID)
+		}
+	}()
+
 	runCtx := ctx
 	var cancel context.CancelFunc
 	if timeout := s.channelTurnTimeoutDuration(); timeout > 0 {
@@ -120,11 +137,13 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 	}
 	if panicked {
 		s.sendOrQueueChannelFailure(ctx, job, channelRunFailureResponse)
+		handled = true
 		return
 	}
 	if runErr != nil {
 		if isRuntimeAdmissionBusy(runErr) {
 			s.sendOrQueueChannelFailure(ctx, job, channelQueueOverflowResponse)
+			handled = true
 			return
 		}
 		slog.Error("channel event: engine error",
@@ -135,21 +154,25 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 			"error", runErr,
 		)
 		s.sendOrQueueChannelFailure(ctx, job, channelRunFailureResponse)
+		handled = true
 		return
 	}
 
 	engine.MarkAccountReady(job.runtime)
 
 	if strings.TrimSpace(response) == "" {
+		handled = true
 		return
 	}
 
 	if !job.chOK {
 		slog.Warn("channel event: no channel for response routing, enqueuing for retry",
 			"type", job.event.Type, "account", job.event.AccountID)
+		queued := job.event.Type == core.EventKakaoTalk
 		if job.event.Type != core.EventKakaoTalk {
 			if err := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, response); err != nil {
 				slog.Error("channel event: enqueue response failed", "error", err)
+				s.releaseDurableInboundEvent(job.event.AccountID, job.inboundID, err.Error())
 				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryFailed, job.event.Type, job.payload.ChatID, map[string]string{
 					"error_class": "enqueue_failed",
 					"reason":      "channel_not_running",
@@ -158,8 +181,10 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
 					"reason": "channel_not_running",
 				})
+				queued = true
 			}
 		}
+		handled = queued
 		return
 	}
 
@@ -186,6 +211,8 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		if job.event.Type != core.EventKakaoTalk && !pendingQueued {
 			if qErr := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text); qErr != nil {
 				slog.Error("channel event: enqueue response failed", "error", qErr)
+				s.releaseDurableInboundEvent(job.event.AccountID, job.inboundID, qErr.Error())
+				return
 			} else {
 				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
 					"reason": "send_failed",
@@ -195,6 +222,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryFailed, job.event.Type, job.payload.ChatID, map[string]string{
 			"error_class": "send_failed",
 		})
+		handled = true
 		return
 	}
 	if pendingQueued {
@@ -208,6 +236,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		}
 		publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryDelivered, job.event.Type, job.payload.ChatID, nil)
 	}
+	handled = true
 }
 
 func (s *Server) runChannelRuntime(ctx context.Context, runtime *engine.AccountRuntime, event core.Event, runOpts *engine.RunOptions) (response string, runErr error, panicked bool) {

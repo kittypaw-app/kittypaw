@@ -129,6 +129,21 @@ type ConversationTurnRecord struct {
 	Timestamp      string           `json:"timestamp"`
 }
 
+type InboundEventRecord struct {
+	ID            int64
+	AccountID     string
+	EventType     string
+	SourceEventID string
+	Event         core.Event
+	Status        string
+	Attempts      int
+	ClaimedUntil  string
+	LastError     string
+	CreatedAt     string
+	UpdatedAt     string
+	DoneAt        string
+}
+
 type ToolTraceIndexRecord struct {
 	ID             int64  `json:"id"`
 	ConversationID string `json:"conversation_id"`
@@ -3170,6 +3185,221 @@ func (s *Store) QueryPermissionLog(limit int) ([]AuditRecord, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Durable inbound events
+// ---------------------------------------------------------------------------
+
+const inboundEventTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func inboundEventTimestamp(t time.Time) string {
+	return t.UTC().Format(inboundEventTimeLayout)
+}
+
+func (s *Store) EnqueueInboundEvent(event core.Event) (int64, bool, error) {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return 0, false, err
+	}
+	accountID := strings.TrimSpace(event.AccountID)
+	eventType := strings.TrimSpace(string(event.Type))
+	sourceEventID := strings.TrimSpace(event.SourceEventID)
+	if accountID == "" {
+		return 0, false, fmt.Errorf("inbound event account_id required")
+	}
+	if eventType == "" {
+		return 0, false, fmt.Errorf("inbound event type required")
+	}
+	now := inboundEventTimestamp(time.Now())
+	if sourceEventID != "" {
+		res, err := s.db.Exec(`
+			INSERT OR IGNORE INTO inbound_events (
+				account_id, event_type, source_event_id, payload_json,
+				status, attempts, claimed_until, last_error, created_at, updated_at, done_at
+			)
+			VALUES (?, ?, ?, ?, 'queued', 0, '', '', ?, ?, '')`,
+			accountID, eventType, sourceEventID, string(raw), now, now)
+		if err != nil {
+			return 0, false, err
+		}
+		if rows, _ := res.RowsAffected(); rows == 0 {
+			var id int64
+			err := s.db.QueryRow(`
+				SELECT id FROM inbound_events
+				WHERE account_id = ? AND event_type = ? AND source_event_id = ?`,
+				accountID, eventType, sourceEventID).Scan(&id)
+			return id, false, err
+		}
+		id, err := res.LastInsertId()
+		return id, true, err
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO inbound_events (
+			account_id, event_type, source_event_id, payload_json,
+			status, attempts, claimed_until, last_error, created_at, updated_at, done_at
+		)
+		VALUES (?, ?, '', ?, 'queued', 0, '', '', ?, ?, '')`,
+		accountID, eventType, string(raw), now, now)
+	if err != nil {
+		return 0, false, err
+	}
+	id, err := res.LastInsertId()
+	return id, true, err
+}
+
+func (s *Store) ClaimInboundEvents(limit int, lease time.Duration) ([]InboundEventRecord, error) {
+	if limit <= 0 {
+		return []InboundEventRecord{}, nil
+	}
+	now := time.Now().UTC()
+	nowText := inboundEventTimestamp(now)
+	leaseUntil := inboundEventTimestamp(now.Add(lease))
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`
+		SELECT id, account_id, event_type, source_event_id, payload_json,
+		       status, attempts, claimed_until, last_error, created_at, updated_at, done_at
+		FROM inbound_events
+		WHERE status = 'queued'
+		   OR (status = 'processing' AND claimed_until <= ?)
+		ORDER BY id ASC
+		LIMIT ?`, nowText, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []InboundEventRecord
+	for rows.Next() {
+		rec, err := scanInboundEventRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		res, err := tx.Exec(`
+			UPDATE inbound_events
+			SET status = 'processing',
+			    attempts = attempts + 1,
+			    claimed_until = ?,
+			    updated_at = ?
+			WHERE id = ?
+			  AND (status = 'queued' OR (status = 'processing' AND claimed_until <= ?))`,
+			leaseUntil, nowText, rec.ID, nowText)
+		if err != nil {
+			return nil, err
+		}
+		if affected, _ := res.RowsAffected(); affected == 0 {
+			continue
+		}
+		rec.Status = "processing"
+		rec.Attempts++
+		rec.ClaimedUntil = leaseUntil
+		rec.UpdatedAt = nowText
+		rec.Event.DurableInboundID = rec.ID
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type inboundEventScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanInboundEventRecord(scanner inboundEventScanner) (InboundEventRecord, error) {
+	var rec InboundEventRecord
+	var payload string
+	if err := scanner.Scan(
+		&rec.ID,
+		&rec.AccountID,
+		&rec.EventType,
+		&rec.SourceEventID,
+		&payload,
+		&rec.Status,
+		&rec.Attempts,
+		&rec.ClaimedUntil,
+		&rec.LastError,
+		&rec.CreatedAt,
+		&rec.UpdatedAt,
+		&rec.DoneAt,
+	); err != nil {
+		return rec, err
+	}
+	if err := json.Unmarshal([]byte(payload), &rec.Event); err != nil {
+		return rec, err
+	}
+	rec.Event.AccountID = rec.AccountID
+	rec.Event.Type = core.EventType(rec.EventType)
+	rec.Event.SourceEventID = rec.SourceEventID
+	return rec, nil
+}
+
+func (s *Store) CompleteInboundEvent(id int64) error {
+	now := inboundEventTimestamp(time.Now())
+	_, err := s.db.Exec(`
+		UPDATE inbound_events
+		SET status = 'done',
+		    claimed_until = '',
+		    updated_at = ?,
+		    done_at = ?
+		WHERE id = ?`, now, now, id)
+	return err
+}
+
+func (s *Store) RefreshInboundEventLease(id int64, lease time.Duration) error {
+	now := time.Now().UTC()
+	nowText := inboundEventTimestamp(now)
+	leaseUntil := inboundEventTimestamp(now.Add(lease))
+	_, err := s.db.Exec(`
+		UPDATE inbound_events
+		SET claimed_until = ?,
+		    updated_at = ?
+		WHERE id = ?
+		  AND status = 'processing'`, leaseUntil, nowText, id)
+	return err
+}
+
+func (s *Store) ReleaseInboundEvent(id int64, errText string) error {
+	now := inboundEventTimestamp(time.Now())
+	_, err := s.db.Exec(`
+		UPDATE inbound_events
+		SET status = 'queued',
+		    claimed_until = '',
+		    last_error = ?,
+		    updated_at = ?
+		WHERE id = ?`, truncateInboundError(errText), now, id)
+	return err
+}
+
+func (s *Store) FailInboundEvent(id int64, errText string) error {
+	now := inboundEventTimestamp(time.Now())
+	_, err := s.db.Exec(`
+		UPDATE inbound_events
+		SET status = 'failed',
+		    claimed_until = '',
+		    last_error = ?,
+		    updated_at = ?
+		WHERE id = ?`, truncateInboundError(errText), now, id)
+	return err
+}
+
+func truncateInboundError(value string) string {
+	value = strings.TrimSpace(value)
+	const limit = 500
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 // ---------------------------------------------------------------------------

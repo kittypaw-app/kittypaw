@@ -13,6 +13,7 @@ import (
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/llm"
+	"github.com/jinto/kittypaw/store"
 )
 
 type blockingDispatchProvider struct {
@@ -457,6 +458,57 @@ func TestProcessChannelEventDoesNotEmitQueuedWhenEnqueueFails(t *testing.T) {
 	if !sawFailed {
 		t.Fatalf("events = %+v, want delivery.failed after enqueue failure", events)
 	}
+}
+
+func TestDurableInboundDrainProcessesQueuedEvent(t *testing.T) {
+	root := t.TempDir()
+	cfg := core.DefaultConfig()
+	cfg.AllowedChatIDs = []string{"alice-chat"}
+	deps := buildAccountDeps(t, root, "alice", &cfg)
+	deps.Provider = &chatRelayMockProvider{content: `return "durable inbound reply";`}
+	srv := New([]*AccountDeps{deps}, "test", "alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv.spawner = NewChannelSpawner(ctx, srv.eventCh)
+	go srv.dispatchLoop(ctx)
+
+	event := dispatchTestEvent(t, core.EventTelegram, "alice", "alice-chat", "from durable inbox")
+	event.SourceEventID = "telegram:update:777"
+	if _, _, err := srv.publishInboundEvent(ctx, event); err != nil {
+		t.Fatalf("publish inbound: %v", err)
+	}
+	if err := srv.drainInboundEventsOnce(ctx); err != nil {
+		t.Fatalf("drain inbound: %v", err)
+	}
+
+	pending := waitForPendingResponse(t, srv, "durable inbound reply")
+
+	claimed, err := srv.store.ClaimInboundEvents(10, time.Millisecond)
+	if err != nil {
+		t.Fatalf("claim after drain: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("claimed after drain = %+v with pending %+v, want inbound marked done", claimed, pending)
+	}
+}
+
+func waitForPendingResponse(t *testing.T, srv *Server, want string) []store.PendingResponse {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		pending, err := srv.store.DequeuePendingResponses(10)
+		if err != nil {
+			t.Fatalf("dequeue pending: %v", err)
+		}
+		for _, row := range pending {
+			if row.Response == want {
+				return pending
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for pending response %q", want)
+	return nil
 }
 
 func collectAccountEvents(ch <-chan AccountEvent, wait time.Duration) []AccountEvent {

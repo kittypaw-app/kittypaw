@@ -29,6 +29,34 @@ type Channel interface {
 	Name() string
 }
 
+// EventSink durably accepts an inbound channel event before the channel
+// acknowledges or advances its platform cursor.
+type EventSink interface {
+	PublishEvent(ctx context.Context, event core.Event) error
+}
+
+// EventSinkStarter is implemented by channels that can publish through a
+// durable sink. Channel.Start remains for tests and legacy callers.
+type EventSinkStarter interface {
+	StartWithEventSink(ctx context.Context, sink EventSink) error
+}
+
+type eventChanSink chan<- core.Event
+
+// NewEventChanSink adapts the legacy event channel to EventSink.
+func NewEventChanSink(eventCh chan<- core.Event) EventSink {
+	return eventChanSink(eventCh)
+}
+
+func (s eventChanSink) PublishEvent(ctx context.Context, event core.Event) error {
+	select {
+	case s <- event:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // RichResponder is an optional capability for channels that can render
 // structured response metadata such as image attachments.
 type RichResponder interface {

@@ -223,6 +223,10 @@ func (t *TelegramChannel) LastChatID() (string, bool) {
 // Start long-polls the Telegram Bot API for updates. It blocks until
 // ctx is canceled, emitting core.Event values on eventCh.
 func (t *TelegramChannel) Start(ctx context.Context, eventCh chan<- core.Event) error {
+	return t.StartWithEventSink(ctx, NewEventChanSink(eventCh))
+}
+
+func (t *TelegramChannel) StartWithEventSink(ctx context.Context, sink EventSink) error {
 	slog.Info("telegram: starting long-poll loop")
 	backoff := initialBackoff
 
@@ -256,20 +260,16 @@ func (t *TelegramChannel) Start(ctx context.Context, eventCh chan<- core.Event) 
 		backoff = initialBackoff
 
 		for _, upd := range updates {
-			t.mu.Lock()
-			if upd.UpdateID >= t.offset {
-				t.offset = upd.UpdateID + 1
-			}
-			t.mu.Unlock()
-
 			// Route callback queries to the pending permission map
 			// (bypasses eventCh to prevent deadlock with dispatchLoop).
 			if upd.CallbackQuery != nil {
 				t.resolveCallback(ctx, upd.CallbackQuery)
+				t.advanceOffset(upd.UpdateID)
 				continue
 			}
 
 			if upd.Message == nil {
+				t.advanceOffset(upd.UpdateID)
 				continue
 			}
 
@@ -289,30 +289,55 @@ func (t *TelegramChannel) Start(ctx context.Context, eventCh chan<- core.Event) 
 				transcribed, err := t.transcribeVoice(ctx, msg.Voice.FileID)
 				if err != nil {
 					slog.Warn("telegram: voice transcription failed", "error", err)
+					t.advanceOffset(upd.UpdateID)
 					continue
 				}
 				text = transcribed
 			}
 
 			if text == "" && len(attachments) == 0 {
+				t.advanceOffset(upd.UpdateID)
 				continue
 			}
 
 			event, chatID, ok := telegramMessageEvent(t.accountID, msg, text, attachments)
 			if !ok {
+				t.advanceOffset(upd.UpdateID)
 				continue
 			}
-
-			select {
-			case eventCh <- event:
-				// Start typing as early as possible — before the runner loop
-				// even begins. SendResponse will cancel this when it's time
-				// to deliver the actual reply.
-				t.startTyping(ctx, chatID)
-			case <-ctx.Done():
-				return ctx.Err()
+			event.SourceEventID = fmt.Sprintf("telegram:update:%d", upd.UpdateID)
+			for {
+				if err := sink.PublishEvent(ctx, event); err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					slog.Warn("telegram: publish event failed, backing off",
+						"update_id", upd.UpdateID, "error", err, "backoff", backoff)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(backoff):
+					}
+					backoff = min(backoff*2, maxBackoff)
+					continue
+				}
+				break
 			}
+			backoff = initialBackoff
+			t.advanceOffset(upd.UpdateID)
+			// Start typing as early as possible — before the runner loop
+			// even begins. SendResponse will cancel this when it's time
+			// to deliver the actual reply.
+			t.startTyping(ctx, chatID)
 		}
+	}
+}
+
+func (t *TelegramChannel) advanceOffset(updateID int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if updateID >= t.offset {
+		t.offset = updateID + 1
 	}
 }
 

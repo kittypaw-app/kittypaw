@@ -89,9 +89,15 @@ type ConversationTurn struct {
 // rejected by the AccountRouter (no default fallback) to prevent cross-account
 // leaks in multi-account deployments.
 type Event struct {
-	Type      EventType       `json:"type"`
-	AccountID string          `json:"account_id,omitempty"`
-	Payload   json.RawMessage `json:"payload"`
+	Type          EventType       `json:"type"`
+	AccountID     string          `json:"account_id,omitempty"`
+	SourceEventID string          `json:"source_event_id,omitempty"`
+	Payload       json.RawMessage `json:"payload"`
+
+	// DurableInboundID is server-internal bookkeeping for inbound_events rows.
+	// It is intentionally not serialized into prompts, channel payloads, or
+	// durable event payload_json.
+	DurableInboundID int64 `json:"-"`
 }
 
 // ChatPayload is the common structure inside Event.Payload.
