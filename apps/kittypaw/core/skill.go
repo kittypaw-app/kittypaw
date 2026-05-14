@@ -67,12 +67,13 @@ type SkillManifest struct {
 
 // SkillTrigger defines how a skill is activated.
 type SkillTrigger struct {
-	Type     string         `toml:"type"     json:"type"`
-	Cron     string         `toml:"cron"     json:"cron,omitempty"`
-	Natural  string         `toml:"natural"  json:"natural,omitempty"`
-	Keyword  string         `toml:"keyword"  json:"keyword,omitempty"`
-	RunAt    string         `toml:"run_at"   json:"run_at,omitempty"` // RFC 3339 UTC
-	Delivery DeliveryTarget `toml:"delivery" json:"delivery,omitempty"`
+	Type         string         `toml:"type"           json:"type"`
+	Cron         string         `toml:"cron"           json:"cron,omitempty"`
+	Natural      string         `toml:"natural"        json:"natural,omitempty"`
+	Keyword      string         `toml:"keyword"        json:"keyword,omitempty"`
+	RunAt        string         `toml:"run_at"         json:"run_at,omitempty"` // RFC 3339 UTC
+	RunOnInstall bool           `toml:"run_on_install" json:"run_on_install,omitempty"`
+	Delivery     DeliveryTarget `toml:"delivery"       json:"delivery,omitempty"`
 }
 
 // DeliveryTarget identifies where a background skill or notification should be

@@ -2029,12 +2029,13 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 		var items []map[string]any
 		for _, sk := range skills {
 			item := map[string]any{
-				"name":        sk.Manifest.Name,
-				"description": sk.Manifest.Description,
-				"enabled":     sk.Manifest.Enabled,
-				"trigger":     sk.Manifest.Trigger.Type,
-				"cron":        sk.Manifest.Trigger.Cron,
-				"run_at":      sk.Manifest.Trigger.RunAt,
+				"name":           sk.Manifest.Name,
+				"description":    sk.Manifest.Description,
+				"enabled":        sk.Manifest.Enabled,
+				"trigger":        sk.Manifest.Trigger.Type,
+				"cron":           sk.Manifest.Trigger.Cron,
+				"run_at":         sk.Manifest.Trigger.RunAt,
+				"run_on_install": sk.Manifest.Trigger.RunOnInstall,
 			}
 			if s.Store != nil {
 				lastRun, _ := s.Store.GetLastRun(sk.Manifest.Name)
@@ -2111,6 +2112,10 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 		if len(call.Args) > 4 {
 			_ = json.Unmarshal(call.Args[4], &schedule)
 		}
+		runOnInstall := false
+		if len(call.Args) > 5 {
+			_ = json.Unmarshal(call.Args[5], &runOnInstall)
+		}
 
 		skill := &core.SkillManifest{
 			Name:        name,
@@ -2127,6 +2132,12 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 		}
 		if triggerType == "schedule" {
 			skill.Trigger.Cron = schedule
+			skill.Trigger.RunOnInstall = runOnInstall
+			if !runOnInstall {
+				if runAt, ok := firstScheduledRunAfter(schedule, time.Now()); ok {
+					skill.Trigger.RunAt = runAt.Format(time.RFC3339)
+				}
+			}
 		} else if triggerType == "once" {
 			runAt, err := onceRunAtFromSchedule(schedule, time.Now())
 			if err != nil {
@@ -2775,6 +2786,8 @@ func promptModeArgumentAliases(name string) []string {
 		return []string{"ref_or_selector", "ref", "selector"}
 	case "scheduleOrRunAt":
 		return []string{"schedule_or_run_at", "schedule", "run_at"}
+	case "runOnInstall":
+		return []string{"run_on_install"}
 	case "targetId":
 		return []string{"target_id"}
 	case "usernameOrOptions":

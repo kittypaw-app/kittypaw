@@ -714,7 +714,7 @@ func SkillScheduleStateFor(skill *core.SkillManifest, lastRun *time.Time, failur
 		return state
 
 	case "schedule":
-		next, ok := nextScheduledRun(skill.Trigger.Cron, lastRun, now)
+		next, ok := nextScheduledRunForTrigger(skill.Trigger, lastRun, now)
 		if !ok {
 			return state
 		}
@@ -731,6 +731,19 @@ func SkillScheduleStateFor(skill *core.SkillManifest, lastRun *time.Time, failur
 	default:
 		return state
 	}
+}
+
+func nextScheduledRunForTrigger(trigger core.SkillTrigger, lastRun *time.Time, now time.Time) (time.Time, bool) {
+	if lastRun == nil && !trigger.RunOnInstall {
+		if runAt, ok := parseScheduleRunAt(trigger.RunAt); ok {
+			return runAt, true
+		}
+		// Older and hand-authored schedule manifests do not carry a first-run
+		// anchor. Keep that compatibility path runnable instead of recomputing a
+		// future next-run forever on each scheduler tick.
+		return nextScheduledRun(trigger.Cron, nil, now)
+	}
+	return nextScheduledRun(trigger.Cron, lastRun, now)
 }
 
 func nextScheduledRun(expr string, lastRun *time.Time, now time.Time) (time.Time, bool) {
@@ -753,4 +766,41 @@ func nextScheduledRun(expr string, lastRun *time.Time, now time.Time) (time.Time
 		return time.Time{}, false
 	}
 	return schedule.Next(*lastRun).UTC(), true
+}
+
+func firstScheduledRunAfter(expr string, now time.Time) (time.Time, bool) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return time.Time{}, false
+	}
+	if strings.HasPrefix(expr, "every ") {
+		interval := parseCronInterval(expr)
+		if interval <= 0 {
+			return time.Time{}, false
+		}
+		return now.Add(interval).UTC(), true
+	}
+	schedule, err := parseCronSchedule(expr)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return schedule.Next(now).UTC(), true
+}
+
+// FirstScheduledRunAfter returns the first future fire time for a recurring
+// schedule expression. It is used by API paths that create scheduled skills.
+func FirstScheduledRunAfter(expr string, now time.Time) (time.Time, bool) {
+	return firstScheduledRunAfter(expr, now)
+}
+
+func parseScheduleRunAt(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	runAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return runAt.UTC(), true
 }

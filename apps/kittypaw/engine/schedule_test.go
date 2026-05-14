@@ -151,14 +151,37 @@ func newTestScheduler(t *testing.T) (*Scheduler, *store.Store) {
 	return NewScheduler(session, nil), st
 }
 
-func TestIsDue_ScheduleFirstRun(t *testing.T) {
+func TestIsDue_ScheduleFirstRunWaitsForNextRunAt(t *testing.T) {
+	sched, _ := newTestScheduler(t)
+	runAt := time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339)
+	skill := &core.SkillManifest{
+		Name:    "test-sched",
+		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 5m", RunAt: runAt},
+	}
+	if sched.isDue(skill) {
+		t.Error("first run should wait until run_at")
+	}
+}
+
+func TestIsDue_ScheduleRunOnInstallIsDueImmediately(t *testing.T) {
 	sched, _ := newTestScheduler(t)
 	skill := &core.SkillManifest{
 		Name:    "test-sched",
+		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 5m", RunOnInstall: true},
+	}
+	if !sched.isDue(skill) {
+		t.Error("run_on_install schedule should be due immediately")
+	}
+}
+
+func TestIsDue_ScheduleWithoutFirstRunAnchorKeepsLegacyImmediateRun(t *testing.T) {
+	sched, _ := newTestScheduler(t)
+	skill := &core.SkillManifest{
+		Name:    "legacy-sched",
 		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 5m"},
 	}
 	if !sched.isDue(skill) {
-		t.Error("first run should be due")
+		t.Error("legacy schedule without run_at should remain due on first scheduler check")
 	}
 }
 

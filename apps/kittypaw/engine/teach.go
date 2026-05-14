@@ -283,17 +283,17 @@ func inferTrigger(desc string) core.SkillTrigger {
 
 	// Schedule: "every Xm/h/d"
 	if m := everyRe.FindStringSubmatch(lower); m != nil {
-		return core.SkillTrigger{Type: "schedule", Cron: "every " + m[1], Natural: desc}
+		return scheduledTrigger("every "+m[1], desc)
 	}
 
 	// Schedule: Korean daily
 	if dailyKoRe.MatchString(desc) {
-		return core.SkillTrigger{Type: "schedule", Cron: "every 24h", Natural: desc}
+		return scheduledTrigger("every 24h", desc)
 	}
 
 	// Schedule: Korean weekly
 	if weeklyKoRe.MatchString(desc) {
-		return core.SkillTrigger{Type: "schedule", Cron: "every 168h", Natural: desc}
+		return scheduledTrigger("every 168h", desc)
 	}
 
 	// Keyword: "when someone says X"
@@ -302,4 +302,12 @@ func inferTrigger(desc string) core.SkillTrigger {
 	}
 
 	return core.SkillTrigger{Type: "manual", Natural: desc}
+}
+
+func scheduledTrigger(cronExpr, natural string) core.SkillTrigger {
+	trigger := core.SkillTrigger{Type: "schedule", Cron: cronExpr, Natural: natural}
+	if runAt, ok := firstScheduledRunAfter(cronExpr, time.Now()); ok {
+		trigger.RunAt = runAt.Format(time.RFC3339)
+	}
+	return trigger
 }

@@ -189,8 +189,8 @@ Web.search 와 동일한 contract. 항상 ` + "`.results`" + ` 로 array 접근.
 
 // SkillCreationBlock guides when and how to create scheduled or one-shot skills.
 const SkillCreationBlock = `## When to create a skill
-Recurring ("매일", "every day") → schedule trigger. One-time delayed ("2분 뒤", "한 번만") → once trigger.
-Immediate requests → execute directly, no skill creation.
+Recurring ("매일"/"every day") → schedule; delayed once ("2분 뒤") → once; immediate → direct.
+First schedule run waits; runOnInstall=true means immediate first run.
 
 Example — scheduled (recurring):
   Skill.create("ai-news", "AI 뉴스 매시간 요약", ` + "`" + `

@@ -50,6 +50,7 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 			Trigger      string `json:"trigger"`
 			Cron         string `json:"cron"`
 			RunAt        string `json:"run_at"`
+			RunOnInstall bool   `json:"run_on_install"`
 			LastRun      string `json:"last_run"`
 			FailureCount int    `json:"failure_count"`
 			NextRun      string `json:"next_run"`
@@ -62,6 +63,7 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 		Trigger      string
 		Cron         string
 		RunAt        string
+		RunOnInstall bool
 		LastRun      string
 		FailureCount int
 		NextRun      string
@@ -72,6 +74,7 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 			Trigger      string
 			Cron         string
 			RunAt        string
+			RunOnInstall bool
 			LastRun      string
 			FailureCount int
 			NextRun      string
@@ -93,10 +96,51 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 	if poll.Trigger != "schedule" || poll.Cron != "every 10m" {
 		t.Fatalf("poll trigger fields = %+v, want schedule/every 10m", poll)
 	}
+	if poll.RunOnInstall {
+		t.Fatalf("poll run_on_install = true, want false")
+	}
 	if poll.LastRun == "" || poll.NextRun == "" {
 		t.Fatalf("poll schedule status = %+v, want last_run and next_run", poll)
 	}
 	if poll.FailureCount != 2 {
 		t.Fatalf("poll failure_count = %d, want 2", poll.FailureCount)
+	}
+}
+
+func TestTeachApproveScheduleStoresFirstRunAt(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.Server.APIKey = "api-key"
+	srv := newServerWithLocalUserAndConfig(t, "alice", "pw", &cfg)
+	before := time.Now().UTC().Add(9 * time.Minute)
+
+	var body struct {
+		Success bool   `json:"success"`
+		Name    string `json:"name"`
+	}
+	projectsAPIRequest(t, srv, http.MethodPost, "/api/v1/skills/teach/approve", map[string]any{
+		"name":        "poll-news",
+		"description": "10분마다 뉴스 확인",
+		"code":        `return "ok";`,
+		"trigger":     "schedule",
+		"schedule":    "every 10m",
+	}, http.StatusOK, &body)
+	if !body.Success || body.Name != "poll-news" {
+		t.Fatalf("approve response = %+v", body)
+	}
+
+	skill, _, err := core.LoadSkillFrom(srv.defaultRuntime().BaseDir, "poll-news")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(poll-news): %v", err)
+	}
+	if skill.Trigger.RunOnInstall {
+		t.Fatal("teach approve schedule should default run_on_install to false")
+	}
+	runAt, err := time.Parse(time.RFC3339, skill.Trigger.RunAt)
+	if err != nil {
+		t.Fatalf("run_at = %q, want RFC3339: %v", skill.Trigger.RunAt, err)
+	}
+	after := time.Now().UTC().Add(11 * time.Minute)
+	if runAt.Before(before) || runAt.After(after) {
+		t.Fatalf("run_at = %s, want roughly 10m from now (%s..%s)", runAt, before, after)
 	}
 }

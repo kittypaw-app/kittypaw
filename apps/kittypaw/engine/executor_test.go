@@ -685,6 +685,102 @@ func TestResolveSkillCallCreateOnceDelayStoresRunAt(t *testing.T) {
 	}
 }
 
+func TestResolveSkillCallCreateScheduleStoresFirstRunAt(t *testing.T) {
+	baseDir := t.TempDir()
+	s := &AccountRuntime{
+		BaseDir: baseDir,
+		Config:  &core.Config{AutonomyLevel: core.AutonomyFull},
+	}
+	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
+	before := time.Now().UTC().Add(9 * time.Minute)
+
+	got, err := resolveSkillCall(context.Background(), core.SkillCall{
+		SkillName: "Skill",
+		Method:    "create",
+		Args: []json.RawMessage{
+			raw(`"poll-news"`),
+			raw(`"10분마다 뉴스 확인"`),
+			raw(`"return \"ok\";"`),
+			raw(`"schedule"`),
+			raw(`"every 10m"`),
+		},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Skill.create result = %s", got)
+	}
+
+	skill, _, err := core.LoadSkillFrom(baseDir, "poll-news")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(poll-news): %v", err)
+	}
+	if skill.Trigger.Type != "schedule" || skill.Trigger.Cron != "every 10m" {
+		t.Fatalf("trigger = %+v, want schedule every 10m", skill.Trigger)
+	}
+	if skill.Trigger.RunOnInstall {
+		t.Fatal("Skill.create schedule should default run_on_install to false")
+	}
+	runAt, err := time.Parse(time.RFC3339, skill.Trigger.RunAt)
+	if err != nil {
+		t.Fatalf("run_at = %q, want RFC3339: %v", skill.Trigger.RunAt, err)
+	}
+	after := time.Now().UTC().Add(11 * time.Minute)
+	if runAt.Before(before) || runAt.After(after) {
+		t.Fatalf("run_at = %s, want roughly 10m from now (%s..%s)", runAt, before, after)
+	}
+
+	sched := NewScheduler(&AccountRuntime{Store: openTestStore(t), Config: &core.Config{}}, nil)
+	if sched.isDue(skill) {
+		t.Fatal("new schedule skill should wait for first run_at")
+	}
+}
+
+func TestResolveSkillCallCreateScheduleRunOnInstallSkipsFirstRunAt(t *testing.T) {
+	baseDir := t.TempDir()
+	s := &AccountRuntime{
+		BaseDir: baseDir,
+		Config:  &core.Config{AutonomyLevel: core.AutonomyFull},
+	}
+	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
+
+	got, err := resolveSkillCall(context.Background(), core.SkillCall{
+		SkillName: "Skill",
+		Method:    "create",
+		Args: []json.RawMessage{
+			raw(`"poll-news"`),
+			raw(`"10분마다 뉴스 확인"`),
+			raw(`"return \"ok\";"`),
+			raw(`"schedule"`),
+			raw(`"every 10m"`),
+			raw(`true`),
+		},
+	}, s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Skill.create result = %s", got)
+	}
+
+	skill, _, err := core.LoadSkillFrom(baseDir, "poll-news")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom(poll-news): %v", err)
+	}
+	if !skill.Trigger.RunOnInstall {
+		t.Fatal("run_on_install option should be persisted")
+	}
+	if skill.Trigger.RunAt != "" {
+		t.Fatalf("run_at = %q, want empty when run_on_install is true", skill.Trigger.RunAt)
+	}
+
+	sched := NewScheduler(&AccountRuntime{Store: openTestStore(t), Config: &core.Config{}}, nil)
+	if !sched.isDue(skill) {
+		t.Fatal("run_on_install schedule should be due immediately")
+	}
+}
+
 func TestExecuteMemorySearchUsesUserMemory(t *testing.T) {
 	st := openTestStore(t)
 	if err := st.SetUserContext("memory:preference:lang", "Korean replies", "runner"); err != nil {

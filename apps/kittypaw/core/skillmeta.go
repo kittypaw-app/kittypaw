@@ -220,7 +220,7 @@ var curatedParameterSchemas = map[string]map[string]any{
 
 	"Skill.list":                objectSchema(nil, map[string]any{}),
 	"Skill.run":                 objectSchema([]string{"name"}, map[string]any{"name": stringSchema, "params": flexibleObjectSchema(nil, map[string]any{})}),
-	"Skill.create":              objectSchema([]string{"name", "desc", "code"}, map[string]any{"name": stringSchema, "desc": stringSchema, "code": stringSchema, "triggerType": enumStringSchema("manual", "schedule", "once"), "schedule_or_run_at": stringSchema}),
+	"Skill.create":              objectSchema([]string{"name", "desc", "code"}, map[string]any{"name": stringSchema, "desc": stringSchema, "code": stringSchema, "triggerType": enumStringSchema("manual", "schedule", "once"), "schedule_or_run_at": stringSchema, "runOnInstall": boolSchema, "run_on_install": boolSchema}),
 	"Skill.disable":             objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
 	"Skill.uninstall":           objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
 	"Skill.rollback":            objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
@@ -451,7 +451,7 @@ var SkillRegistry = withParameterSchemas([]SkillMeta{
 	{Name: "Skill", Methods: []SkillMethodMeta{
 		{Name: "list", Signature: "Skill.list()"},
 		{Name: "run", Signature: "Skill.run(name[, params]) — execute an installed skill/package. Pass structured params declared by package.toml, e.g. Skill.run(\"weather-now\", {location:{label,lat,lon}})."},
-		{Name: "create", Signature: "Skill.create(name, desc, code, triggerType, scheduleOrRunAt) — for triggerType \"schedule\", pass cron/every; for \"once\", pass a delay like \"2m\" or RFC3339 run_at."},
+		{Name: "create", Signature: "Skill.create(name, desc, code, triggerType, scheduleOrRunAt, runOnInstall?) — for triggerType \"schedule\", pass cron/every; first run waits for the next scheduled time unless runOnInstall is true. For \"once\", pass a delay like \"2m\" or RFC3339 run_at."},
 		{Name: "disable", Signature: "Skill.disable(name)"},
 		{Name: "uninstall", Signature: "Skill.uninstall(name) — remove an installed package or user-created skill by exact id/name. Destructive; call only when the user explicitly asks to remove/uninstall/delete it."},
 		{Name: "rollback", Signature: "Skill.rollback(name)"},

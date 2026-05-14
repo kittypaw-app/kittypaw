@@ -560,6 +560,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 		Trigger      string `json:"trigger"`
 		Cron         string `json:"cron,omitempty"`
 		RunAt        string `json:"run_at,omitempty"`
+		RunOnInstall bool   `json:"run_on_install"`
 		LastRun      string `json:"last_run,omitempty"`
 		FailureCount int    `json:"failure_count"`
 		NextRun      string `json:"next_run,omitempty"`
@@ -581,6 +582,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 			Trigger:      sk.Manifest.Trigger.Type,
 			Cron:         sk.Manifest.Trigger.Cron,
 			RunAt:        sk.Manifest.Trigger.RunAt,
+			RunOnInstall: sk.Manifest.Trigger.RunOnInstall,
 			FailureCount: failureCount,
 			Due:          status.Due,
 			CreatedAt:    sk.Manifest.CreatedAt,
@@ -663,11 +665,12 @@ func (s *Server) handleSkillsTeach(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTeachApprove(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Code        string `json:"code"`
-		Trigger     string `json:"trigger"`
-		Schedule    string `json:"schedule"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Code         string `json:"code"`
+		Trigger      string `json:"trigger"`
+		Schedule     string `json:"schedule"`
+		RunOnInstall bool   `json:"run_on_install"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -693,12 +696,25 @@ func (s *Server) handleTeachApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	triggerSpec := core.SkillTrigger{Type: trigger}
+	if trigger == "schedule" {
+		triggerSpec.Cron = body.Schedule
+		triggerSpec.RunOnInstall = body.RunOnInstall
+		if !body.RunOnInstall {
+			if runAt, ok := engine.FirstScheduledRunAfter(body.Schedule, time.Now()); ok {
+				triggerSpec.RunAt = runAt.Format(time.RFC3339)
+			}
+		}
+	} else {
+		triggerSpec.Cron = body.Schedule
+	}
+
 	result := &engine.TeachResult{
 		SkillName:   body.Name,
 		Code:        body.Code,
 		SyntaxOK:    true,
 		Description: body.Description,
-		Trigger:     core.SkillTrigger{Type: trigger, Cron: body.Schedule},
+		Trigger:     triggerSpec,
 		Permissions: engine.DetectPermissions(body.Code),
 	}
 	if err := engine.ApproveSkill(s.defaultRuntime().BaseDir, result); err != nil {
