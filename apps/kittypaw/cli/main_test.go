@@ -143,6 +143,65 @@ func TestIsTransportDropErr_NilSafe(t *testing.T) {
 	}
 }
 
+type fakeReloadClient struct {
+	reloadN       int
+	reloadAccount string
+	accountResult map[string]any
+}
+
+func (f *fakeReloadClient) Reload() (map[string]any, error) {
+	f.reloadN++
+	return map[string]any{"success": true}, nil
+}
+
+func (f *fakeReloadClient) ReloadAccount(accountID string) (map[string]any, error) {
+	f.reloadAccount = accountID
+	if f.accountResult != nil {
+		return f.accountResult, nil
+	}
+	return map[string]any{"success": true, "account_id": accountID}, nil
+}
+
+func TestServerReloadCommandPassesAccount(t *testing.T) {
+	fake := &fakeReloadClient{}
+	old := connectServerForReload
+	connectServerForReload = func() (reloadClient, error) {
+		return fake, nil
+	}
+	defer func() { connectServerForReload = old }()
+
+	cmd := newServerReloadCmd()
+	cmd.SetArgs([]string{"--account", "bob"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if fake.reloadAccount != "bob" {
+		t.Fatalf("reload account = %q, want bob", fake.reloadAccount)
+	}
+	if fake.reloadN != 0 {
+		t.Fatalf("default Reload called %d times, want 0", fake.reloadN)
+	}
+}
+
+func TestServerReloadCommandRejectsAccountMismatch(t *testing.T) {
+	fake := &fakeReloadClient{accountResult: map[string]any{"success": true}}
+	old := connectServerForReload
+	connectServerForReload = func() (reloadClient, error) {
+		return fake, nil
+	}
+	defer func() { connectServerForReload = old }()
+
+	cmd := newServerReloadCmd()
+	cmd.SetArgs([]string{"--account", "bob"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute succeeded with account reload response missing account_id")
+	}
+	if !strings.Contains(err.Error(), "did not confirm account") {
+		t.Fatalf("error = %v, want account confirmation failure", err)
+	}
+}
+
 func TestRootCommandGroupsServerLifecycleCommands(t *testing.T) {
 	root := newRootCmd()
 	topLevel := map[string]bool{}

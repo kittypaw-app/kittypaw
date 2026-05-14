@@ -100,6 +100,31 @@ func TestStaffList(t *testing.T) {
 	}
 }
 
+func TestReloadAccountSendsAccountID(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "")
+	if _, err := c.ReloadAccount("bob"); err != nil {
+		t.Fatalf("ReloadAccount() error: %v", err)
+	}
+	if gotPath != "/api/v1/reload" {
+		t.Fatalf("path = %q, want /api/v1/reload", gotPath)
+	}
+	if gotBody["account_id"] != "bob" {
+		t.Fatalf("body = %+v, want account_id=bob", gotBody)
+	}
+}
+
 func TestStaffActivate(t *testing.T) {
 	var gotPath, gotPreset string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

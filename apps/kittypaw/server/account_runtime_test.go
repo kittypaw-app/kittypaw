@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -226,6 +227,58 @@ func TestHandleReloadAppliesDefaultRuntimeDeps(t *testing.T) {
 	}
 	if got := srv.accountRegistry.Get("alice").Config.LLM.APIKey; got != "reload-key" {
 		t.Fatalf("registry config API key = %q, want reload-key", got)
+	}
+}
+
+func TestHandleReloadAppliesNamedAccountRuntimeDeps(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+
+	aliceInitial := core.DefaultConfig()
+	aliceInitial.LLM.APIKey = "alice-old-key"
+	bobInitial := core.DefaultConfig()
+	bobInitial.LLM.APIKey = "bob-old-key"
+	aliceDeps := buildAccountDeps(t, filepath.Join(root, "accounts"), "alice", &aliceInitial)
+	bobDeps := buildAccountDeps(t, filepath.Join(root, "accounts"), "bob", &bobInitial)
+	srv := NewWithServerConfig([]*AccountDeps{aliceDeps, bobDeps}, "test", core.TopLevelServerConfig{
+		DefaultAccount: "alice",
+	})
+	oldAliceRuntime := srv.runtime
+	oldBobRuntime := srv.accounts.Runtime("bob")
+	writeConfigForTest(t, filepath.Join(root, "accounts", "alice"), &aliceInitial)
+
+	bobReload := core.DefaultConfig()
+	bobReload.LLM.APIKey = "bob-reloaded-key"
+	bobReload.Sandbox.TimeoutSecs = 88
+	bobReload.Browser.Enabled = true
+	writeConfigForTest(t, filepath.Join(root, "accounts", "bob"), &bobReload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/reload", bytes.NewBufferString(`{"account_id":"bob"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.handleReload(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("reload code = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	bobRuntime := srv.accounts.Runtime("bob")
+	if bobRuntime == nil {
+		t.Fatal("bob runtime missing after reload")
+	}
+	if bobRuntime == oldBobRuntime {
+		t.Fatal("named reload should replace bob runtime")
+	}
+	if srv.runtime != oldAliceRuntime {
+		t.Fatal("named reload for bob should not replace default alice runtime")
+	}
+	if got := bobRuntime.Config.LLM.APIKey; got != "bob-reloaded-key" {
+		t.Fatalf("bob runtime API key = %q, want bob-reloaded-key", got)
+	}
+	if got := srv.accountDepsForID("bob").Account.Config.LLM.APIKey; got != "bob-reloaded-key" {
+		t.Fatalf("bob deps config API key = %q, want bob-reloaded-key", got)
+	}
+	if got := srv.accountRegistry.Get("bob").Config.LLM.APIKey; got != "bob-reloaded-key" {
+		t.Fatalf("bob registry config API key = %q, want bob-reloaded-key", got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -1218,8 +1219,20 @@ func (s *Server) handleCheckpointRollback(w http.ResponseWriter, r *http.Request
 // against the stale default-account channel list, passes, and spawns a
 // duplicate bot that this reload was about to introduce.
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
-	defaultID := s.defaultAccountID()
-	cfgPath, err := core.ConfigPathForAccount(defaultID)
+	accountID, err := reloadAccountIDFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if accountID == "" {
+		accountID = s.defaultAccountID()
+	}
+	if err := core.ValidateAccountID(accountID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cfgPath, err := core.ConfigPathForAccount(accountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1229,7 +1242,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "reload failed: "+err.Error())
 		return
 	}
-	secrets, err := core.LoadAccountSecrets(defaultID)
+	secrets, err := core.LoadAccountSecrets(accountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "reload secrets failed: "+err.Error())
 		return
@@ -1237,18 +1250,23 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	core.HydrateRuntimeSecrets(cfg, secrets)
 
 	s.accountMu.Lock()
+	if s.accountDeps[accountID] == nil {
+		s.accountMu.Unlock()
+		writeError(w, http.StatusNotFound, fmt.Sprintf("account %q is not active", accountID))
+		return
+	}
 
-	// Build the would-be-final snapshot (selected default account substituted with
+	// Build the would-be-final snapshot (selected account substituted with
 	// the proposed cfg, all other accounts as-is) and run the same validators
 	// StartChannels / AddAccount do.
 	snapshot := make(map[string][]core.ChannelConfig, len(s.accountList)+1)
 	accounts := make([]*core.Account, 0, len(s.accountList)+1)
-	defaultSeen := false
+	accountSeen := false
 	for _, peer := range s.accountList {
 		if peer == nil || peer.Config == nil {
 			continue
 		}
-		if peer.ID == defaultID {
+		if peer.ID == accountID {
 			// Substitute a proposed copy so validators see the would-be-final
 			// state without mutating the live pointer.
 			proposedAccount := *peer
@@ -1256,15 +1274,15 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 			proposedAccount.Config = &proposedCfg
 			accounts = append(accounts, &proposedAccount)
 			snapshot[peer.ID] = accountChannelsForValidation(peer.ID, cfg.Channels, "")
-			defaultSeen = true
+			accountSeen = true
 		} else {
 			accounts = append(accounts, peer)
 			snapshot[peer.ID] = accountChannelsForValidation(peer.ID, peer.Config.Channels, "")
 		}
 	}
-	if !defaultSeen {
-		accounts = append(accounts, &core.Account{ID: defaultID, Config: cfg})
-		snapshot[defaultID] = accountChannelsForValidation(defaultID, cfg.Channels, "")
+	if !accountSeen {
+		accounts = append(accounts, &core.Account{ID: accountID, Config: cfg})
+		snapshot[accountID] = accountChannelsForValidation(accountID, cfg.Channels, "")
 	}
 
 	if err := core.ValidateAccountChannels(snapshot); err != nil {
@@ -1286,19 +1304,19 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oldScheduler, err := s.applyAccountConfigLocked(defaultID, cfg)
+	oldScheduler, err := s.applyAccountConfigLocked(accountID, cfg)
 	if err != nil {
-		slog.Error("reload apply failed", "account", defaultID, "error", err)
+		slog.Error("reload apply failed", "account", accountID, "error", err)
 		s.accountMu.Unlock()
 		writeError(w, http.StatusInternalServerError, "reload apply failed: "+err.Error())
 		return
 	}
-	slog.Info("config reloaded")
+	slog.Info("config reloaded", "account", accountID)
 
-	result := map[string]any{"success": true}
+	result := map[string]any{"success": true, "account_id": accountID}
 	var warnings []string
 	if reconcile := s.reconcileFunc(); reconcile != nil {
-		if err := reconcile(defaultID, cfg.Channels); err != nil {
+		if err := reconcile(accountID, cfg.Channels); err != nil {
 			slog.Warn("reload: channel reconcile partial failure", "error", err)
 			warnings = append(warnings, err.Error())
 		}
@@ -1318,6 +1336,32 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		result["warnings"] = warnings
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+type reloadRequest struct {
+	AccountID string `json:"account_id"`
+}
+
+func reloadAccountIDFromRequest(r *http.Request) (string, error) {
+	accountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	if r.Body == nil || r.Body == http.NoBody {
+		return accountID, nil
+	}
+	var body reloadRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if errors.Is(err, io.EOF) {
+			return accountID, nil
+		}
+		return "", fmt.Errorf("invalid reload request: %w", err)
+	}
+	bodyAccountID := strings.TrimSpace(body.AccountID)
+	if bodyAccountID == "" {
+		return accountID, nil
+	}
+	if accountID != "" && accountID != bodyAccountID {
+		return "", fmt.Errorf("conflicting account_id in query and body")
+	}
+	return bodyAccountID, nil
 }
 
 // reconcileFunc returns the effective reconcile function: a test-injected

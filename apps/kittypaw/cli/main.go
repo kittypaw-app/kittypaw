@@ -2437,22 +2437,51 @@ func newChannelsListCmd() *cobra.Command {
 // server reload
 // ---------------------------------------------------------------------------
 
+type reloadClient interface {
+	Reload() (map[string]any, error)
+	ReloadAccount(accountID string) (map[string]any, error)
+}
+
+var connectServerForReload = func() (reloadClient, error) {
+	return connectServer()
+}
+
 func newServerReloadCmd() *cobra.Command {
-	return &cobra.Command{
+	var accountID string
+	cmd := &cobra.Command{
 		Use:   "reload",
 		Short: "Reload server configuration",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cl, err := connectServer()
+			accountID = strings.TrimSpace(accountID)
+			if accountID != "" {
+				if err := core.ValidateAccountID(accountID); err != nil {
+					return err
+				}
+			}
+			cl, err := connectServerForReload()
 			if err != nil {
 				return err
 			}
-			if _, err := cl.Reload(); err != nil {
-				return err
+			if accountID != "" {
+				result, err := cl.ReloadAccount(accountID)
+				if err != nil {
+					return err
+				}
+				if got, _ := result["account_id"].(string); got != accountID {
+					return fmt.Errorf("server reload did not confirm account %q; running daemon may need restart or upgrade", accountID)
+				}
+				fmt.Printf("Config reloaded for account %s.\n", accountID)
+			} else {
+				if _, err := cl.Reload(); err != nil {
+					return err
+				}
+				fmt.Println("Config reloaded.")
 			}
-			fmt.Println("Config reloaded.")
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&accountID, "account", "", "Reload configuration for a specific account")
+	return cmd
 }
 
 // ---------------------------------------------------------------------------

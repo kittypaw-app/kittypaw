@@ -227,6 +227,11 @@ func (c *Client) Reload() (map[string]any, error) {
 	return c.post("/api/v1/reload", nil)
 }
 
+// ReloadAccount triggers a config reload for one active account.
+func (c *Client) ReloadAccount(accountID string) (map[string]any, error) {
+	return c.post("/api/v1/reload", map[string]string{"account_id": accountID})
+}
+
 // TelegramPairingChatID asks the local server to coordinate Telegram chat_id
 // detection. When the daemon is already polling the bot token, this avoids a
 // second competing getUpdates consumer in the CLI process.
