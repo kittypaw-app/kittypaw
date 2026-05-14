@@ -2,6 +2,7 @@ package engine
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -75,6 +76,58 @@ func TestBuildPromptModeSystemPrompt(t *testing.T) {
 	}
 	if strings.Contains(prompt, "File") {
 		t.Error("prompt should NOT mention disallowed skills")
+	}
+}
+
+func TestBuildPromptModeSystemPromptIncludesBundledResources(t *testing.T) {
+	skill := &core.SkillManifest{
+		Name:         "resource-skill",
+		Format:       core.SkillFormatMarkdown,
+		ResourceRoot: core.SkillBundleDirName,
+		ResourceDirs: []string{"references", "scripts", "assets"},
+		Permissions:  core.SkillPermissions{Primitives: []string{"File", "Shell"}},
+	}
+
+	prompt := BuildPromptModeSystemPromptWithResources(skill, "Use references only when needed.", PromptModeSkillResources{
+		Root: "/tmp/kittypaw/skills/resource-skill/bundle",
+		Dirs: []string{"references", "scripts", "assets"},
+	})
+
+	for _, want := range []string{
+		"## Bundled Resources",
+		"/tmp/kittypaw/skills/resource-skill/bundle",
+		"references",
+		"scripts",
+		"assets",
+		"File",
+		"Shell",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPromptModeSkillResourcesRejectsSymlinkedRoot(t *testing.T) {
+	baseDir := t.TempDir()
+	skillDir := filepath.Join(baseDir, "skills", "linked-root")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(skillDir, core.SkillBundleDirName)); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := promptModeSkillResources(baseDir, &core.SkillManifest{
+		Name:         "linked-root",
+		ResourceRoot: core.SkillBundleDirName,
+		ResourceDirs: []string{"references"},
+	})
+	if err == nil {
+		t.Fatal("expected symlinked resource root rejection")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error = %v, want symlink rejection", err)
 	}
 }
 

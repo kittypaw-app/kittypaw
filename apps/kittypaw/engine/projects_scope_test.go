@@ -120,6 +120,30 @@ func TestGeneralChatRequiresProjectChoiceForProjectFileSearch(t *testing.T) {
 	}
 }
 
+func TestBundledFileStatsStillRequiresProjectChoiceInGeneralChat(t *testing.T) {
+	st := openTestStore(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("statstoken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := st.CreateProject(store.CreateProjectRequest{Key: "stats", Name: "Stats", RootPath: root})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	indexer := NewFTS5Indexer(st)
+	if _, err := indexer.Index(context.Background(), project.ID, project.RootPath); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	bundleRoot := t.TempDir()
+	sess := &AccountRuntime{Store: st, Config: fullAccessConfig(), Indexer: indexer}
+	ctx := contextWithPromptModeResourceRoot(ContextWithConversationID(context.Background(), "account"), bundleRoot)
+	_, err = resolveSkillCall(ctx, core.SkillCall{SkillName: "File", Method: "stats"}, sess, nil)
+	if err == nil || !strings.Contains(err.Error(), "project") {
+		t.Fatalf("bundled File.stats error = %v, want project choice error", err)
+	}
+}
+
 func TestFileSearchUsesEventConversationScopeBeforeAgentLoop(t *testing.T) {
 	st := openTestStore(t)
 	rootA := t.TempDir()

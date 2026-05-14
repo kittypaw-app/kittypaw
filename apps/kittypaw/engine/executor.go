@@ -32,6 +32,7 @@ const ctxKeyEvent contextKey = "event"
 const ctxKeyPackageParams contextKey = "packageParams"
 const ctxKeyPermissionCallback contextKey = "permissionCallback"
 const ctxKeyDelegation contextKey = "delegation"
+const ctxKeyPromptModeResourceRoots contextKey = "promptModeResourceRoots"
 
 const promptModeMaxToolIterations = 8
 
@@ -88,6 +89,27 @@ func PermissionCallbackFromContext(ctx context.Context) PermissionCallback {
 		return v
 	}
 	return nil
+}
+
+func contextWithPromptModeResourceRoot(ctx context.Context, root string) context.Context {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ctx
+	}
+	roots := promptModeResourceRootsFromContext(ctx)
+	roots = append(append([]string(nil), roots...), root)
+	return context.WithValue(ctx, ctxKeyPromptModeResourceRoots, roots)
+}
+
+func promptModeResourceRootsFromContext(ctx context.Context) []string {
+	if ctx == nil {
+		return nil
+	}
+	roots, ok := ctx.Value(ctxKeyPromptModeResourceRoots).([]string)
+	if !ok || len(roots) == 0 {
+		return nil
+	}
+	return append([]string(nil), roots...)
 }
 
 func ContextWithDelegationInfo(ctx context.Context, info DelegationRunOptions) context.Context {
@@ -524,17 +546,33 @@ func webFetch(ctx context.Context, targetURL string, s *AccountRuntime) (string,
 const maxFileReadSize = 10 * 1024 * 1024 // 10MB — protects LLM context from huge files.
 
 type fileToolScope struct {
-	allowedPaths []string
-	workspaceIDs []string
+	allowedPaths             []string
+	readOnlyPaths            []string
+	workspaceIDs             []string
+	projectSelectionRequired bool
 }
 
 func currentFileToolScope(ctx context.Context, s *AccountRuntime) (fileToolScope, error) {
 	scope := fileToolScope{}
+	resourceRoots := promptModeResourceRootsFromContext(ctx)
+	var resourceReadOnlyPaths []string
+	if len(resourceRoots) > 0 {
+		var err error
+		resourceReadOnlyPaths, err = normalizeFileToolAllowedPaths(resourceRoots)
+		if err != nil {
+			return fileToolScope{}, err
+		}
+		scope.readOnlyPaths = resourceReadOnlyPaths
+	}
 	if s == nil {
+		if len(resourceReadOnlyPaths) > 0 {
+			scope.allowedPaths = resourceReadOnlyPaths
+		}
 		return scope, nil
 	}
-	scope.allowedPaths = s.AllowedPaths()
-	if scope.allowedPaths != nil {
+	scope.allowedPaths = append([]string(nil), s.AllowedPaths()...)
+	scope.allowedPaths = append(scope.allowedPaths, resourceRoots...)
+	if len(scope.allowedPaths) > 0 {
 		allowed, err := normalizeFileToolAllowedPaths(scope.allowedPaths)
 		if err != nil {
 			return fileToolScope{}, err
@@ -557,13 +595,15 @@ func currentFileToolScope(ctx context.Context, s *AccountRuntime) (fileToolScope
 		return fileToolScope{}, err
 	}
 	if ok {
-		allowed, err := normalizeFileToolAllowedPaths([]string{project.RootPath})
+		projectPaths := append([]string{project.RootPath}, resourceRoots...)
+		allowed, err := normalizeFileToolAllowedPaths(projectPaths)
 		if err != nil {
 			return fileToolScope{}, err
 		}
 		return fileToolScope{
-			allowedPaths: allowed,
-			workspaceIDs: []string{project.ID},
+			allowedPaths:  allowed,
+			readOnlyPaths: resourceReadOnlyPaths,
+			workspaceIDs:  []string{project.ID},
 		}, nil
 	}
 
@@ -572,9 +612,23 @@ func currentFileToolScope(ctx context.Context, s *AccountRuntime) (fileToolScope
 		return fileToolScope{}, fmt.Errorf("list projects: %w", err)
 	}
 	if len(projects) > 0 {
+		if len(resourceReadOnlyPaths) > 0 {
+			return fileToolScope{
+				allowedPaths:             resourceReadOnlyPaths,
+				readOnlyPaths:            resourceReadOnlyPaths,
+				projectSelectionRequired: true,
+			}, nil
+		}
 		return fileToolScope{}, fmt.Errorf("project를 선택하세요")
 	}
 	return scope, nil
+}
+
+func requireFileIndexScope(scope fileToolScope) error {
+	if scope.projectSelectionRequired && len(scope.workspaceIDs) == 0 {
+		return fmt.Errorf("project를 선택하세요")
+	}
+	return nil
 }
 
 func projectForConversationScope(st *store.Store, conversationID string) (*store.Project, bool, error) {
@@ -654,6 +708,9 @@ func executeFile(ctx context.Context, call core.SkillCall, s *AccountRuntime) (s
 	resolvedPath, err := resolveFileToolPath(rawPath, scope.allowedPaths)
 	if err != nil {
 		return "", err
+	}
+	if isFileToolMutation(call.Method) && isPathAllowedResolved(resolvedPath, scope.readOnlyPaths) {
+		return "", fmt.Errorf("bundled resources are read-only")
 	}
 
 	switch call.Method {
@@ -753,6 +810,15 @@ func executeFile(ctx context.Context, call core.SkillCall, s *AccountRuntime) (s
 	}
 }
 
+func isFileToolMutation(method string) bool {
+	switch method {
+	case "write", "edit", "append", "delete", "mkdir":
+		return true
+	default:
+		return false
+	}
+}
+
 func executeFileEdit(resolvedPath, oldText, newText string) (string, error) {
 	if oldText == "" {
 		return jsonResult(map[string]any{"success": false, "error": "old_text must not be empty"})
@@ -820,6 +886,9 @@ func executeFileSearch(ctx context.Context, call core.SkillCall, s *AccountRunti
 	if err != nil {
 		return "", err
 	}
+	if err := requireFileIndexScope(scope); err != nil {
+		return "", err
+	}
 	opts.WorkspaceIDs = scope.workspaceIDs
 
 	result, err := s.Indexer.Search(ctx, query, opts)
@@ -861,6 +930,9 @@ func executeFileStats(ctx context.Context, call core.SkillCall, s *AccountRuntim
 	if err != nil {
 		return "", err
 	}
+	if err := requireFileIndexScope(scope); err != nil {
+		return "", err
+	}
 	opts.WorkspaceIDs = scope.workspaceIDs
 	result, err := s.Indexer.Stats(ctx, opts)
 	if err != nil {
@@ -880,13 +952,16 @@ func executeFileReindex(ctx context.Context, call core.SkillCall, s *AccountRunt
 		_ = json.Unmarshal(call.Args[0], &targetPath)
 	}
 
-	roots, err := s.Store.ListFileIndexRoots()
-	if err != nil {
-		return "", fmt.Errorf("list file index roots: %w", err)
-	}
 	scope, err := currentFileToolScope(ctx, s)
 	if err != nil {
 		return "", err
+	}
+	if err := requireFileIndexScope(scope); err != nil {
+		return "", err
+	}
+	roots, err := s.Store.ListFileIndexRoots()
+	if err != nil {
+		return "", fmt.Errorf("list file index roots: %w", err)
 	}
 	scopedWorkspaceIDs := map[string]bool{}
 	for _, id := range scope.workspaceIDs {
@@ -2432,8 +2507,15 @@ func runPromptModeSkill(ctx context.Context, name string, skill *core.SkillManif
 	if body == "" {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q has empty SKILL.md instructions", name)})
 	}
+	resources, err := promptModeSkillResources(s.BaseDir, skill)
+	if err != nil {
+		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q bundled resources unavailable: %v", name, err)})
+	}
+	if strings.TrimSpace(resources.Root) != "" {
+		ctx = contextWithPromptModeResourceRoot(ctx, resources.Root)
+	}
 	messages := []core.LlmMessage{
-		{Role: core.RoleSystem, Content: BuildPromptModeSystemPrompt(skill, body)},
+		{Role: core.RoleSystem, Content: BuildPromptModeSystemPromptWithResources(skill, body, resources)},
 		{Role: core.RoleUser, Content: buildPromptModeUserPrompt(ctx, name, params)},
 	}
 	tools, bindings := promptModeToolDefinitions(skill)

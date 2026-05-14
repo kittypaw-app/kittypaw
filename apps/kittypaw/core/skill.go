@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,10 @@ import (
 type SkillFormat string
 
 const (
+	// SkillBundleDirName is the installed subdirectory that stores optional
+	// SKILL.md bundled resources.
+	SkillBundleDirName = "bundle"
+
 	// SkillFormatScript is KittyPaw's JavaScript sandbox automation format.
 	// The persisted value remains "native" for backward compatibility with
 	// existing account skill metadata.
@@ -52,6 +57,12 @@ type SkillManifest struct {
 	SourceURL  string `toml:"source_url,omitempty"  json:"source_url,omitempty"`
 	SourceHash string `toml:"source_hash,omitempty" json:"source_hash,omitempty"` // SHA256
 	SourceText string `toml:"source_text,omitempty" json:"source_text,omitempty"` // original SKILL.md content
+
+	// Bundled resources are copied under ResourceRoot relative to the skill
+	// directory. ResourceDirs lists the top-level resource directories present
+	// inside that root, usually references, scripts, and/or assets.
+	ResourceRoot string   `toml:"resource_root,omitempty" json:"resource_root,omitempty"`
+	ResourceDirs []string `toml:"resource_dirs,omitempty" json:"resource_dirs,omitempty"`
 }
 
 // SkillTrigger defines how a skill is activated.
@@ -109,6 +120,36 @@ func SkillsDirFrom(baseDir string) (string, error) {
 	return skillsDir, nil
 }
 
+// SkillDirPathFrom returns the installed directory for a skill under baseDir.
+func SkillDirPathFrom(baseDir, name string) (string, error) {
+	if err := ValidateSkillName(name); err != nil {
+		return "", err
+	}
+	dir, err := SkillsDirFrom(baseDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
+}
+
+// SkillResourceRootPath returns the absolute installed resource root for a
+// skill manifest. The manifest stores ResourceRoot relative to its skill
+// directory so accounts can move without persisting stale absolute paths.
+func SkillResourceRootPath(baseDir string, skill *SkillManifest) (string, bool, error) {
+	if skill == nil || strings.TrimSpace(skill.ResourceRoot) == "" {
+		return "", false, nil
+	}
+	root := filepath.Clean(strings.TrimSpace(skill.ResourceRoot))
+	if root == "." || filepath.IsAbs(root) || root == ".." || strings.HasPrefix(root, ".."+string(filepath.Separator)) {
+		return "", false, fmt.Errorf("invalid skill resource root %q", skill.ResourceRoot)
+	}
+	skillDir, err := SkillDirPathFrom(baseDir, skill.Name)
+	if err != nil {
+		return "", false, err
+	}
+	return filepath.Join(skillDir, root), true, nil
+}
+
 // SaveSkill writes a skill manifest and its executable body to disk.
 func SaveSkill(skill *SkillManifest, jsCode string) error {
 	dir, err := ConfigDir()
@@ -124,12 +165,10 @@ func SaveSkillTo(baseDir string, skill *SkillManifest, jsCode string) error {
 		return err
 	}
 
-	dir, err := SkillsDirFrom(baseDir)
+	skillDir, err := SkillDirPathFrom(baseDir, skill.Name)
 	if err != nil {
 		return err
 	}
-
-	skillDir := filepath.Join(dir, skill.Name)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return err
 	}
@@ -142,9 +181,13 @@ func SaveSkillTo(baseDir string, skill *SkillManifest, jsCode string) error {
 			return err
 		}
 		stamp := time.Now().Format("20060102-150405")
-		_ = copyFile(tomlPath, filepath.Join(archiveDir, fmt.Sprintf("%s.v%d.skill.toml", stamp, skill.Version-1)))
+		archiveBase := fmt.Sprintf("%s.v%d", stamp, skill.Version-1)
+		_ = copyFile(tomlPath, filepath.Join(archiveDir, archiveBase+".skill.toml"))
 		jsPath := filepath.Join(skillDir, skill.Name+".js")
-		_ = copyFile(jsPath, filepath.Join(archiveDir, fmt.Sprintf("%s.v%d.js", stamp, skill.Version-1)))
+		_ = copyFile(jsPath, filepath.Join(archiveDir, archiveBase+".js"))
+		if err := archiveSkillBundle(skillDir, filepath.Join(archiveDir, archiveBase+".bundle")); err != nil {
+			return err
+		}
 	}
 
 	// Write TOML
@@ -181,11 +224,11 @@ func LoadSkillFrom(baseDir, name string) (*SkillManifest, string, error) {
 	if err := ValidateSkillName(name); err != nil {
 		return nil, "", err
 	}
-	dir, err := SkillsDirFrom(baseDir)
+	skillDir, err := SkillDirPathFrom(baseDir, name)
 	if err != nil {
 		return nil, "", err
 	}
-	return loadSkillFrom(filepath.Join(dir, name), name)
+	return loadSkillFrom(skillDir, name)
 }
 
 // LoadAllSkills loads all skill manifests from the skills directory.
@@ -291,11 +334,11 @@ func DeleteSkillFrom(baseDir, name string) error {
 	if err := ValidateSkillName(name); err != nil {
 		return err
 	}
-	dir, err := SkillsDirFrom(baseDir)
+	skillDir, err := SkillDirPathFrom(baseDir, name)
 	if err != nil {
 		return err
 	}
-	return os.RemoveAll(filepath.Join(dir, name))
+	return os.RemoveAll(skillDir)
 }
 
 // RollbackSkill restores the most recent archived version of a skill.
@@ -323,17 +366,13 @@ func RollbackSkillFrom(baseDir, name string) error {
 		return fmt.Errorf("no archive for skill %q", name)
 	}
 
-	// Find latest TOML archive
-	var latestToml, latestJs string
+	// Find latest TOML archive and restore files with the same archive prefix.
+	var latestToml, latestBase string
 	for i := len(entries) - 1; i >= 0; i-- {
 		n := entries[i].Name()
-		if strings.HasSuffix(n, ".skill.toml") && latestToml == "" {
+		if strings.HasSuffix(n, ".skill.toml") {
 			latestToml = filepath.Join(archiveDir, n)
-		}
-		if strings.HasSuffix(n, ".js") && latestJs == "" {
-			latestJs = filepath.Join(archiveDir, n)
-		}
-		if latestToml != "" && latestJs != "" {
+			latestBase = strings.TrimSuffix(n, ".skill.toml")
 			break
 		}
 	}
@@ -343,13 +382,118 @@ func RollbackSkillFrom(baseDir, name string) error {
 	}
 
 	skillDir := filepath.Join(dir, name)
+	var archived SkillManifest
+	if data, err := os.ReadFile(latestToml); err != nil {
+		return err
+	} else if err := toml.Unmarshal(data, &archived); err != nil {
+		return fmt.Errorf("parse archived skill %q: %w", name, err)
+	}
 	if err := copyFile(latestToml, filepath.Join(skillDir, name+".skill.toml")); err != nil {
 		return err
 	}
+	latestJs := filepath.Join(archiveDir, latestBase+".js")
 	if latestJs != "" {
-		return copyFile(latestJs, filepath.Join(skillDir, name+".js"))
+		if err := copyFile(latestJs, filepath.Join(skillDir, name+".js")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
-	return nil
+	return restoreArchivedSkillBundle(baseDir, skillDir, archiveDir, latestBase, &archived)
+}
+
+func archiveSkillBundle(skillDir, destRoot string) error {
+	srcRoot := filepath.Join(skillDir, SkillBundleDirName)
+	info, err := os.Lstat(srcRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("skill bundle root must not be a symlink")
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("skill bundle root is not a directory")
+	}
+	return copySkillBundleDirectory(srcRoot, destRoot)
+}
+
+func restoreArchivedSkillBundle(baseDir, skillDir, archiveDir, archiveBase string, archived *SkillManifest) error {
+	if archived == nil || strings.TrimSpace(archived.ResourceRoot) == "" || len(archived.ResourceDirs) == 0 {
+		return os.RemoveAll(filepath.Join(skillDir, SkillBundleDirName))
+	}
+	destRoot, ok, err := SkillResourceRootPath(baseDir, archived)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return os.RemoveAll(filepath.Join(skillDir, SkillBundleDirName))
+	}
+	srcRoot := filepath.Join(archiveDir, archiveBase+".bundle")
+	info, err := os.Lstat(srcRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("archived bundle missing for skill %q", archived.Name)
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("archived bundle root must not be a symlink")
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("archived bundle root is not a directory")
+	}
+	if err := os.RemoveAll(destRoot); err != nil {
+		return err
+	}
+	return copySkillBundleDirectory(srcRoot, destRoot)
+}
+
+func copySkillBundleDirectory(srcRoot, destRoot string) error {
+	srcAbs, err := filepath.Abs(srcRoot)
+	if err != nil {
+		return err
+	}
+	srcAbs = filepath.Clean(srcAbs)
+	destAbs, err := filepath.Abs(destRoot)
+	if err != nil {
+		return err
+	}
+	destAbs = filepath.Clean(destAbs)
+	if err := os.RemoveAll(destAbs); err != nil {
+		return err
+	}
+	return filepath.WalkDir(srcAbs, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			rel, _ := filepath.Rel(srcAbs, path)
+			return fmt.Errorf("%s must not be a symlink", rel)
+		}
+		rel, err := filepath.Rel(srcAbs, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return os.MkdirAll(destAbs, 0o755)
+		}
+		destPath, err := skillBundleDestPath(destAbs, rel)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(destPath, 0o755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s has unsupported file type", rel)
+		}
+		return copySkillBundleFile(path, destPath, info.Mode().Perm())
+	})
 }
 
 // MatchTrigger checks if an event text activates a skill's keyword trigger.

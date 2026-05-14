@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -129,6 +130,262 @@ Do things.
 	}
 }
 
+func TestInstallLocalSkillMdPreservesBundledResources(t *testing.T) {
+	baseDir := t.TempDir()
+	srcDir := t.TempDir()
+
+	skillMd := `---
+name: bundled-skill
+description: test resource bundle
+permissions:
+  - File
+---
+
+Use references/policy.md when needed.
+`
+	if err := os.WriteFile(filepath.Join(srcDir, "SKILL.md"), []byte(skillMd), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"references/policy.md", "scripts/render.sh", "assets/template.txt"} {
+		full := filepath.Join(srcDir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("resource: "+path), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := InstallSkillSource(baseDir, srcDir, InstallOptions{MdExecutionMode: "prompt"}); err != nil {
+		t.Fatalf("InstallSkillSource: %v", err)
+	}
+	skill, _, err := LoadSkillFrom(baseDir, "bundled-skill")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom: %v", err)
+	}
+	if skill.ResourceRoot != SkillBundleDirName {
+		t.Fatalf("ResourceRoot = %q, want %q", skill.ResourceRoot, SkillBundleDirName)
+	}
+	for _, want := range []string{"assets", "references", "scripts"} {
+		if !containsString(skill.ResourceDirs, want) {
+			t.Fatalf("ResourceDirs = %#v, missing %q", skill.ResourceDirs, want)
+		}
+	}
+	root, ok, err := SkillResourceRootPath(baseDir, skill)
+	if err != nil {
+		t.Fatalf("SkillResourceRootPath: %v", err)
+	}
+	if !ok {
+		t.Fatal("resource root should be available")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "references", "policy.md"))
+	if err != nil {
+		t.Fatalf("read copied reference: %v", err)
+	}
+	if string(got) != "resource: references/policy.md" {
+		t.Fatalf("copied reference = %q", got)
+	}
+}
+
+func TestInstallLocalSkillMdRejectsBundledResourceSymlink(t *testing.T) {
+	baseDir := t.TempDir()
+	srcDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(srcDir, "SKILL.md"), []byte("---\nname: linked-skill\n---\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srcDir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(srcDir, "SKILL.md"), filepath.Join(srcDir, "references", "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := InstallSkillSource(baseDir, srcDir, InstallOptions{MdExecutionMode: "prompt"})
+	if err == nil {
+		t.Fatal("expected error for symlinked bundled resource")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error = %v, want symlink rejection", err)
+	}
+	if skill, _, loadErr := LoadSkillFrom(baseDir, "linked-skill"); loadErr != nil {
+		t.Fatalf("LoadSkillFrom after failed install: %v", loadErr)
+	} else if skill != nil {
+		t.Fatal("failed install should not leave loadable skill")
+	}
+	if fileExists(filepath.Join(baseDir, "skills", "linked-skill")) {
+		t.Fatal("partial skill directory remained after failed bundled resource install")
+	}
+}
+
+func TestReinstallSkillMdPreservesExistingSkillWhenBundleCopyFails(t *testing.T) {
+	baseDir := t.TempDir()
+	firstSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(firstSrc, "SKILL.md"), []byte(`---
+name: reinstall-bundle
+description: original install
+permissions:
+  - File
+---
+
+Original instructions.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(firstSrc, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(firstSrc, "references", "policy.md"), []byte("original resource"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallSkillSource(baseDir, firstSrc, InstallOptions{MdExecutionMode: "prompt"}); err != nil {
+		t.Fatalf("initial InstallSkillSource: %v", err)
+	}
+
+	badSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(badSrc, "SKILL.md"), []byte(`---
+name: reinstall-bundle
+description: replacement install
+permissions:
+  - File
+---
+
+Replacement instructions.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(badSrc, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(badSrc, "SKILL.md"), filepath.Join(badSrc, "references", "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := InstallSkillSource(baseDir, badSrc, InstallOptions{MdExecutionMode: "prompt"})
+	if err == nil {
+		t.Fatal("expected reinstall error for symlinked bundled resource")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error = %v, want symlink rejection", err)
+	}
+
+	skill, body, err := LoadSkillFrom(baseDir, "reinstall-bundle")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom: %v", err)
+	}
+	if skill == nil {
+		t.Fatal("existing skill was removed after failed reinstall")
+	}
+	if !strings.Contains(body, "Original instructions") {
+		t.Fatalf("body = %q, want original instructions", body)
+	}
+	root, ok, err := SkillResourceRootPath(baseDir, skill)
+	if err != nil {
+		t.Fatalf("SkillResourceRootPath: %v", err)
+	}
+	if !ok {
+		t.Fatal("existing resource root should remain")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "references", "policy.md"))
+	if err != nil {
+		t.Fatalf("read existing resource: %v", err)
+	}
+	if string(got) != "original resource" {
+		t.Fatalf("resource = %q, want original resource", got)
+	}
+}
+
+func TestRollbackSkillMdRestoresBundledResources(t *testing.T) {
+	baseDir := t.TempDir()
+	firstSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(firstSrc, "SKILL.md"), []byte(`---
+name: rollback-bundle
+description: original install
+permissions:
+  - File
+---
+
+Use the original policy.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(firstSrc, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(firstSrc, "references", "policy.md"), []byte("policy v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallSkillSource(baseDir, firstSrc, InstallOptions{MdExecutionMode: "prompt"}); err != nil {
+		t.Fatalf("initial InstallSkillSource: %v", err)
+	}
+
+	secondSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secondSrc, "SKILL.md"), []byte(`---
+name: rollback-bundle
+description: replacement install
+permissions:
+  - File
+---
+
+Use the replacement policy.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(secondSrc, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secondSrc, "references", "policy.md"), []byte("policy v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallSkillSource(baseDir, secondSrc, InstallOptions{MdExecutionMode: "prompt"}); err != nil {
+		t.Fatalf("replacement InstallSkillSource: %v", err)
+	}
+
+	if err := RollbackSkillFrom(baseDir, "rollback-bundle"); err != nil {
+		t.Fatalf("RollbackSkillFrom: %v", err)
+	}
+	skill, body, err := LoadSkillFrom(baseDir, "rollback-bundle")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom: %v", err)
+	}
+	if !strings.Contains(body, "original policy") {
+		t.Fatalf("body = %q, want original policy", body)
+	}
+	root, ok, err := SkillResourceRootPath(baseDir, skill)
+	if err != nil {
+		t.Fatalf("SkillResourceRootPath: %v", err)
+	}
+	if !ok {
+		t.Fatal("resource root should be restored")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "references", "policy.md"))
+	if err != nil {
+		t.Fatalf("read restored resource: %v", err)
+	}
+	if string(got) != "policy v1" {
+		t.Fatalf("restored resource = %q, want policy v1", got)
+	}
+}
+
+func TestCopySkillBundleResourcesEnforcesSizeLimit(t *testing.T) {
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(srcDir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "references", "large.md"), []byte("too large"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := copySkillBundleResources(srcDir, destDir, 4)
+	if err == nil {
+		t.Fatal("expected size-limit error")
+	}
+	if !strings.Contains(err.Error(), "bundle too large") {
+		t.Fatalf("error = %v, want bundle too large", err)
+	}
+}
+
 func TestInstallLocalNative(t *testing.T) {
 	baseDir := t.TempDir()
 	srcDir := t.TempDir()
@@ -178,4 +435,13 @@ func TestInstallSymlinkRejection(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for symlinked SKILL.md")
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

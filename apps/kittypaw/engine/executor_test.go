@@ -1582,6 +1582,214 @@ func TestRunPromptModeSkillExecutesDeclaredTools(t *testing.T) {
 	}
 }
 
+type promptModeFileReadProvider struct {
+	path       string
+	toolNames  []string
+	resultText string
+	calls      int
+}
+
+func (p *promptModeFileReadProvider) Generate(_ context.Context, _ []core.LlmMessage) (*llm.Response, error) {
+	return &llm.Response{Content: "plain generation path"}, nil
+}
+
+func (p *promptModeFileReadProvider) GenerateWithTools(_ context.Context, msgs []core.LlmMessage, tools []llm.Tool) (*llm.Response, error) {
+	p.calls++
+	if p.calls == 1 {
+		for _, tool := range tools {
+			p.toolNames = append(p.toolNames, tool.Name)
+		}
+		return &llm.Response{
+			StopReason: "tool_use",
+			ContentBlocks: []core.ContentBlock{{
+				Type:  core.BlockTypeToolUse,
+				ID:    "toolu_file_read",
+				Name:  "File__read",
+				Input: map[string]any{"path": p.path},
+			}},
+		}, nil
+	}
+	for _, msg := range msgs {
+		for _, block := range msg.ContentBlocks {
+			if block.Type == core.BlockTypeToolResult && block.ToolUseID == "toolu_file_read" {
+				p.resultText = block.Content
+			}
+		}
+	}
+	return &llm.Response{Content: "read bundled reference", StopReason: "end_turn"}, nil
+}
+
+func (p *promptModeFileReadProvider) ContextWindow() int { return 128_000 }
+func (p *promptModeFileReadProvider) MaxTokens() int     { return 4096 }
+
+type promptModeFileWriteProvider struct {
+	path       string
+	resultText string
+	calls      int
+}
+
+func (p *promptModeFileWriteProvider) Generate(_ context.Context, _ []core.LlmMessage) (*llm.Response, error) {
+	return &llm.Response{Content: "plain generation path"}, nil
+}
+
+func (p *promptModeFileWriteProvider) GenerateWithTools(_ context.Context, msgs []core.LlmMessage, _ []llm.Tool) (*llm.Response, error) {
+	p.calls++
+	if p.calls == 1 {
+		return &llm.Response{
+			StopReason: "tool_use",
+			ContentBlocks: []core.ContentBlock{{
+				Type: core.BlockTypeToolUse,
+				ID:   "toolu_file_write",
+				Name: "File__write",
+				Input: map[string]any{
+					"path":    p.path,
+					"content": "modified resource",
+				},
+			}},
+		}, nil
+	}
+	for _, msg := range msgs {
+		for _, block := range msg.ContentBlocks {
+			if block.Type == core.BlockTypeToolResult && block.ToolUseID == "toolu_file_write" {
+				p.resultText = block.Content
+			}
+		}
+	}
+	return &llm.Response{Content: "attempted bundled write", StopReason: "end_turn"}, nil
+}
+
+func (p *promptModeFileWriteProvider) ContextWindow() int { return 128_000 }
+func (p *promptModeFileWriteProvider) MaxTokens() int     { return 4096 }
+
+func TestRunPromptModeSkillCanReadBundledResourceWithFilePermission(t *testing.T) {
+	baseDir := t.TempDir()
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "SKILL.md"), []byte(`---
+name: prompt-bundle
+description: Prompt mode resource skill
+permissions:
+  - File
+---
+
+Read references/policy.md when needed.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srcDir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "references", "policy.md"), []byte("resource policy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.InstallSkillSource(baseDir, srcDir, core.InstallOptions{MdExecutionMode: "prompt"}); err != nil {
+		t.Fatalf("InstallSkillSource: %v", err)
+	}
+	skill, _, err := core.LoadSkillFrom(baseDir, "prompt-bundle")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom: %v", err)
+	}
+	resourceRoot, ok, err := core.SkillResourceRootPath(baseDir, skill)
+	if err != nil {
+		t.Fatalf("SkillResourceRootPath: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected installed resource root")
+	}
+
+	cfg := core.DefaultConfig()
+	provider := &promptModeFileReadProvider{path: filepath.Join(resourceRoot, "references", "policy.md")}
+	sess := &AccountRuntime{
+		BaseDir:  baseDir,
+		Config:   &cfg,
+		Provider: provider,
+	}
+	event := webChatEvent("use the bundled reference")
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), testWebChatConversationID)
+
+	raw, err := runSkillOrPackage(ctx, "prompt-bundle", sess)
+	if err != nil {
+		t.Fatalf("runSkillOrPackage: %v", err)
+	}
+	var got struct {
+		Success bool   `json:"success"`
+		Output  string `json:"output"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode result %s: %v", raw, err)
+	}
+	if !got.Success || got.Output != "read bundled reference" || got.Error != "" {
+		t.Fatalf("result = %+v, raw %s", got, raw)
+	}
+	if !stringSliceContains(provider.toolNames, "File__read") {
+		t.Fatalf("tools = %#v, want File__read", provider.toolNames)
+	}
+	if !strings.Contains(provider.resultText, "resource policy") {
+		t.Fatalf("tool result = %s, want bundled resource content", provider.resultText)
+	}
+}
+
+func TestRunPromptModeSkillTreatsBundledResourcesAsReadOnly(t *testing.T) {
+	baseDir := t.TempDir()
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "SKILL.md"), []byte(`---
+name: prompt-readonly-bundle
+description: Prompt mode resource skill
+permissions:
+  - File
+---
+
+Inspect references/policy.md when needed.
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srcDir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "references", "policy.md"), []byte("original resource"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.InstallSkillSource(baseDir, srcDir, core.InstallOptions{MdExecutionMode: "prompt"}); err != nil {
+		t.Fatalf("InstallSkillSource: %v", err)
+	}
+	skill, _, err := core.LoadSkillFrom(baseDir, "prompt-readonly-bundle")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom: %v", err)
+	}
+	resourceRoot, ok, err := core.SkillResourceRootPath(baseDir, skill)
+	if err != nil {
+		t.Fatalf("SkillResourceRootPath: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected installed resource root")
+	}
+	resourceFile := filepath.Join(resourceRoot, "references", "policy.md")
+
+	cfg := core.DefaultConfig()
+	provider := &promptModeFileWriteProvider{path: resourceFile}
+	sess := &AccountRuntime{
+		BaseDir:  baseDir,
+		Config:   &cfg,
+		Provider: provider,
+	}
+	event := webChatEvent("mutate the bundled reference")
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &event), testWebChatConversationID)
+
+	if _, err := runSkillOrPackage(ctx, "prompt-readonly-bundle", sess); err != nil {
+		t.Fatalf("runSkillOrPackage: %v", err)
+	}
+	if !strings.Contains(provider.resultText, "read-only") {
+		t.Fatalf("tool result = %s, want read-only rejection", provider.resultText)
+	}
+	got, err := os.ReadFile(resourceFile)
+	if err != nil {
+		t.Fatalf("read bundled resource: %v", err)
+	}
+	if string(got) != "original resource" {
+		t.Fatalf("bundled resource content = %q, want original resource", got)
+	}
+}
+
 func TestPromptModeToolDefinitionsUseDeclaredParameterSchemas(t *testing.T) {
 	skill := &core.SkillManifest{
 		Name:        "prompt-file",
