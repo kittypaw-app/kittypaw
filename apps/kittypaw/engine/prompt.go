@@ -208,8 +208,7 @@ CRITICAL: "schedule" recurs. "once" uses 5th arg as delay/RFC3339 run_at, then d
 
 // MemoryBlock guides memory usage for user preferences.
 const MemoryBlock = `## Memory & Learning
-When you learn something about the user (preferences, interests, corrections):
-- Use Memory.user(key, value) to save it to their user notes`
+Memory.user(k,v)=global facts. Memory.set(k,v,{scope:"conversation"|"project"|"channel"})=scoped. Never save secrets/tokens/sensitive data.`
 
 // SystemPrompt is the assembled base prompt, stored in runner state for auditing.
 // BuildPrompt assembles blocks directly — this var exists for backward compatibility.

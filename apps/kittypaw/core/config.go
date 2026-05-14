@@ -215,17 +215,41 @@ type LLMConfig struct {
 
 // ModelConfig defines an additional named model.
 type ModelConfig struct {
-	ID            string     `toml:"id"`
-	Name          string     `toml:"-"`
-	Provider      string     `toml:"provider"`
-	Model         string     `toml:"model"`
-	Credential    string     `toml:"credential"`
-	APIKey        string     `toml:"-"`
-	MaxTokens     uint32     `toml:"max_tokens"`
-	Default       bool       `toml:"-"`
-	BaseURL       string     `toml:"base_url"`
-	ContextWindow uint32     `toml:"context_window"`
-	Tier          *ModelTier `toml:"tier"`
+	ID            string               `toml:"id"`
+	Name          string               `toml:"-"`
+	Provider      string               `toml:"provider"`
+	Model         string               `toml:"model"`
+	Credential    string               `toml:"credential"`
+	APIKey        string               `toml:"-"`
+	MaxTokens     uint32               `toml:"max_tokens"`
+	Default       bool                 `toml:"-"`
+	BaseURL       string               `toml:"base_url"`
+	ContextWindow uint32               `toml:"context_window"`
+	Tier          *ModelTier           `toml:"tier"`
+	RateLimit     ModelRateLimitConfig `toml:"rate_limit"`
+}
+
+// ModelRateLimitConfig defines account-local admission limits for one
+// configured LLM model. Zero values disable each axis.
+type ModelRateLimitConfig struct {
+	Pool                  string `toml:"pool"`
+	RequestsPerMinute     uint32 `toml:"requests_per_minute"`
+	InputTokensPerMinute  uint64 `toml:"input_tokens_per_minute"`
+	OutputTokensPerMinute uint64 `toml:"output_tokens_per_minute"`
+	TokensPerMinute       uint64 `toml:"tokens_per_minute"`
+	RequestsPerDay        uint32 `toml:"requests_per_day"`
+	TokensPerDay          uint64 `toml:"tokens_per_day"`
+	MaxConcurrent         uint32 `toml:"max_concurrent"`
+}
+
+func (r ModelRateLimitConfig) Enabled() bool {
+	return r.RequestsPerMinute > 0 ||
+		r.InputTokensPerMinute > 0 ||
+		r.OutputTokensPerMinute > 0 ||
+		r.TokensPerMinute > 0 ||
+		r.RequestsPerDay > 0 ||
+		r.TokensPerDay > 0 ||
+		r.MaxConcurrent > 0
 }
 
 // SandboxConfig controls the JavaScript execution sandbox.

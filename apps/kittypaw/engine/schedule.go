@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,12 @@ type SkillScheduleState struct {
 	FailureCount int
 	NextRun      *time.Time
 	Due          bool
+}
+
+type SchedulerSnapshot struct {
+	Running  uint32   `json:"running"`
+	Capacity uint32   `json:"capacity"`
+	Inflight []string `json:"inflight"`
 }
 
 // NewScheduler creates a scheduler that uses the given account runtime for execution.
@@ -92,6 +99,26 @@ func (s *Scheduler) run(ctx context.Context) {
 			s.tickOnce(ctx)
 		}
 	}
+}
+
+func (s *Scheduler) Snapshot() SchedulerSnapshot {
+	if s == nil {
+		return SchedulerSnapshot{Inflight: []string{}}
+	}
+	snapshot := SchedulerSnapshot{Inflight: []string{}}
+	if s.jobSlots != nil {
+		snapshot.Running = uint32(len(s.jobSlots))
+		snapshot.Capacity = uint32(cap(s.jobSlots))
+	}
+	s.inflight.Range(func(key, _ any) bool {
+		name, ok := key.(string)
+		if ok {
+			snapshot.Inflight = append(snapshot.Inflight, name)
+		}
+		return true
+	})
+	sort.Strings(snapshot.Inflight)
+	return snapshot
 }
 
 func (s *Scheduler) startReflectionLoop(ctx context.Context) {

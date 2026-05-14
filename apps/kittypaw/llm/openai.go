@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
-	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -176,10 +174,12 @@ func (o *OpenAIProvider) newRequest(ctx context.Context, payload []byte) (*http.
 // 429 (rate limit) and 503 (service unavailable) responses.
 func (o *OpenAIProvider) doWithRetry(ctx context.Context, payload []byte) (*http.Response, error) {
 	var lastErr error
+	retryAfter := ""
 
 	for attempt := 0; attempt <= openAIMaxRetries; attempt++ {
 		if attempt > 0 {
-			delay := time.Duration(float64(openAIBaseDelay) * math.Pow(2, float64(attempt-1)) * (0.5 + rand.Float64()))
+			delay := providerRetryDelay(openAIBaseDelay, attempt, retryAfter, time.Now())
+			retryAfter = ""
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -195,10 +195,12 @@ func (o *OpenAIProvider) doWithRetry(ctx context.Context, payload []byte) (*http
 		resp, err := o.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("openai: http request: %w", err)
+			retryAfter = ""
 			continue
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			retryAfter = resp.Header.Get("Retry-After")
 			resp.Body.Close()
 			lastErr = fmt.Errorf("openai: server returned %d", resp.StatusCode)
 			continue

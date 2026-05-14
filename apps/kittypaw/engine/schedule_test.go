@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -77,6 +78,31 @@ func TestSchedulerScheduledSlotRejectsWhenFull(t *testing.T) {
 	if release, ok := sched.acquireScheduledSlot(); ok {
 		release()
 		t.Fatal("second scheduled slot should be rejected while cap is full")
+	}
+}
+
+func TestSchedulerSnapshotReportsCapacityRunningAndInflight(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.Runtime.MaxConcurrentScheduledJobs = 2
+	sched := NewScheduler(&AccountRuntime{Config: &cfg}, nil)
+
+	release, ok := sched.acquireScheduledSlot()
+	if !ok {
+		t.Fatal("scheduled slot should be acquired")
+	}
+	defer release()
+	sched.inflight.Store("pkg:daily-report", struct{}{})
+	sched.inflight.Store("weather-reminder", struct{}{})
+
+	snapshot := sched.Snapshot()
+	if snapshot.Capacity != 2 {
+		t.Fatalf("Capacity = %d, want 2", snapshot.Capacity)
+	}
+	if snapshot.Running != 1 {
+		t.Fatalf("Running = %d, want 1", snapshot.Running)
+	}
+	if got, want := snapshot.Inflight, []string{"pkg:daily-report", "weather-reminder"}; !slices.Equal(got, want) {
+		t.Fatalf("Inflight = %v, want %v", got, want)
 	}
 }
 

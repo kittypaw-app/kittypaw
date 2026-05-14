@@ -170,3 +170,21 @@ func (a *AccountSchedulers) Len() int {
 	defer a.mu.Unlock()
 	return len(a.schedulers)
 }
+
+func (a *AccountSchedulers) Snapshot() map[string]engine.SchedulerSnapshot {
+	if a == nil {
+		return map[string]engine.SchedulerSnapshot{}
+	}
+	a.mu.Lock()
+	schedulers := make(map[string]*engine.Scheduler, len(a.schedulers))
+	for accountID, scheduler := range a.schedulers {
+		schedulers[accountID] = scheduler
+	}
+	a.mu.Unlock()
+
+	out := make(map[string]engine.SchedulerSnapshot, len(schedulers))
+	for accountID, scheduler := range schedulers {
+		out[accountID] = scheduler.Snapshot()
+	}
+	return out
+}

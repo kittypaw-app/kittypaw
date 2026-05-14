@@ -98,3 +98,19 @@ func TestAccountSchedulersReplaceWhileRunningStartsReplacement(t *testing.T) {
 	cancel()
 	schedulers.WaitAll()
 }
+
+func TestAccountSchedulersSnapshotIncludesRegisteredAccounts(t *testing.T) {
+	schedulers := NewAccountSchedulers()
+	cfg := core.DefaultConfig()
+	cfg.Runtime.MaxConcurrentScheduledJobs = 3
+	schedulers.Register("alice", engine.NewScheduler(&engine.AccountRuntime{Config: &cfg}, nil))
+
+	snapshot := schedulers.Snapshot()
+	alice, ok := snapshot["alice"]
+	if !ok {
+		t.Fatalf("Snapshot missing alice: %+v", snapshot)
+	}
+	if alice.Capacity != 3 {
+		t.Fatalf("alice Capacity = %d, want 3", alice.Capacity)
+	}
+}

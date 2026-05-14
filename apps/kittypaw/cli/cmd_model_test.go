@@ -393,16 +393,114 @@ func TestModelRemoveRejectsMain(t *testing.T) {
 	}
 }
 
+func TestModelCheckRunsConfiguredModelSmoke(t *testing.T) {
+	var checked core.ModelConfig
+	stubModelConnectionCheck(t, func(_ context.Context, model core.ModelConfig) (bool, error) {
+		checked = model
+		return true, nil
+	})
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfigWith(t, filepath.Join(root, "accounts", "alice", "config.toml"), func(cfg *core.Config) {
+		cfg.LLM.Models = append(cfg.LLM.Models, core.ModelConfig{
+			ID:         "groq-qwen3-32b",
+			Provider:   "groq",
+			Model:      "qwen/qwen3-32b",
+			Credential: "groq",
+			MaxTokens:  4096,
+		})
+	})
+	secrets, err := core.LoadAccountSecrets("alice")
+	if err != nil {
+		t.Fatalf("LoadAccountSecrets: %v", err)
+	}
+	if err := secrets.Set("llm/groq", "api_key", "sk-groq"); err != nil {
+		t.Fatalf("set secret: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := runModelCheck(&modelCheckFlags{accountID: "alice", id: "groq-qwen3-32b"}); err != nil {
+			t.Fatalf("runModelCheck: %v", err)
+		}
+	})
+
+	for _, want := range []string{"Account: alice", "Checking model: groq-qwen3-32b", "groq qwen/qwen3-32b OK"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+	if checked.Provider != "groq" || checked.Model != "qwen/qwen3-32b" || checked.APIKey != "sk-groq" {
+		t.Fatalf("checked model = %#v, want hydrated groq model", checked)
+	}
+}
+
+func TestModelCheckUsesDefaultModelWhenIDIsOmitted(t *testing.T) {
+	var checked core.ModelConfig
+	stubModelConnectionCheck(t, func(_ context.Context, model core.ModelConfig) (bool, error) {
+		checked = model
+		return true, nil
+	})
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	out := captureStdout(t, func() {
+		if err := runModelCheck(&modelCheckFlags{accountID: "alice"}); err != nil {
+			t.Fatalf("runModelCheck: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "Checking model: main") {
+		t.Fatalf("output missing default model id:\n%s", out)
+	}
+	if checked.ModelID() != "main" {
+		t.Fatalf("checked model id = %q, want main", checked.ModelID())
+	}
+}
+
+func TestModelCheckFailureDoesNotPromptOrSave(t *testing.T) {
+	stubModelConnectionCheck(t, func(_ context.Context, _ core.ModelConfig) (bool, error) {
+		return true, errors.New("invalid key")
+	})
+	root := t.TempDir()
+	t.Setenv("KITTYPAW_CONFIG_DIR", root)
+	t.Setenv("KITTYPAW_ACCOUNT", "")
+	mustWriteTestConfig(t, filepath.Join(root, "accounts", "alice", "config.toml"))
+
+	err := runModelCheck(&modelCheckFlags{accountID: "alice", id: "main"})
+	if err == nil || !strings.Contains(err.Error(), "model check failed") {
+		t.Fatalf("runModelCheck error = %v, want model check failure", err)
+	}
+}
+
+func TestRootCommandRegistersModelCheck(t *testing.T) {
+	root := newRootCmd()
+	modelCmd, _, err := root.Find([]string{"model", "check"})
+	if err != nil {
+		t.Fatalf("Find model check: %v", err)
+	}
+	if modelCmd == nil || modelCmd.Name() != "check" {
+		t.Fatalf("model check command not registered: %#v", modelCmd)
+	}
+}
+
 func stubModelAddConnectionCheck(t *testing.T, fn func(context.Context, core.ModelConfig) (bool, error)) {
 	t.Helper()
-	old := modelAddConnectionCheck
+	stubModelConnectionCheck(t, fn)
+}
+
+func stubModelConnectionCheck(t *testing.T, fn func(context.Context, core.ModelConfig) (bool, error)) {
+	t.Helper()
+	old := modelConnectionCheck
 	if fn == nil {
 		fn = func(context.Context, core.ModelConfig) (bool, error) {
 			return true, nil
 		}
 	}
-	modelAddConnectionCheck = fn
+	modelConnectionCheck = fn
 	t.Cleanup(func() {
-		modelAddConnectionCheck = old
+		modelConnectionCheck = old
 	})
 }

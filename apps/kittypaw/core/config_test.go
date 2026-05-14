@@ -64,6 +64,15 @@ provider = "openai"
 model = "gpt-5.5"
 credential = "openai"
 max_tokens = 4096
+[llm.models.rate_limit]
+pool = "openai-default"
+requests_per_minute = 60
+input_tokens_per_minute = 100000
+output_tokens_per_minute = 20000
+tokens_per_minute = 120000
+requests_per_day = 1000
+tokens_per_day = 2000000
+max_concurrent = 2
 
 [[llm.models]]
 id = "backup"
@@ -111,6 +120,9 @@ access = "read_write"
 	}
 	if got := cfg.DefaultModel(); got == nil || got.ID != "main" || got.Credential != "openai" {
 		t.Fatalf("DefaultModel = %#v, want main/openai", got)
+	}
+	if got := cfg.LLM.Models[0].RateLimit; got.Pool != "openai-default" || got.RequestsPerMinute != 60 || got.InputTokensPerMinute != 100000 || got.OutputTokensPerMinute != 20000 || got.TokensPerMinute != 120000 || got.RequestsPerDay != 1000 || got.TokensPerDay != 2000000 || got.MaxConcurrent != 2 {
+		t.Fatalf("RateLimit = %+v", got)
 	}
 	if got := cfg.FallbackModel(); got == nil || got.ID != "backup" || got.Credential != "anthropic" {
 		t.Fatalf("FallbackModel = %#v, want backup/anthropic", got)

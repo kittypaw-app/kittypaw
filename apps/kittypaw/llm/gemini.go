@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -163,9 +161,11 @@ func (g *GeminiProvider) endpointURL() (string, error) {
 
 func (g *GeminiProvider) doWithRetry(ctx context.Context, payload []byte) (*http.Response, error) {
 	var lastErr error
+	retryAfter := ""
 	for attempt := 0; attempt <= geminiMaxRetries; attempt++ {
 		if attempt > 0 {
-			delay := time.Duration(float64(geminiBaseDelay) * math.Pow(2, float64(attempt-1)) * (0.5 + rand.Float64()))
+			delay := providerRetryDelay(geminiBaseDelay, attempt, retryAfter, time.Now())
+			retryAfter = ""
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -180,9 +180,11 @@ func (g *GeminiProvider) doWithRetry(ctx context.Context, payload []byte) (*http
 		resp, err := g.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("gemini: http request: %w", err)
+			retryAfter = ""
 			continue
 		}
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			retryAfter = resp.Header.Get("Retry-After")
 			resp.Body.Close()
 			lastErr = fmt.Errorf("gemini: server returned %d", resp.StatusCode)
 			continue

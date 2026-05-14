@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 34 {
-		t.Fatalf("expected 34 migrations, got %d", count)
+	if count != 35 {
+		t.Fatalf("expected 35 migrations, got %d", count)
 	}
 }
 
@@ -1213,6 +1213,443 @@ func TestUserMemorySearchListAndDelete(t *testing.T) {
 	}
 	if _, ok, _ := st.GetUserContext("pref.api_key"); !ok {
 		t.Fatal("DeletePromptSafeUserMemory must not delete sensitive-looking memory rows")
+	}
+}
+
+func TestMemoryContextLinesForScopesUsesStructuredMemory(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "fact.name",
+		Value:     "Jinto",
+		Source:    "test",
+		ScopeType: MemoryScopeGlobal,
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory global: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:project:decision",
+		Value:     "Alpha uses SQLite",
+		Kind:      "decision",
+		Source:    "test",
+		ScopeType: MemoryScopeProject,
+		ScopeID:   "project-alpha",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory alpha: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:project:decision",
+		Value:     "Beta uses Postgres",
+		Kind:      "decision",
+		Source:    "test",
+		ScopeType: MemoryScopeProject,
+		ScopeID:   "project-beta",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory beta: %v", err)
+	}
+
+	globalOnly, err := st.MemoryContextLines()
+	if err != nil {
+		t.Fatalf("MemoryContextLines: %v", err)
+	}
+	joinedGlobal := strings.Join(globalOnly, "\n")
+	if !strings.Contains(joinedGlobal, "fact.name") || strings.Contains(joinedGlobal, "Alpha uses SQLite") || strings.Contains(joinedGlobal, "Beta uses Postgres") {
+		t.Fatalf("global memory context = %s, want global only", joinedGlobal)
+	}
+
+	scoped, err := st.MemoryContextLinesForScopes([]MemoryScope{{Type: MemoryScopeProject, ID: "project-alpha"}})
+	if err != nil {
+		t.Fatalf("MemoryContextLinesForScopes: %v", err)
+	}
+	joinedScoped := strings.Join(scoped, "\n")
+	for _, want := range []string{"fact.name", "Jinto", "memory:project:decision", "Alpha uses SQLite"} {
+		if !strings.Contains(joinedScoped, want) {
+			t.Fatalf("scoped memory context missing %q: %s", want, joinedScoped)
+		}
+	}
+	if strings.Contains(joinedScoped, "Beta uses Postgres") {
+		t.Fatalf("scoped memory context leaked another project: %s", joinedScoped)
+	}
+}
+
+func TestSearchMemoryRecordsRanksByRelevanceBeforeRecency(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:note:recent",
+		Value:     "nickname appears only in the value",
+		ScopeType: MemoryScopeProject,
+		ScopeID:   "project-alpha",
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory recent: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:nickname",
+		Value:     "Kitty",
+		ScopeType: MemoryScopeProject,
+		ScopeID:   "project-alpha",
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory key match: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE memories SET updated_at = datetime('now', '+1 hour') WHERE key = ?`, "memory:note:recent"); err != nil {
+		t.Fatalf("make value-only row newer: %v", err)
+	}
+
+	results, err := st.SearchMemoryRecordsInScopes("nickname", []MemoryScope{{Type: MemoryScopeProject, ID: "project-alpha"}}, 10)
+	if err != nil {
+		t.Fatalf("SearchMemoryRecordsInScopes: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("results = %+v, want at least two matches", results)
+	}
+	if results[0].Key != "memory:nickname" {
+		t.Fatalf("first result = %+v, want key match before newer value-only match", results[0])
+	}
+}
+
+func TestSearchMemoryRecordsMatchesTermsAcrossKeyAndValue(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:language",
+		Value:     "Korean concise replies",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory full match: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:reply-style",
+		Value:     "Korean",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory partial match: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE memories SET updated_at = datetime('now', '+1 hour') WHERE key = ?`, "memory:reply-style"); err != nil {
+		t.Fatalf("make partial row newer: %v", err)
+	}
+
+	results, err := st.SearchMemoryRecords("language Korean", 10)
+	if err != nil {
+		t.Fatalf("SearchMemoryRecords: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("results = %+v, want full and partial term matches", results)
+	}
+	if results[0].Key != "memory:language" {
+		t.Fatalf("first result = %+v, want row matching terms across key/value", results[0])
+	}
+}
+
+func TestSearchMemoryRecordsInScopesPrioritizesScopedRowsBeforeSQLLimit(t *testing.T) {
+	st := openTestStore(t)
+	for i := 0; i < 50; i++ {
+		if err := st.SetScopedUserMemory(UserMemoryWrite{
+			Key:       fmt.Sprintf("memory:global:%02d", i),
+			Value:     "Shared query global",
+			ScopeType: MemoryScopeGlobal,
+			Source:    "test",
+		}); err != nil {
+			t.Fatalf("SetScopedUserMemory global %d: %v", i, err)
+		}
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:project:old",
+		Value:     "Shared query project",
+		ScopeType: MemoryScopeProject,
+		ScopeID:   "project-alpha",
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory project: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE memories SET updated_at = datetime('now', '-30 days') WHERE key = ?`, "memory:project:old"); err != nil {
+		t.Fatalf("age project memory: %v", err)
+	}
+
+	results, err := st.SearchMemoryRecordsInScopes("Shared query", []MemoryScope{{Type: MemoryScopeProject, ID: "project-alpha"}}, 10)
+	if err != nil {
+		t.Fatalf("SearchMemoryRecordsInScopes: %v", err)
+	}
+	if len(results) == 0 || results[0].Key != "memory:project:old" {
+		t.Fatalf("results[0] = %+v, want scoped project memory before newer globals", results)
+	}
+}
+
+func TestPendingUserMemoryConfirmationFlow(t *testing.T) {
+	st := openTestStore(t)
+	pending, err := st.CreatePendingUserMemory(UserMemoryWrite{
+		Key:       "user.email",
+		Value:     "jinto@example.com",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "runner",
+	}, "email")
+	if err != nil {
+		t.Fatalf("CreatePendingUserMemory: %v", err)
+	}
+	if pending.ID == 0 || pending.Status != "pending" || pending.Reason != "email" {
+		t.Fatalf("pending memory = %+v", pending)
+	}
+	if _, ok, err := st.GetUserMemory("user.email"); err != nil || ok {
+		t.Fatalf("GetUserMemory before confirm ok=%v err=%v, want false nil", ok, err)
+	}
+	pendingRows, err := st.ListPendingUserMemory(10)
+	if err != nil {
+		t.Fatalf("ListPendingUserMemory: %v", err)
+	}
+	if len(pendingRows) != 1 || pendingRows[0].ID != pending.ID {
+		t.Fatalf("pending rows = %+v, want created row", pendingRows)
+	}
+
+	stored, ok, err := st.ConfirmPendingUserMemory(pending.ID, "user_confirmation")
+	if err != nil || !ok {
+		t.Fatalf("ConfirmPendingUserMemory ok=%v err=%v", ok, err)
+	}
+	if stored.Key != "user.email" || stored.Value != "jinto@example.com" {
+		t.Fatalf("confirmed memory = %+v", stored)
+	}
+	if got, ok, err := st.GetUserMemory("user.email"); err != nil || !ok || got != "jinto@example.com" {
+		t.Fatalf("GetUserMemory after confirm = %q ok=%v err=%v", got, ok, err)
+	}
+	pendingRows, err = st.ListPendingUserMemory(10)
+	if err != nil {
+		t.Fatalf("ListPendingUserMemory after confirm: %v", err)
+	}
+	if len(pendingRows) != 0 {
+		t.Fatalf("pending rows after confirm = %+v, want none", pendingRows)
+	}
+}
+
+func TestDeleteUserMemoryInScopesDeletesOnlySelectedScope(t *testing.T) {
+	st := openTestStore(t)
+	key := "memory:shared"
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       key,
+		Value:     "Global value",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory global: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       key,
+		Value:     "Project value",
+		ScopeType: MemoryScopeProject,
+		ScopeID:   "project-alpha",
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory project: %v", err)
+	}
+
+	deleted, err := st.DeleteUserMemoryInScopes(key, []MemoryScope{{Type: MemoryScopeProject, ID: "project-alpha"}})
+	if err != nil || !deleted {
+		t.Fatalf("DeleteUserMemoryInScopes deleted=%v err=%v, want true nil", deleted, err)
+	}
+	assertMemoryExactScopeExists(t, st, key, MemoryScopeGlobal, "")
+	assertMemoryExactScopeMissing(t, st, key, MemoryScopeProject, "project-alpha")
+}
+
+func TestDeleteUserMemoryInScopesRemovesLegacyDuplicateForGlobalScope(t *testing.T) {
+	st := openTestStore(t)
+	key := "memory:language"
+	if err := st.SetUserContext(key, "Legacy Korean", "runner"); err != nil {
+		t.Fatalf("SetUserContext legacy: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       key,
+		Value:     "Structured Korean",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory global: %v", err)
+	}
+
+	deleted, err := st.DeleteUserMemoryInScopes(key, []MemoryScope{{Type: MemoryScopeGlobal}})
+	if err != nil || !deleted {
+		t.Fatalf("DeleteUserMemoryInScopes deleted=%v err=%v, want true nil", deleted, err)
+	}
+	assertMemoryExactScopeMissing(t, st, key, MemoryScopeGlobal, "")
+	if _, ok, err := st.GetUserMemory(key); err != nil || ok {
+		t.Fatalf("GetUserMemory after global delete ok=%v err=%v, want no legacy fallback", ok, err)
+	}
+}
+
+func TestCurateMemoryFindsDuplicateAndAppliesDeletion(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:nickname",
+		Value:     "Kitty",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory duplicate keep: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "fact.nickname",
+		Value:     "Kitty",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory duplicate target: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE memories SET updated_at = datetime('now', '-2 hours') WHERE key = ?`, "fact.nickname"); err != nil {
+		t.Fatalf("age duplicate target: %v", err)
+	}
+
+	candidates, err := st.CurateMemory(20)
+	if err != nil {
+		t.Fatalf("CurateMemory: %v", err)
+	}
+	duplicate := findMemoryCurationCandidate(candidates, "duplicate")
+	if duplicate == nil {
+		t.Fatalf("candidates = %+v, want duplicate", candidates)
+	}
+	if !duplicate.Applyable || duplicate.Action != "delete_duplicates" || len(duplicate.TargetIDs) != 1 {
+		t.Fatalf("duplicate candidate = %+v, want one applyable delete target", *duplicate)
+	}
+
+	applied, ok, err := st.ApplyMemoryCurationCandidate(duplicate.ID)
+	if err != nil || !ok {
+		t.Fatalf("ApplyMemoryCurationCandidate ok=%v err=%v", ok, err)
+	}
+	if applied.ID != duplicate.ID {
+		t.Fatalf("applied candidate id = %q, want %q", applied.ID, duplicate.ID)
+	}
+	if _, ok, err := st.GetUserMemory("fact.nickname"); err != nil || ok {
+		t.Fatalf("duplicate target after apply ok=%v err=%v, want deleted", ok, err)
+	}
+	if got, ok, err := st.GetUserMemory("memory:nickname"); err != nil || !ok || got != "Kitty" {
+		t.Fatalf("kept memory after apply = %q ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestCurateMemoryDoesNotTreatSameValueDifferentSubjectsAsDuplicate(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "user.language",
+		Value:     "Korean",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory language: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "travel.destination",
+		Value:     "Korean",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory destination: %v", err)
+	}
+
+	candidates, err := st.CurateMemory(20)
+	if err != nil {
+		t.Fatalf("CurateMemory: %v", err)
+	}
+	if duplicate := findMemoryCurationCandidate(candidates, "duplicate"); duplicate != nil {
+		t.Fatalf("duplicate candidate = %+v, want none for different subjects with same value", *duplicate)
+	}
+}
+
+func TestCurateMemoryFindsStaleEphemeralMemory(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:task:old",
+		Value:     "Follow up on a finished temporary task",
+		Kind:      "ongoing_task",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory stale task: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE memories SET updated_at = datetime('now', '-45 days') WHERE key = ?`, "memory:task:old"); err != nil {
+		t.Fatalf("age stale task: %v", err)
+	}
+
+	candidates, err := st.CurateMemory(20)
+	if err != nil {
+		t.Fatalf("CurateMemory: %v", err)
+	}
+	stale := findMemoryCurationCandidate(candidates, "stale")
+	if stale == nil {
+		t.Fatalf("candidates = %+v, want stale", candidates)
+	}
+	if !stale.Applyable || stale.Action != "delete_stale" || len(stale.TargetIDs) != 1 {
+		t.Fatalf("stale candidate = %+v, want one applyable stale target", *stale)
+	}
+
+	if _, ok, err := st.ApplyMemoryCurationCandidate(stale.ID); err != nil || !ok {
+		t.Fatalf("ApplyMemoryCurationCandidate stale ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := st.GetUserMemory("memory:task:old"); err != nil || ok {
+		t.Fatalf("stale memory after apply ok=%v err=%v, want deleted", ok, err)
+	}
+}
+
+func TestCurateMemoryFindsConflictButDoesNotApply(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "memory:preference:language",
+		Value:     "Korean replies",
+		Kind:      "preference",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory first preference: %v", err)
+	}
+	if err := st.SetScopedUserMemory(UserMemoryWrite{
+		Key:       "pref.language",
+		Value:     "English replies",
+		Kind:      "preference",
+		ScopeType: MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory conflicting preference: %v", err)
+	}
+
+	candidates, err := st.CurateMemory(20)
+	if err != nil {
+		t.Fatalf("CurateMemory: %v", err)
+	}
+	conflict := findMemoryCurationCandidate(candidates, "conflict")
+	if conflict == nil {
+		t.Fatalf("candidates = %+v, want conflict", candidates)
+	}
+	if conflict.Applyable || conflict.Action != "review_conflict" {
+		t.Fatalf("conflict candidate = %+v, want review-only", *conflict)
+	}
+	if _, ok, err := st.ApplyMemoryCurationCandidate(conflict.ID); err != ErrMemoryCurationNotApplyable || ok {
+		t.Fatalf("ApplyMemoryCurationCandidate conflict ok=%v err=%v, want ErrMemoryCurationNotApplyable", ok, err)
+	}
+}
+
+func findMemoryCurationCandidate(candidates []MemoryCurationCandidate, typ string) *MemoryCurationCandidate {
+	for i := range candidates {
+		if candidates[i].Type == typ {
+			return &candidates[i]
+		}
+	}
+	return nil
+}
+
+func assertMemoryExactScopeExists(t *testing.T, st *Store, key, scopeType, scopeID string) {
+	t.Helper()
+	var count int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE key = ? AND scope_type = ? AND scope_id = ?`, key, scopeType, scopeID).Scan(&count); err != nil {
+		t.Fatalf("count memory exact scope: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("memory %q in %s/%s count = %d, want 1", key, scopeType, scopeID, count)
+	}
+}
+
+func assertMemoryExactScopeMissing(t *testing.T, st *Store, key, scopeType, scopeID string) {
+	t.Helper()
+	var count int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE key = ? AND scope_type = ? AND scope_id = ?`, key, scopeType, scopeID).Scan(&count); err != nil {
+		t.Fatalf("count memory exact scope: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("memory %q in %s/%s count = %d, want 0", key, scopeType, scopeID, count)
 	}
 }
 

@@ -106,6 +106,12 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 
 	cfgCopy := *cfg
 	core.HydrateRuntimeSecrets(&cfgCopy, secrets)
+	if td.RateLimiters == nil {
+		td.RateLimiters = engine.NewLLMRateLimiterRegistry()
+	}
+	if td.DailyTokenLimiter == nil {
+		td.DailyTokenLimiter = engine.NewDailyTokenLimiter()
+	}
 	defaultModel, ok := cfgCopy.RuntimeDefaultModel(secrets)
 	if !ok {
 		return nil, fmt.Errorf("create llm provider: no default model configured")
@@ -114,11 +120,15 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 	if err != nil {
 		return nil, fmt.Errorf("create llm provider: %w", err)
 	}
+	provider = engine.NewRateLimitedProvider(provider, td.RateLimiters, defaultModel)
 	provider = engine.NewUsageRecordingProvider(provider, td.Store, defaultModel.Provider)
+	provider = engine.NewDailyTokenLimitedProvider(provider, td.DailyTokenLimiter, td.Store, cfgCopy.Features.DailyTokenLimit, defaultModel)
 	var fallback llm.Provider
 	if m, ok := cfgCopy.RuntimeFallbackModel(secrets); ok {
 		fallback, _ = llm.NewProviderFromModelConfig(m)
+		fallback = engine.NewRateLimitedProvider(fallback, td.RateLimiters, m)
 		fallback = engine.NewUsageRecordingProvider(fallback, td.Store, m.Provider)
+		fallback = engine.NewDailyTokenLimitedProvider(fallback, td.DailyTokenLimiter, td.Store, cfgCopy.Features.DailyTokenLimit, m)
 	}
 
 	td.Account.Config = &cfgCopy
@@ -190,6 +200,8 @@ func (s *Server) rebuildRuntimeForConfigLocked(td *AccountDeps, old *engine.Acco
 		APITokenMgr:       td.APITokenMgr,
 		ServiceTokenMgr:   td.ServiceTokenMgr,
 		ProjectJobRuntime: td.JobRuntime,
+		RateLimiters:      td.RateLimiters,
+		DailyTokenLimiter: td.DailyTokenLimiter,
 		AccountID:         td.Account.ID,
 		AccountRegistry:   s.accountRegistry,
 		Health:            health,

@@ -218,8 +218,8 @@ func (d *chatRelayDispatcher) dispatchChatCompletions(
 	opts = acct.Runtime.ApplyActiveModel(opts)
 	output, err := acct.Runtime.RunTurn(ctx, req.ID, event, opts)
 	if err != nil {
-		if isRuntimeAdmissionBusy(err) {
-			return jsonDispatch(http.StatusTooManyRequests, openAIServerError("runtime busy")), nil
+		if status, message, ok := runtimeErrorHTTPStatus(err); ok {
+			return jsonDispatch(status, openAIServerError(message)), nil
 		}
 		slog.Warn("chat relay chat completion failed",
 			"request_id", req.ID,

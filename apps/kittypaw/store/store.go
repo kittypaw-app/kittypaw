@@ -1716,10 +1716,12 @@ func (s *Store) SetUserContext(key, value, source string) error {
 
 // SetUserMemory stores a prompt-safe long-term user memory row.
 func (s *Store) SetUserMemory(key, value, source string) error {
-	if !isPromptSafeUserMemory(key, value) {
-		return ErrUnsafeUserMemory
-	}
-	return s.SetUserContext(key, value, source)
+	return s.SetScopedUserMemory(UserMemoryWrite{
+		Key:       key,
+		Value:     value,
+		Source:    source,
+		ScopeType: MemoryScopeGlobal,
+	})
 }
 
 // GetUserContext retrieves a single user context value.
@@ -1739,6 +1741,9 @@ func (s *Store) GetUserContext(key string) (string, bool, error) {
 
 // GetUserMemory retrieves a prompt-safe long-term user memory row.
 func (s *Store) GetUserMemory(key string) (string, bool, error) {
+	if rec, ok, err := s.getGlobalMemory(key); err != nil || ok {
+		return rec.Value, ok, err
+	}
 	value, ok, err := s.GetUserContext(key)
 	if err != nil || !ok {
 		return "", false, err
@@ -1773,91 +1778,50 @@ func (s *Store) ListUserContextPrefix(prefix string) ([]KeyValue, error) {
 
 // ListUserMemory returns prompt-safe user memory rows, newest first.
 func (s *Store) ListUserMemory(limit int) ([]KeyValue, error) {
-	limit = normalizeUserMemoryLimit(limit)
-	rows, err := s.db.Query(`
-		SELECT key, value FROM user_context
-		ORDER BY updated_at DESC`)
+	records, err := s.ListMemoryRecords(limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var out []KeyValue
-	for rows.Next() {
-		var kv KeyValue
-		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
-			return nil, err
-		}
-		if !isPromptSafeUserMemory(kv.Key, kv.Value) {
-			continue
-		}
-		out = append(out, kv)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out, rows.Err()
+	return memoryRecordsToKeyValues(records), nil
 }
 
 // SearchUserMemory searches prompt-safe user memory rows by key or value.
 func (s *Store) SearchUserMemory(query string, limit int) ([]KeyValue, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil, nil
-	}
-	limit = normalizeUserMemoryLimit(limit)
-	like := "%" + strings.ToLower(query) + "%"
-	rows, err := s.db.Query(`
-		SELECT key, value FROM user_context
-		WHERE lower(key) LIKE ? OR lower(value) LIKE ?
-		ORDER BY updated_at DESC`, like, like)
+	records, err := s.SearchMemoryRecords(query, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var out []KeyValue
-	for rows.Next() {
-		var kv KeyValue
-		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
-			return nil, err
-		}
-		if !isPromptSafeUserMemory(kv.Key, kv.Value) {
-			continue
-		}
-		out = append(out, kv)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out, rows.Err()
+	return memoryRecordsToKeyValues(records), nil
 }
 
 // DeletePromptSafeUserMemory deletes only rows that are eligible to be treated
 // as user memory. Internal setup/control rows are intentionally preserved.
 func (s *Store) DeletePromptSafeUserMemory() (int, error) {
-	rows, err := s.db.Query("SELECT key, value FROM user_context")
+	deleted, err := s.deletePromptSafeStructuredUserMemory()
 	if err != nil {
 		return 0, err
+	}
+	rows, err := s.db.Query("SELECT key, value FROM user_context")
+	if err != nil {
+		return deleted, err
 	}
 	var keys []string
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
 			rows.Close()
-			return 0, err
+			return deleted, err
 		}
 		if isPromptSafeUserMemory(key, value) {
 			keys = append(keys, key)
 		}
 	}
 	if err := rows.Close(); err != nil {
-		return 0, err
+		return deleted, err
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return deleted, err
 	}
-	deleted := 0
 	for _, key := range keys {
 		ok, err := s.DeleteUserContext(key)
 		if err != nil {
@@ -1873,11 +1837,16 @@ func (s *Store) DeletePromptSafeUserMemory() (int, error) {
 // DeleteUserMemory removes one prompt-safe user memory row. Internal
 // setup/control rows are not considered memory and are left untouched.
 func (s *Store) DeleteUserMemory(key string) (bool, error) {
-	_, ok, err := s.GetUserMemory(key)
-	if err != nil || !ok {
+	structuredDeleted, err := s.deleteStructuredUserMemory(key)
+	if err != nil {
 		return false, err
 	}
-	return s.DeleteUserContext(key)
+	_, ok, err := s.GetUserMemory(key)
+	if err != nil || !ok {
+		return structuredDeleted > 0, err
+	}
+	legacyDeleted, err := s.DeleteUserContext(key)
+	return structuredDeleted > 0 || legacyDeleted, err
 }
 
 func normalizeUserMemoryLimit(limit int) int {
@@ -1888,6 +1857,19 @@ func normalizeUserMemoryLimit(limit int) int {
 		return 500
 	}
 	return limit
+}
+
+func memoryRecordsToKeyValues(records []MemoryRecord) []KeyValue {
+	out := make([]KeyValue, 0, len(records))
+	seen := map[string]bool{}
+	for _, rec := range records {
+		if seen[rec.Key] {
+			continue
+		}
+		seen[rec.Key] = true
+		out = append(out, KeyValue{Key: rec.Key, Value: rec.Value})
+	}
+	return out
 }
 
 func isPromptSafeUserMemory(key, value string) bool {
@@ -1962,34 +1944,16 @@ func isPromptSafeUserMemory(key, value string) bool {
 // Returns user facts, recent failures, and today's stats as markdown sections.
 // Sections with no data are omitted entirely.
 func (s *Store) MemoryContextLines() ([]string, error) {
+	return s.MemoryContextLinesForScopes(nil)
+}
+
+func (s *Store) MemoryContextLinesForScopes(scopes []MemoryScope) ([]string, error) {
 	var sections []string
 
 	// --- Remembered Facts (user_context, cap 20, most recent first) ---
-	rows, err := s.db.Query(`
-		SELECT key, value FROM user_context
-		ORDER BY updated_at DESC
-		LIMIT 200`)
+	factLines, err := s.memoryContextFactLines(scopes, 20)
 	if err != nil {
 		return nil, fmt.Errorf("memory context facts: %w", err)
-	}
-	var factLines []string
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("memory context scan fact: %w", err)
-		}
-		if !isPromptSafeUserMemory(k, v) {
-			continue
-		}
-		factLines = append(factLines, fmt.Sprintf("- %s: %s", sanitizeForPrompt(k, 100), sanitizeForPrompt(v, 500)))
-		if len(factLines) >= 20 {
-			break
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("memory context facts iter: %w", err)
 	}
 	if len(factLines) > 0 {
 		sections = append(sections, "### Remembered Facts\n"+strings.Join(factLines, "\n"))
@@ -1997,7 +1961,7 @@ func (s *Store) MemoryContextLines() ([]string, error) {
 
 	// --- Recent Failures (last 24h UTC, cap 5) ---
 	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02T15:04:05Z")
-	rows, err = s.db.Query(`
+	rows, err := s.db.Query(`
 		SELECT skill_name, COALESCE(result_summary, ''), started_at
 		FROM execution_history
 		WHERE success = 0

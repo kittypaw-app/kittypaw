@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
-	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -227,10 +225,12 @@ func (c *ClaudeProvider) newRequest(ctx context.Context, payload []byte) (*http.
 // 429 (rate limit) and 529 (overloaded) responses.
 func (c *ClaudeProvider) doWithRetry(ctx context.Context, payload []byte) (*http.Response, error) {
 	var lastErr error
+	retryAfter := ""
 
 	for attempt := 0; attempt <= claudeMaxRetries; attempt++ {
 		if attempt > 0 {
-			delay := time.Duration(float64(claudeBaseDelay) * math.Pow(2, float64(attempt-1)) * (0.5 + rand.Float64()))
+			delay := providerRetryDelay(claudeBaseDelay, attempt, retryAfter, time.Now())
+			retryAfter = ""
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -246,10 +246,12 @@ func (c *ClaudeProvider) doWithRetry(ctx context.Context, payload []byte) (*http
 		resp, err := c.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("claude: http request: %w", err)
+			retryAfter = ""
 			continue
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == 529 {
+			retryAfter = resp.Header.Get("Retry-After")
 			resp.Body.Close()
 			lastErr = fmt.Errorf("claude: server returned %d", resp.StatusCode)
 			continue

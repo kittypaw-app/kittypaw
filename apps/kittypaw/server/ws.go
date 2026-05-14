@@ -303,8 +303,8 @@ func (s *Server) handleWebSocketWithAccount(
 			// Run (legacy client without idempotency).
 			result, err := acct.Runtime.RunTurn(ctx, clientMsg.TurnID, event, runOpts)
 			if err != nil {
-				if isRuntimeAdmissionBusy(err) {
-					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, "runtime busy"))
+				if message, ok := runtimeErrorMessage(err); ok {
+					sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, message))
 					continue
 				}
 				sendWsMsg(ctx, conn, core.NewErrorMsgForTurn(clientMsg.TurnID, err.Error()))

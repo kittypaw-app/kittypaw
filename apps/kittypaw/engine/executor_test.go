@@ -772,6 +772,232 @@ func TestExecuteMemoryToolsRejectUnsafeRows(t *testing.T) {
 	}
 }
 
+func TestExecuteMemorySetSupportsCurrentProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	project, err := st.CreateProject(store.CreateProjectRequest{
+		Key:       "alpha",
+		Name:      "Alpha",
+		RootPath:  t.TempDir(),
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	arg := func(v any) json.RawMessage {
+		raw, _ := json.Marshal(v)
+		return raw
+	}
+
+	got, err := executeMemory(
+		ContextWithConversationID(context.Background(), project.ProjectConversationID),
+		core.SkillCall{
+			SkillName: "Memory",
+			Method:    "set",
+			Args: []json.RawMessage{
+				arg("memory:project:decision"),
+				arg("Alpha uses SQLite"),
+				arg(map[string]any{"scope": "project", "kind": "decision"}),
+			},
+		},
+		&AccountRuntime{Store: st},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"success":true`) {
+		t.Fatalf("Memory.set project result = %s, want success", got)
+	}
+
+	globalLines, err := st.MemoryContextLines()
+	if err != nil {
+		t.Fatalf("MemoryContextLines: %v", err)
+	}
+	if strings.Contains(strings.Join(globalLines, "\n"), "Alpha uses SQLite") {
+		t.Fatalf("project memory leaked into global context: %v", globalLines)
+	}
+
+	scopedLines, err := st.MemoryContextLinesForScopes([]store.MemoryScope{{Type: store.MemoryScopeProject, ID: project.ID}})
+	if err != nil {
+		t.Fatalf("MemoryContextLinesForScopes: %v", err)
+	}
+	if !strings.Contains(strings.Join(scopedLines, "\n"), "Alpha uses SQLite") {
+		t.Fatalf("project memory missing from project context: %v", scopedLines)
+	}
+}
+
+func TestExecuteMemorySearchUsesCurrentProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	alpha, err := st.CreateProject(store.CreateProjectRequest{
+		Key:       "alpha",
+		Name:      "Alpha",
+		RootPath:  t.TempDir(),
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject alpha: %v", err)
+	}
+	if err := st.SetScopedUserMemory(store.UserMemoryWrite{
+		Key:       "memory:project:alpha",
+		Value:     "Alpha-only context",
+		ScopeType: store.MemoryScopeProject,
+		ScopeID:   alpha.ID,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory alpha: %v", err)
+	}
+	if err := st.SetScopedUserMemory(store.UserMemoryWrite{
+		Key:       "memory:project:beta",
+		Value:     "Beta-only context",
+		ScopeType: store.MemoryScopeProject,
+		ScopeID:   "project-beta",
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory beta: %v", err)
+	}
+
+	query, _ := json.Marshal("only context")
+	got, err := executeMemory(
+		ContextWithConversationID(context.Background(), alpha.ProjectConversationID),
+		core.SkillCall{SkillName: "Memory", Method: "search", Args: []json.RawMessage{query}},
+		&AccountRuntime{Store: st},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Alpha-only context") {
+		t.Fatalf("Memory.search missing current project memory: %s", got)
+	}
+	if strings.Contains(got, "Beta-only context") {
+		t.Fatalf("Memory.search leaked another project memory: %s", got)
+	}
+}
+
+func TestExecuteMemoryGetUsesCurrentProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	alpha, err := st.CreateProject(store.CreateProjectRequest{
+		Key:       "alpha",
+		Name:      "Alpha",
+		RootPath:  t.TempDir(),
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject alpha: %v", err)
+	}
+	if err := st.SetScopedUserMemory(store.UserMemoryWrite{
+		Key:       "memory:project:decision",
+		Value:     "Global fallback",
+		ScopeType: store.MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory global: %v", err)
+	}
+	if err := st.SetScopedUserMemory(store.UserMemoryWrite{
+		Key:       "memory:project:decision",
+		Value:     "Alpha exact context",
+		ScopeType: store.MemoryScopeProject,
+		ScopeID:   alpha.ID,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory alpha: %v", err)
+	}
+
+	key, _ := json.Marshal("memory:project:decision")
+	got, err := executeMemory(
+		ContextWithConversationID(context.Background(), alpha.ProjectConversationID),
+		core.SkillCall{SkillName: "Memory", Method: "get", Args: []json.RawMessage{key}},
+		&AccountRuntime{Store: st},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Alpha exact context") {
+		t.Fatalf("Memory.get missing current project memory: %s", got)
+	}
+	if strings.Contains(got, "Global fallback") {
+		t.Fatalf("Memory.get should prefer scoped project memory over global: %s", got)
+	}
+}
+
+func TestExecuteMemoryDeleteUsesCurrentProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	alpha, err := st.CreateProject(store.CreateProjectRequest{
+		Key:       "alpha",
+		Name:      "Alpha",
+		RootPath:  t.TempDir(),
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateProject alpha: %v", err)
+	}
+	key := "memory:project:decision"
+	if err := st.SetScopedUserMemory(store.UserMemoryWrite{
+		Key:       key,
+		Value:     "Global fallback",
+		ScopeType: store.MemoryScopeGlobal,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory global: %v", err)
+	}
+	if err := st.SetScopedUserMemory(store.UserMemoryWrite{
+		Key:       key,
+		Value:     "Alpha exact context",
+		ScopeType: store.MemoryScopeProject,
+		ScopeID:   alpha.ID,
+		Source:    "test",
+	}); err != nil {
+		t.Fatalf("SetScopedUserMemory alpha: %v", err)
+	}
+
+	rawKey, _ := json.Marshal(key)
+	got, err := executeMemory(
+		ContextWithConversationID(context.Background(), alpha.ProjectConversationID),
+		core.SkillCall{SkillName: "Memory", Method: "delete", Args: []json.RawMessage{rawKey}},
+		&AccountRuntime{Store: st},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"deleted":true`) {
+		t.Fatalf("Memory.delete result = %s, want deleted", got)
+	}
+	rec, ok, err := st.GetMemoryRecordInScopes(key, []store.MemoryScope{{Type: store.MemoryScopeProject, ID: alpha.ID}})
+	if err != nil || !ok || rec.ScopeType != store.MemoryScopeGlobal || rec.Value != "Global fallback" {
+		t.Fatalf("memory after scoped delete = %+v ok=%v err=%v, want global fallback only", rec, ok, err)
+	}
+}
+
+func TestExecuteMemorySetCreatesPendingConfirmationForSensitivePersonalData(t *testing.T) {
+	st := openTestStore(t)
+	arg := func(v any) json.RawMessage {
+		raw, _ := json.Marshal(v)
+		return raw
+	}
+	got, err := executeMemory(context.Background(), core.SkillCall{
+		SkillName: "Memory",
+		Method:    "set",
+		Args: []json.RawMessage{
+			arg("user.email"),
+			arg("jinto@example.com"),
+		},
+	}, &AccountRuntime{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"pending_confirmation":true`) {
+		t.Fatalf("Memory.set sensitive result = %s, want pending confirmation", got)
+	}
+	if _, ok, err := st.GetUserMemory("user.email"); err != nil || ok {
+		t.Fatalf("sensitive memory stored without confirmation ok=%v err=%v", ok, err)
+	}
+	pending, err := st.ListPendingUserMemory(10)
+	if err != nil {
+		t.Fatalf("ListPendingUserMemory: %v", err)
+	}
+	if len(pending) != 1 || pending[0].Key != "user.email" || pending[0].Value != "jinto@example.com" {
+		t.Fatalf("pending memory = %+v", pending)
+	}
+}
+
 type capturedNotification struct {
 	Target core.DeliveryTarget
 	Text   string
@@ -1343,7 +1569,7 @@ func TestRunPromptModeSkillExecutesDeclaredTools(t *testing.T) {
 	if !foundMemorySet {
 		t.Fatalf("tools = %+v, want declared Memory__set tool", provider.tools)
 	}
-	val, ok, err := st.GetUserContext("prompt-mode-key")
+	val, ok, err := st.GetUserMemory("prompt-mode-key")
 	if err != nil || !ok || val != "prompt-mode-value" {
 		t.Fatalf("stored memory value = %q ok=%v err=%v", val, ok, err)
 	}

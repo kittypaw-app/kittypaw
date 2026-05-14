@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -363,6 +364,49 @@ func TestResolveProvider_InvalidProviderFallsBack(t *testing.T) {
 	sess := &AccountRuntime{Provider: mock, Config: &cfg}
 	if got := sess.resolveProvider("any-model"); got != mock {
 		t.Error("invalid provider should fall back to session default")
+	}
+}
+
+type errorProvider struct {
+	err error
+}
+
+func (p *errorProvider) Generate(context.Context, []core.LlmMessage) (*llm.Response, error) {
+	return nil, p.err
+}
+
+func (p *errorProvider) GenerateWithTools(context.Context, []core.LlmMessage, []llm.Tool) (*llm.Response, error) {
+	return nil, p.err
+}
+
+func (p *errorProvider) ContextWindow() int { return 128_000 }
+
+func (p *errorProvider) MaxTokens() int { return 1024 }
+
+func TestRunPreservesLimiterProviderErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "llm rate limit", err: ErrLLMRateLimitExceeded},
+		{name: "daily token limit", err: ErrDailyTokenLimitExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := core.DefaultConfig()
+			sess := &AccountRuntime{
+				Provider: &errorProvider{err: tc.err},
+				Sandbox:  sandbox.New(cfg.Sandbox),
+				Store:    openTestStore(t),
+				Config:   &cfg,
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+
+			_, err := sess.Run(ctx, webChatEvent("hello"), nil)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("Run error = %v, want %v", err, tc.err)
+			}
+		})
 	}
 }
 

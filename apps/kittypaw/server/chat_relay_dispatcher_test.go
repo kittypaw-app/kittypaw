@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/engine"
 	"github.com/jinto/kittypaw/llm"
 	"github.com/jinto/kittypaw/remote/chatrelay"
 	"github.com/jinto/kittypaw/store"
@@ -231,6 +232,55 @@ func TestChatRelayDispatcherChatCompletionsReturnsServerErrorShape(t *testing.T)
 	}
 	if strings.TrimSpace(decoded.Error.Message) == "" {
 		t.Fatalf("error message is empty: %+v", decoded.Error)
+	}
+}
+
+func TestChatRelayDispatcherChatCompletionsReturns429ForQuotaErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "llm rate limit", err: engine.ErrLLMRateLimitExceeded},
+		{name: "daily token limit", err: engine.ErrDailyTokenLimitExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := core.DefaultConfig()
+			deps := buildAccountDeps(t, root, "alice", &cfg)
+			deps.Provider = &chatRelayMockProvider{err: tc.err}
+			srv := New([]*AccountDeps{deps}, "test")
+			raw, _ := json.Marshal(map[string]any{
+				"messages": []map[string]any{
+					{"role": "user", "content": "hello"},
+				},
+			})
+
+			result, err := NewChatRelayDispatcher(srv).Dispatch(context.Background(), chatrelay.RequestFrame{
+				ID:        "turn-quota-" + strings.ReplaceAll(tc.name, " ", "-"),
+				Operation: chatrelay.OperationOpenAIChatCompletions,
+				AccountID: "alice",
+				Body:      raw,
+			})
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if result.Status != http.StatusTooManyRequests {
+				t.Fatalf("Status = %d body=%s, want 429", result.Status, result.Body)
+			}
+			var decoded struct {
+				Error struct {
+					Message string `json:"message"`
+					Type    string `json:"type"`
+					Code    string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(result.Body, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Error.Code != "kittypaw_turn_failed" || !strings.Contains(decoded.Error.Message, tc.err.Error()) {
+				t.Fatalf("error = %+v, want quota message", decoded.Error)
+			}
+		})
 	}
 }
 

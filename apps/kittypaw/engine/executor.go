@@ -1296,7 +1296,7 @@ func executeLLM(ctx context.Context, call core.SkillCall, s *AccountRuntime) (st
 
 // --- Memory ---
 
-func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
+func executeMemory(ctx context.Context, call core.SkillCall, s *AccountRuntime) (string, error) {
 	switch call.Method {
 	case "search":
 		if len(call.Args) == 0 {
@@ -1304,7 +1304,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		}
 		var query string
 		_ = json.Unmarshal(call.Args[0], &query)
-		results, err := s.Store.SearchUserMemory(query, 10)
+		results, err := s.Store.SearchMemoryRecordsInScopes(query, memoryScopesForContext(ctx, s), 10)
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
@@ -1318,7 +1318,23 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		_ = json.Unmarshal(call.Args[0], &key)
 		var value string
 		_ = json.Unmarshal(call.Args[1], &value)
-		if err := s.Store.SetUserMemory(key, value, "runner"); err != nil {
+		write, err := memoryWriteFromToolArgs(ctx, s, key, value, "runner", call.Args[2:])
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if reason := store.UserMemoryConfirmationReason(write.Key, write.Value); reason != "" {
+			pending, err := s.Store.CreatePendingUserMemory(write, reason)
+			if err != nil {
+				return jsonResult(map[string]any{"error": err.Error()})
+			}
+			return jsonResult(map[string]any{
+				"success":              false,
+				"pending_confirmation": true,
+				"pending":              pending,
+				"reason":               reason,
+			})
+		}
+		if err := s.Store.SetScopedUserMemory(write); err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		return jsonResult(map[string]any{"success": true})
@@ -1329,14 +1345,14 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		}
 		var key string
 		_ = json.Unmarshal(call.Args[0], &key)
-		val, ok, err := s.Store.GetUserMemory(key)
+		rec, ok, err := s.Store.GetMemoryRecordInScopes(key, memoryScopesForContext(ctx, s))
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}
 		if !ok {
 			return jsonResult(nil)
 		}
-		return jsonResult(map[string]any{"value": val})
+		return jsonResult(map[string]any{"value": rec.Value, "memory": rec})
 
 	case "delete":
 		if len(call.Args) == 0 {
@@ -1344,7 +1360,7 @@ func executeMemory(_ context.Context, call core.SkillCall, s *AccountRuntime) (s
 		}
 		var key string
 		_ = json.Unmarshal(call.Args[0], &key)
-		ok, err := s.Store.DeleteUserMemory(key)
+		ok, err := s.Store.DeleteUserMemoryInScopes(key, memoryScopesForContext(ctx, s))
 		if err != nil {
 			return jsonResult(map[string]any{"error": err.Error()})
 		}

@@ -414,6 +414,30 @@ func TestAccountScopedCommandsExposeAccountFlag(t *testing.T) {
 	}
 }
 
+func TestMemoryCommandExposesManagementSubcommands(t *testing.T) {
+	root := newRootCmd()
+	for _, path := range [][]string{
+		{"memory", "list"},
+		{"memory", "search"},
+		{"memory", "delete"},
+		{"memory", "export"},
+		{"memory", "forget-all"},
+		{"memory", "pending"},
+		{"memory", "confirm"},
+		{"memory", "reject"},
+		{"memory", "curate"},
+		{"memory", "curate", "apply"},
+	} {
+		cmd, _, err := root.Find(path)
+		if err != nil || cmd == nil {
+			t.Fatalf("Find(%v) = %v, %v", path, cmd, err)
+		}
+		if cmd.Name() != path[len(path)-1] {
+			t.Fatalf("Find(%v) command = %q, want %q", path, cmd.Name(), path[len(path)-1])
+		}
+	}
+}
+
 func TestResolveCLIAccountExplicit(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("KITTYPAW_CONFIG_DIR", root)

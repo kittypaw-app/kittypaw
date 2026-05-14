@@ -271,8 +271,9 @@ const App = {
 
   showShell() {
     this._teardown();
+    const memoryNavLabel = typeof memoryT === 'function' ? memoryT('nav.memory', null, 'Memory') : 'Memory';
     const defaultNav = this.isDefault
-      ? '<button class="nav-item" data-tab="dashboard" data-i18n="nav.dashboard">' + esc(t('nav.dashboard')) + '</button><button class="nav-item" data-tab="skills" data-i18n="nav.skills">' + esc(t('nav.skills')) + '</button>'
+      ? '<button class="nav-item" data-tab="dashboard" data-i18n="nav.dashboard">' + esc(t('nav.dashboard')) + '</button><button class="nav-item" data-tab="skills" data-i18n="nav.skills">' + esc(t('nav.skills')) + '</button><button class="nav-item" data-tab="memory">' + esc(memoryNavLabel) + '</button>'
       : '';
 
     // Override #app centering from stylesheet
@@ -382,6 +383,8 @@ const App = {
       this._showDashboard(content);
     } else if (tab === 'skills') {
       Skills.mount(content);
+    } else if (tab === 'memory') {
+      Memory.mount(content);
     } else {
       Settings.mount(content);
     }

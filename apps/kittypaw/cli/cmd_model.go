@@ -37,7 +37,12 @@ type modelRemoveFlags struct {
 	force     bool
 }
 
-const modelAddConnectionTimeout = 20 * time.Second
+type modelCheckFlags struct {
+	accountID string
+	id        string
+}
+
+const modelConnectionTimeout = 20 * time.Second
 
 func newModelCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,6 +51,7 @@ func newModelCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newModelAddCmd(),
+		newModelCheckCmd(),
 		newModelListCmd(),
 		newModelRemoveCmd(),
 	)
@@ -78,6 +84,23 @@ func newModelRemoveCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&flags.accountID, "account", "", "local account id")
 	cmd.Flags().BoolVar(&flags.force, "force", false, "remove without confirmation")
+	return cmd
+}
+
+func newModelCheckCmd() *cobra.Command {
+	flags := &modelCheckFlags{}
+	cmd := &cobra.Command{
+		Use:   "check [id]",
+		Short: "Run a diagnostic LLM provider smoke check",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				flags.id = args[0]
+			}
+			return runModelCheck(flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.accountID, "account", "", "local account id")
 	return cmd
 }
 
@@ -184,6 +207,53 @@ func runModelAdd(flags *modelAddFlags) error {
 	return nil
 }
 
+func runModelCheck(flags *modelCheckFlags) error {
+	if flags == nil {
+		flags = &modelCheckFlags{}
+	}
+	accountID, cfg, _, err := loadModelCommandConfig(flags.accountID)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Account: %s\n", accountID)
+
+	model, id, err := resolveModelCheckTarget(cfg, flags.id)
+	if err != nil {
+		return err
+	}
+	runtimeModel := hydrateModelConnectionSecrets(accountID, *model, "")
+	fmt.Printf("Checking model: %s\n", id)
+	fmt.Print("Connecting... ")
+	ctx, cancel := context.WithTimeout(context.Background(), modelConnectionTimeout)
+	defer cancel()
+	_, err = modelConnectionCheck(ctx, runtimeModel)
+	if err == nil {
+		fmt.Printf("%s %s OK\n", runtimeModel.Provider, runtimeModel.Model)
+		return nil
+	}
+	fmt.Printf("FAIL (%s)\n", redactSecretText(err.Error(), runtimeModel.APIKey))
+	return fmt.Errorf("model check failed: %w", err)
+}
+
+func resolveModelCheckTarget(cfg *core.Config, id string) (*core.ModelConfig, string, error) {
+	if cfg == nil {
+		return nil, "", fmt.Errorf("config is nil")
+	}
+	id = strings.TrimSpace(id)
+	if id != "" {
+		model := cfg.FindModel(id)
+		if model == nil {
+			return nil, "", fmt.Errorf("model id %q not found", id)
+		}
+		return model, model.ModelID(), nil
+	}
+	model := cfg.DefaultModel()
+	if model == nil {
+		return nil, "", fmt.Errorf("no configured models")
+	}
+	return model, model.ModelID(), nil
+}
+
 func runModelList(flags *modelListFlags) error {
 	if flags == nil {
 		flags = &modelListFlags{}
@@ -268,17 +338,12 @@ func loadModelCommandConfig(accountFlag string) (string, *core.Config, string, e
 }
 
 func checkModelAddConnection(accountID string, model core.ModelConfig, apiKey string) error {
-	runtimeModel := model
-	if apiKey != "" {
-		runtimeModel.APIKey = apiKey
-	} else if secrets, err := core.LoadAccountSecrets(accountID); err == nil {
-		runtimeModel = core.HydrateModelSecrets(runtimeModel, secrets)
-	}
+	runtimeModel := hydrateModelConnectionSecrets(accountID, model, apiKey)
 
 	fmt.Print("Connecting... ")
-	ctx, cancel := context.WithTimeout(context.Background(), modelAddConnectionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), modelConnectionTimeout)
 	defer cancel()
-	_, err := modelAddConnectionCheck(ctx, runtimeModel)
+	_, err := modelConnectionCheck(ctx, runtimeModel)
 	if err == nil {
 		fmt.Printf("%s %s OK\n", runtimeModel.Provider, runtimeModel.Model)
 		return nil
@@ -297,7 +362,19 @@ func checkModelAddConnection(accountID string, model core.ModelConfig, apiKey st
 	return nil
 }
 
-var modelAddConnectionCheck = func(ctx context.Context, model core.ModelConfig) (bool, error) {
+func hydrateModelConnectionSecrets(accountID string, model core.ModelConfig, apiKey string) core.ModelConfig {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey != "" {
+		model.APIKey = apiKey
+		return model
+	}
+	if secrets, err := core.LoadAccountSecrets(accountID); err == nil {
+		return core.HydrateModelSecrets(model, secrets)
+	}
+	return model
+}
+
+var modelConnectionCheck = func(ctx context.Context, model core.ModelConfig) (bool, error) {
 	p, err := llm.NewProviderFromModelConfig(model)
 	if err != nil {
 		return false, err

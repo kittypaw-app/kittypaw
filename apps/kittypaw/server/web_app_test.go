@@ -198,6 +198,49 @@ func TestWebAppControlShellOnlyBindsTabButtons(t *testing.T) {
 	}
 }
 
+func TestWebAppExposesMemoryManagementSurface(t *testing.T) {
+	indexSrc, err := os.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatalf("read web index: %v", err)
+	}
+	if !strings.Contains(string(indexSrc), `<script src="/memory.js"></script>`) {
+		t.Fatal("web index must load memory.js")
+	}
+
+	appSrc, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read web app: %v", err)
+	}
+	app := string(appSrc)
+	for _, token := range []string{`data-tab="memory"`, "Memory.mount(content)"} {
+		if !strings.Contains(app, token) {
+			t.Fatalf("web app must expose memory tab token %s", token)
+		}
+	}
+
+	memSrc, err := os.ReadFile("web/memory.js")
+	if err != nil {
+		t.Fatalf("read web memory: %v", err)
+	}
+	memory := string(memSrc)
+	for _, token := range []string{
+		"/api/v1/memory?limit=",
+		"/api/v1/memory/search?q=",
+		"/api/v1/memory/pending?limit=",
+		"/api/v1/memory/curate?limit=",
+		"/api/v1/memory/forget-all",
+		"method: 'DELETE'",
+		"scope_type",
+		"/confirm",
+		"/reject",
+		"/apply",
+	} {
+		if !strings.Contains(memory, token) {
+			t.Fatalf("web memory module missing token %s", token)
+		}
+	}
+}
+
 func TestWebAppChatSurfaceUsesChatOnlyBootstrap(t *testing.T) {
 	src, err := os.ReadFile("web/app.js")
 	if err != nil {

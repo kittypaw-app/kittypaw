@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/sandbox"
 )
 
 // These tests exercise AccountRuntime.RunTurn's idempotency cache without
@@ -331,6 +332,40 @@ func TestRunTurnEvictsAdmissionBusyFromCache(t *testing.T) {
 	}
 	if _, exists := s.turnCache.Load("turn-busy"); exists {
 		t.Fatal("transient admission busy error must not remain in turn cache")
+	}
+}
+
+func TestRunTurnEvictsLLMAdmissionLimitErrorsFromCache(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "llm rate limit", err: ErrLLMRateLimitExceeded},
+		{name: "daily token limit", err: ErrDailyTokenLimitExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := core.DefaultConfig()
+			s := &AccountRuntime{
+				Provider: &errorProvider{err: tc.err},
+				Sandbox:  sandbox.New(cfg.Sandbox),
+				Store:    openTestStore(t),
+				Config:   &cfg,
+			}
+
+			_, err := s.RunTurn(context.Background(), "turn-llm-admission", core.Event{
+				Type: core.EventWebChat,
+				Payload: marshalRunTurnPayload(t, core.ChatPayload{
+					SourceSessionID: "retry-session",
+					Text:            "hello",
+				}),
+			}, nil)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("RunTurn err = %v, want %v", err, tc.err)
+			}
+			if _, exists := s.turnCache.Load("turn-llm-admission"); exists {
+				t.Fatal("transient LLM admission error must not remain in turn cache")
+			}
+		})
 	}
 }
 

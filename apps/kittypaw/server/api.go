@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -91,8 +93,30 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		byModel = []store.LLMUsageByModel{}
 	}
 	runtimeSnapshot := engine.RuntimeAdmissionSnapshot{}
-	if runtime := s.defaultRuntime(); runtime != nil && runtime.Admission != nil {
-		runtimeSnapshot = runtime.Admission.Snapshot()
+	llmRateLimits := []engine.LLMRateLimitSnapshot{}
+	dailyTokenLimit := engine.DailyTokenLimitSnapshot{}
+	schedulerSnapshot := engine.SchedulerSnapshot{Inflight: []string{}}
+	accountSchedulerSnapshots := map[string]engine.SchedulerSnapshot{}
+	if runtime := s.defaultRuntime(); runtime != nil {
+		if runtime.Admission != nil {
+			runtimeSnapshot = runtime.Admission.Snapshot()
+		}
+		if runtime.RateLimiters != nil {
+			llmRateLimits = runtime.RateLimiters.Snapshot()
+		}
+		if runtime.DailyTokenLimiter != nil && runtime.Config != nil {
+			used := uint64(0)
+			if stats.TotalTokens > 0 {
+				used = uint64(stats.TotalTokens)
+			}
+			dailyTokenLimit = runtime.DailyTokenLimiter.Snapshot(runtime.Config.Features.DailyTokenLimit, used)
+		}
+	}
+	if s.schedulers != nil {
+		accountSchedulerSnapshots = s.schedulers.Snapshot()
+		if snapshot, ok := accountSchedulerSnapshots[s.defaultAccountID()]; ok {
+			schedulerSnapshot = snapshot
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_runs":         stats.TotalRuns,
@@ -102,6 +126,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"total_tokens":       stats.TotalTokens,
 		"estimated_cost_usd": stats.EstimatedCostUSD,
 		"llm_usage_by_model": byModel,
+		"llm_rate_limits":    llmRateLimits,
+		"daily_token_limit":  dailyTokenLimit,
+		"scheduler":          schedulerSnapshot,
+		"account_schedulers": accountSchedulerSnapshots,
 		"runtime":            runtimeSnapshot,
 	})
 }
@@ -486,8 +514,8 @@ func (s *Server) handleSkillsRun(w http.ResponseWriter, r *http.Request) {
 
 	output, err := s.defaultRuntime().Run(r.Context(), event, nil)
 	if err != nil {
-		if isRuntimeAdmissionBusy(err) {
-			writeError(w, http.StatusTooManyRequests, "runtime busy")
+		if status, message, ok := runtimeErrorHTTPStatus(err); ok {
+			writeError(w, status, message)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -652,6 +680,10 @@ func (s *Server) handleSkillExplain(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.defaultRuntime().Provider.Generate(engine.WithLLMCallKind(r.Context(), "skill.explain"), messages)
 	if err != nil {
+		if status, message, ok := runtimeErrorHTTPStatus(err); ok {
+			writeError(w, status, message)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -718,8 +750,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	output, err := s.defaultRuntime().Run(r.Context(), event, nil)
 	if err != nil {
-		if isRuntimeAdmissionBusy(err) {
-			writeError(w, http.StatusTooManyRequests, "runtime busy")
+		if status, message, ok := runtimeErrorHTTPStatus(err); ok {
+			writeError(w, status, message)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -757,7 +789,7 @@ func (s *Server) handleConfigCheck(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleMemoryList(w http.ResponseWriter, r *http.Request) {
 	limit := memoryLimitFromRequest(r, 50, 500)
-	rows, err := s.store.ListUserMemory(limit)
+	rows, err := s.store.ListMemoryRecords(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -775,7 +807,7 @@ func (s *Server) handleMemoryList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
 	limit := memoryLimitFromRequest(r, 100, 500)
-	rows, err := s.store.ListUserMemory(limit)
+	rows, err := s.store.ListMemoryRecords(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -799,7 +831,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := memoryLimitFromRequest(r, 20, 100)
-	results, err := s.store.SearchUserMemory(q, limit)
+	results, err := s.store.SearchMemoryRecords(q, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -809,6 +841,133 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/memory/pending
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryPendingList(w http.ResponseWriter, r *http.Request) {
+	limit := memoryLimitFromRequest(r, 50, 500)
+	rows, err := s.store.ListPendingUserMemory(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"pending": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pending": rows})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/memory/pending/{id}/confirm
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryPendingConfirm(w http.ResponseWriter, r *http.Request) {
+	id, err := memoryPendingIDFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rec, ok, err := s.store.ConfirmPendingUserMemory(id, "user_confirmation")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "pending memory not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "memory": rec})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/memory/pending/{id}/reject
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryPendingReject(w http.ResponseWriter, r *http.Request) {
+	id, err := memoryPendingIDFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ok, err := s.store.RejectPendingUserMemory(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "pending memory not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "rejected": true})
+}
+
+func memoryPendingIDFromRequest(r *http.Request) (int64, error) {
+	raw := strings.TrimSpace(chi.URLParam(r, "id"))
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("invalid pending memory id")
+	}
+	return id, nil
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/memory/curate
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryCurate(w http.ResponseWriter, r *http.Request) {
+	limit := memoryLimitFromRequest(r, 50, 500)
+	candidates, err := s.store.CurateMemory(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if candidates == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"candidates": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"candidates": candidates})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/memory/curate/{id}/apply
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleMemoryCurationApply(w http.ResponseWriter, r *http.Request) {
+	id, err := memoryCurationIDFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	candidate, ok, err := s.store.ApplyMemoryCurationCandidate(id)
+	if errors.Is(err, store.ErrMemoryCurationNotApplyable) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "memory curation candidate not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "candidate": candidate})
+}
+
+func memoryCurationIDFromRequest(r *http.Request) (string, error) {
+	id, err := url.PathUnescape(chi.URLParam(r, "id"))
+	if err != nil {
+		return "", fmt.Errorf("invalid memory curation candidate id")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", fmt.Errorf("memory curation candidate id is required")
+	}
+	return id, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -826,7 +985,11 @@ func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "memory key is required")
 		return
 	}
-	deleted, err := s.store.DeleteUserMemory(key)
+	deleted, err := s.deleteMemoryForRequest(key, r)
+	if err != nil && strings.Contains(err.Error(), "invalid memory scope") {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -836,6 +999,18 @@ func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "deleted": true})
+}
+
+func (s *Server) deleteMemoryForRequest(key string, r *http.Request) (bool, error) {
+	scopeType := strings.TrimSpace(r.URL.Query().Get("scope_type"))
+	scopeID := strings.TrimSpace(r.URL.Query().Get("scope_id"))
+	if scopeID != "" && (scopeType == "" || strings.EqualFold(scopeType, store.MemoryScopeGlobal)) {
+		return false, fmt.Errorf("invalid memory scope: scope_id requires a non-global scope_type")
+	}
+	if scopeType == "" && scopeID == "" {
+		return s.store.DeleteUserMemory(key)
+	}
+	return s.store.DeleteUserMemoryInScope(key, store.MemoryScope{Type: scopeType, ID: scopeID})
 }
 
 // ---------------------------------------------------------------------------

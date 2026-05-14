@@ -144,7 +144,7 @@ var SkillRegistry = []SkillMeta{
 	}},
 	{Name: "Memory", Methods: []SkillMethodMeta{
 		{Name: "search", Signature: "Memory.search(query)"},
-		{Name: "set", Signature: "Memory.set(key, value)"},
+		{Name: "set", Signature: `Memory.set(key, value, options?) - options.scope may be "conversation", "project", or "channel"; options.kind may be "fact", "preference", "decision", "state", "ongoing_task", or "open_question"`},
 		{Name: "get", Signature: "Memory.get(key)"},
 		{Name: "delete", Signature: "Memory.delete(key)"},
 		{Name: "user", Signature: "Memory.user(key, value)"},

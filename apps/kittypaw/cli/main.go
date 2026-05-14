@@ -2055,7 +2055,37 @@ func newMemoryCmd() *cobra.Command {
 		Short: "Memory operations",
 	}
 	addPersistentAccountFlag(cmd)
+	cmd.AddCommand(newMemoryListCmd())
 	cmd.AddCommand(newMemorySearchCmd())
+	cmd.AddCommand(newMemoryDeleteCmd())
+	cmd.AddCommand(newMemoryExportCmd())
+	cmd.AddCommand(newMemoryForgetAllCmd())
+	cmd.AddCommand(newMemoryPendingCmd())
+	cmd.AddCommand(newMemoryConfirmCmd())
+	cmd.AddCommand(newMemoryRejectCmd())
+	cmd.AddCommand(newMemoryCurateCmd())
+	return cmd
+}
+
+func newMemoryListCmd() *cobra.Command {
+	var memLimit int
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List user memory",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryList(memLimit)
+			if err != nil {
+				return err
+			}
+			printMemoryRows(jsonSlice(res, "memory"))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&memLimit, "limit", 50, "number of memories")
 	return cmd
 }
 
@@ -2063,7 +2093,7 @@ func newMemorySearchCmd() *cobra.Command {
 	var memLimit int
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search execution memory",
+		Short: "Search user memory",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			cl, err := connectServerForCLIAccount()
@@ -2075,31 +2105,281 @@ func newMemorySearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results := jsonSlice(res, "results")
-			if len(results) == 0 {
-				fmt.Println("No results found.")
-				return nil
-			}
-			fmt.Printf("%s %s %s %s\n", padW("ID", 6), padW("SKILL", 20), padW("DATE", 20), "INPUT")
-			fmt.Println(strings.Repeat("-", 80))
-			for _, r := range results {
-				input := jsonStr(r, "input")
-				if input == "" {
-					input = jsonStr(r, "skill_name")
-				}
-				input = truncW(input, 30)
-				fmt.Printf("%s %s %s %s\n",
-					padW(fmt.Sprintf("%d", jsonInt(r, "id")), 6),
-					padW(truncW(jsonStr(r, "skill_name"), 20), 20),
-					padW(jsonStr(r, "started_at"), 20),
-					input,
-				)
-			}
+			printMemoryRows(jsonSlice(res, "results"))
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&memLimit, "limit", 20, "number of results")
 	return cmd
+}
+
+func newMemoryDeleteCmd() *cobra.Command {
+	var scopeType string
+	var scopeID string
+	cmd := &cobra.Command{
+		Use:   "delete <key>",
+		Short: "Delete one user memory",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryDeleteScoped(args[0], strings.TrimSpace(scopeType), strings.TrimSpace(scopeID))
+			if err != nil {
+				return err
+			}
+			if jsonBool(res, "deleted") {
+				fmt.Println("Deleted.")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&scopeType, "scope", "", "memory scope type")
+	cmd.Flags().StringVar(&scopeID, "scope-id", "", "memory scope id")
+	return cmd
+}
+
+func newMemoryExportCmd() *cobra.Command {
+	var memLimit int
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export user memory as JSON",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryExport(memLimit)
+			if err != nil {
+				return err
+			}
+			encoded, err := json.MarshalIndent(res["memory"], "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(encoded))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&memLimit, "limit", 500, "number of memories")
+	return cmd
+}
+
+func newMemoryForgetAllCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "forget-all",
+		Short: "Delete all prompt-safe user memory",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if !yes {
+				return errors.New("refusing to forget all memory without --yes")
+			}
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryForgetAll()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Deleted %d memories.\n", jsonInt(res, "deleted"))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm deletion")
+	return cmd
+}
+
+func newMemoryPendingCmd() *cobra.Command {
+	var memLimit int
+	cmd := &cobra.Command{
+		Use:   "pending",
+		Short: "List memory writes awaiting confirmation",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryPending(memLimit)
+			if err != nil {
+				return err
+			}
+			printPendingMemoryRows(jsonSlice(res, "pending"))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&memLimit, "limit", 50, "number of pending memories")
+	return cmd
+}
+
+func newMemoryConfirmCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "confirm <id>",
+		Short: "Confirm a pending memory write",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || id <= 0 {
+				return errors.New("invalid pending memory id")
+			}
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryConfirm(id)
+			if err != nil {
+				return err
+			}
+			mem := jsonMap(res, "memory")
+			fmt.Printf("Confirmed %s.\n", jsonStr(mem, "key"))
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newMemoryRejectCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "reject <id>",
+		Short: "Reject a pending memory write",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || id <= 0 {
+				return errors.New("invalid pending memory id")
+			}
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			if _, err := cl.MemoryReject(id); err != nil {
+				return err
+			}
+			fmt.Println("Rejected.")
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newMemoryCurateCmd() *cobra.Command {
+	var memLimit int
+	cmd := &cobra.Command{
+		Use:   "curate",
+		Short: "Review memory cleanup suggestions",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryCurate(memLimit)
+			if err != nil {
+				return err
+			}
+			printMemoryCurationRows(jsonSlice(res, "candidates"))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&memLimit, "limit", 50, "number of suggestions")
+	cmd.AddCommand(newMemoryCurateApplyCmd())
+	return cmd
+}
+
+func newMemoryCurateApplyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "apply <id>",
+		Short: "Apply a memory cleanup suggestion",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			if id == "" {
+				return errors.New("memory curation candidate id is required")
+			}
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.MemoryCurateApply(id)
+			if err != nil {
+				return err
+			}
+			candidate := jsonMap(res, "candidate")
+			fmt.Printf("Applied %s suggestion %s.\n", jsonStr(candidate, "type"), jsonStr(candidate, "id"))
+			return nil
+		},
+	}
+	return cmd
+}
+
+func printMemoryRows(rows []map[string]any) {
+	if len(rows) == 0 {
+		fmt.Println("No memories found.")
+		return
+	}
+	fmt.Printf("%s %s %s %s %s\n", padW("KEY", 28), padW("SCOPE", 18), padW("KIND", 14), padW("UPDATED", 20), "VALUE")
+	fmt.Println(strings.Repeat("-", 96))
+	for _, r := range rows {
+		scope := jsonStr(r, "scope_type")
+		if id := jsonStr(r, "scope_id"); id != "" {
+			scope += ":" + id
+		}
+		fmt.Printf("%s %s %s %s %s\n",
+			padW(truncW(jsonStr(r, "key"), 28), 28),
+			padW(truncW(scope, 18), 18),
+			padW(truncW(jsonStr(r, "kind"), 14), 14),
+			padW(truncW(jsonStr(r, "updated_at"), 20), 20),
+			truncW(jsonStr(r, "value"), 60),
+		)
+	}
+}
+
+func printMemoryCurationRows(rows []map[string]any) {
+	if len(rows) == 0 {
+		fmt.Println("No memory cleanup suggestions.")
+		return
+	}
+	fmt.Printf("%s %s %s %s %s\n", padW("ID", 18), padW("TYPE", 10), padW("ACTION", 18), padW("SCOPE", 18), "SUMMARY")
+	fmt.Println(strings.Repeat("-", 104))
+	for _, r := range rows {
+		scope := jsonStr(r, "scope_type")
+		if id := jsonStr(r, "scope_id"); id != "" {
+			scope += ":" + id
+		}
+		action := jsonStr(r, "action")
+		if !jsonBool(r, "applyable") {
+			action = "review"
+		}
+		fmt.Printf("%s %s %s %s %s\n",
+			padW(truncW(jsonStr(r, "id"), 18), 18),
+			padW(truncW(jsonStr(r, "type"), 10), 10),
+			padW(truncW(action, 18), 18),
+			padW(truncW(scope, 18), 18),
+			truncW(jsonStr(r, "summary"), 80),
+		)
+	}
+}
+
+func printPendingMemoryRows(rows []map[string]any) {
+	if len(rows) == 0 {
+		fmt.Println("No pending memories.")
+		return
+	}
+	fmt.Printf("%s %s %s %s %s\n", padW("ID", 6), padW("KEY", 28), padW("REASON", 12), padW("SCOPE", 18), "VALUE")
+	fmt.Println(strings.Repeat("-", 90))
+	for _, r := range rows {
+		scope := jsonStr(r, "scope_type")
+		if id := jsonStr(r, "scope_id"); id != "" {
+			scope += ":" + id
+		}
+		fmt.Printf("%s %s %s %s %s\n",
+			padW(fmt.Sprintf("%d", jsonInt(r, "id")), 6),
+			padW(truncW(jsonStr(r, "key"), 28), 28),
+			padW(truncW(jsonStr(r, "reason"), 12), 12),
+			padW(truncW(scope, 18), 18),
+			truncW(jsonStr(r, "value"), 60),
+		)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2237,6 +2517,14 @@ func jsonBool(m map[string]any, key string) bool {
 		return v
 	}
 	return false
+}
+
+// jsonMap extracts a nested object from a map[string]any.
+func jsonMap(m map[string]any, key string) map[string]any {
+	if v, ok := m[key].(map[string]any); ok {
+		return v
+	}
+	return nil
 }
 
 // jsonSlice extracts a slice of map items from a map[string]any.

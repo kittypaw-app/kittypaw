@@ -156,9 +156,70 @@ func (c *Client) ConfigCheck() (map[string]any, error) {
 	return c.get("/api/v1/config/check")
 }
 
-// MemorySearch performs full-text search over execution history.
+// MemoryList returns prompt-safe user memory.
+func (c *Client) MemoryList(limit int) (map[string]any, error) {
+	return c.get(fmt.Sprintf("/api/v1/memory?limit=%d", limit))
+}
+
+// MemoryExport returns prompt-safe user memory for export.
+func (c *Client) MemoryExport(limit int) (map[string]any, error) {
+	return c.get(fmt.Sprintf("/api/v1/memory/export?limit=%d", limit))
+}
+
+// MemorySearch searches prompt-safe user memory.
 func (c *Client) MemorySearch(query string, limit int) (map[string]any, error) {
 	return c.get(fmt.Sprintf("/api/v1/memory/search?q=%s&limit=%d", url.QueryEscape(query), limit))
+}
+
+// MemoryDelete deletes one prompt-safe user memory by key.
+func (c *Client) MemoryDelete(key string) (map[string]any, error) {
+	return c.MemoryDeleteScoped(key, "", "")
+}
+
+// MemoryDeleteScoped deletes one prompt-safe user memory by key and exact scope.
+func (c *Client) MemoryDeleteScoped(key, scopeType, scopeID string) (map[string]any, error) {
+	path := "/api/v1/memory/" + url.PathEscape(key)
+	values := url.Values{}
+	if scopeType != "" {
+		values.Set("scope_type", scopeType)
+	}
+	if scopeID != "" {
+		values.Set("scope_id", scopeID)
+	}
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return c.delete(path)
+}
+
+// MemoryForgetAll deletes all prompt-safe user memory.
+func (c *Client) MemoryForgetAll() (map[string]any, error) {
+	return c.post("/api/v1/memory/forget-all", nil)
+}
+
+// MemoryPending lists memory writes awaiting explicit confirmation.
+func (c *Client) MemoryPending(limit int) (map[string]any, error) {
+	return c.get(fmt.Sprintf("/api/v1/memory/pending?limit=%d", limit))
+}
+
+// MemoryConfirm confirms a pending memory write.
+func (c *Client) MemoryConfirm(id int64) (map[string]any, error) {
+	return c.post(fmt.Sprintf("/api/v1/memory/pending/%d/confirm", id), nil)
+}
+
+// MemoryReject rejects a pending memory write.
+func (c *Client) MemoryReject(id int64) (map[string]any, error) {
+	return c.post(fmt.Sprintf("/api/v1/memory/pending/%d/reject", id), nil)
+}
+
+// MemoryCurate returns reviewable memory cleanup suggestions.
+func (c *Client) MemoryCurate(limit int) (map[string]any, error) {
+	return c.get(fmt.Sprintf("/api/v1/memory/curate?limit=%d", limit))
+}
+
+// MemoryCurateApply applies one reviewable memory cleanup suggestion.
+func (c *Client) MemoryCurateApply(id string) (map[string]any, error) {
+	return c.post("/api/v1/memory/curate/"+url.PathEscape(id)+"/apply", nil)
 }
 
 // Reload triggers a config reload on the server.

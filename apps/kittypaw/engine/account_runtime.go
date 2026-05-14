@@ -143,6 +143,8 @@ type AccountRuntime struct {
 	McpRegistry       *mcpreg.Registry // nil when no MCP servers configured
 	BrowserController BrowserController
 	Budget            *SharedTokenBudget // shared across orchestration, MoA, File.summary
+	RateLimiters      *LLMRateLimiterRegistry
+	DailyTokenLimiter *DailyTokenLimiter
 	// SummaryFlight dedups concurrent File.summary misses; nil → per-call group.
 	SummaryFlight     *singleflight.Group
 	Indexer           Indexer                   // nil when workspace indexer is not initialized
@@ -292,10 +294,14 @@ func (s *AccountRuntime) RunTurn(ctx context.Context, turnID string, event core.
 	s.runTurnOwner(ctx, turnID, state, func(c context.Context) (string, error) {
 		return s.Run(c, event, opts)
 	})
-	if errors.Is(state.err, ErrRuntimeAdmissionBusy) {
+	if shouldEvictRunTurnError(state.err) {
 		s.turnCache.Delete(turnID)
 	}
 	return state.result, state.err
+}
+
+func shouldEvictRunTurnError(err error) bool {
+	return errors.Is(err, ErrRuntimeAdmissionBusy) || isLLMAdmissionLimitError(err)
 }
 
 // runTurnOwner executes the owner side of a RunTurn — context
@@ -896,7 +902,8 @@ func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, raw
 	if s.Config.Features.DailyTokenLimit > 0 {
 		stats, err := s.Store.TodayStats()
 		if err == nil && stats.TotalTokens >= int64(s.Config.Features.DailyTokenLimit) {
-			return "", fmt.Errorf("daily token limit reached (%d/%d)",
+			return "", fmt.Errorf("%w: used=%d limit=%d",
+				ErrDailyTokenLimitExceeded,
 				stats.TotalTokens, s.Config.Features.DailyTokenLimit)
 		}
 	}
@@ -927,7 +934,7 @@ func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, raw
 
 	// Load memory context once before retry loop.
 	memoryContext := ""
-	if lines, err := s.Store.MemoryContextLines(); err != nil {
+	if lines, err := s.Store.MemoryContextLinesForScopes(memoryScopesForContext(ctx, s)); err != nil {
 		slog.Warn("failed to load memory context", "error", err)
 	} else if len(lines) > 0 {
 		memoryContext = strings.Join(lines, "\n\n")
@@ -1053,6 +1060,9 @@ observeLoop:
 			resp, err = providerForAttempt.Generate(WithLLMCallKind(runCtx, "chat"), messages)
 
 			if err != nil {
+				if isLLMAdmissionLimitError(err) {
+					return "", err
+				}
 				// Handle retryable errors
 				if attempt < maxRetries-1 {
 					slog.Warn("LLM error, retrying", "attempt", attempt, "error", err)
@@ -1343,7 +1353,9 @@ func (s *AccountRuntime) resolveProvider(model string) llm.Provider {
 		slog.Warn("resolveProvider: failed to create provider for named model", "model", model, "error", err)
 		return s.Provider
 	}
-	return NewUsageRecordingProvider(p, s.Store, mc.Provider)
+	p = NewRateLimitedProvider(p, s.RateLimiters, *mc)
+	p = NewUsageRecordingProvider(p, s.Store, mc.Provider)
+	return NewDailyTokenLimitedProvider(p, s.DailyTokenLimiter, s.Store, s.Config.Features.DailyTokenLimit, *mc)
 }
 
 func providerForStaffTurn(
@@ -1357,6 +1369,10 @@ func providerForStaffTurn(
 		return active
 	}
 	return resolve(staff.Model)
+}
+
+func isLLMAdmissionLimitError(err error) bool {
+	return errors.Is(err, ErrLLMRateLimitExceeded) || errors.Is(err, ErrDailyTokenLimitExceeded)
 }
 
 // ResolveStaffName determines which staff member to use for this request.

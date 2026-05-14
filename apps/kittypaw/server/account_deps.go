@@ -42,6 +42,8 @@ type AccountDeps struct {
 	Secrets           *core.SecretsStore
 	LiveIndexer       *engine.LiveIndexer
 	JobRuntime        *engine.ProjectJobRuntime
+	RateLimiters      *engine.LLMRateLimiterRegistry
+	DailyTokenLimiter *engine.DailyTokenLimiter
 }
 
 // Close releases OS-owned resources: the LiveIndexer (fsnotify watchers),
@@ -113,6 +115,8 @@ func OpenAccountDeps(t *core.Account) (*AccountDeps, error) {
 			"account", t.ID, "error", secretsErr)
 	}
 	core.HydrateRuntimeSecrets(t.Config, secrets)
+	rateLimiters := engine.NewLLMRateLimiterRegistry()
+	dailyTokenLimiter := engine.NewDailyTokenLimiter()
 
 	defaultModel, ok := t.Config.RuntimeDefaultModel(secrets)
 	if !ok {
@@ -124,12 +128,16 @@ func OpenAccountDeps(t *core.Account) (*AccountDeps, error) {
 		_ = st.Close()
 		return nil, fmt.Errorf("create llm provider for %s: %w", t.ID, err)
 	}
+	provider = engine.NewRateLimitedProvider(provider, rateLimiters, defaultModel)
 	provider = engine.NewUsageRecordingProvider(provider, st, defaultModel.Provider)
+	provider = engine.NewDailyTokenLimitedProvider(provider, dailyTokenLimiter, st, t.Config.Features.DailyTokenLimit, defaultModel)
 
 	var fallback llm.Provider
 	if m, ok := t.Config.RuntimeFallbackModel(secrets); ok {
 		fallback, _ = llm.NewProviderFromModelConfig(m)
+		fallback = engine.NewRateLimitedProvider(fallback, rateLimiters, m)
 		fallback = engine.NewUsageRecordingProvider(fallback, st, m.Provider)
+		fallback = engine.NewDailyTokenLimitedProvider(fallback, dailyTokenLimiter, st, t.Config.Features.DailyTokenLimit, m)
 	}
 
 	sbox := sandbox.New(t.Config.Sandbox)
@@ -177,6 +185,8 @@ func OpenAccountDeps(t *core.Account) (*AccountDeps, error) {
 		ServiceTokenMgr:   serviceTokenMgr,
 		Secrets:           secrets,
 		JobRuntime:        jobRuntime,
+		RateLimiters:      rateLimiters,
+		DailyTokenLimiter: dailyTokenLimiter,
 	}, nil
 }
 
@@ -247,6 +257,8 @@ func buildAccountRuntime(td *AccountDeps, registry *core.AccountRegistry, eventC
 		APITokenMgr:       td.APITokenMgr,
 		ServiceTokenMgr:   td.ServiceTokenMgr,
 		ProjectJobRuntime: td.JobRuntime,
+		RateLimiters:      td.RateLimiters,
+		DailyTokenLimiter: td.DailyTokenLimiter,
 		AccountID:         td.Account.ID,
 		AccountRegistry:   registry,
 		Health:            core.NewHealthState(),

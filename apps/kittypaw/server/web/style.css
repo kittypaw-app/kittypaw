@@ -582,6 +582,106 @@ th {
 
 .placeholder-icon { font-size: 48px; }
 
+/* ── Memory ───────────────────────────────────────────── */
+
+.memory-view {
+  padding: 20px;
+  max-width: 1120px;
+}
+
+.memory-view h1 {
+  font-size: 1.5em;
+}
+
+.memory-view h2 {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0;
+}
+
+.memory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.memory-header-actions,
+.memory-toolbar,
+.memory-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-toolbar {
+  margin-bottom: 14px;
+}
+
+.memory-toolbar .input {
+  max-width: 420px;
+}
+
+.memory-message {
+  margin-bottom: 14px;
+}
+
+.memory-section {
+  margin-top: 24px;
+}
+
+.memory-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.memory-count {
+  min-width: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.memory-table-wrap {
+  overflow-x: auto;
+}
+
+.memory-table {
+  table-layout: fixed;
+}
+
+.memory-table th,
+.memory-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.memory-table th:last-child,
+.memory-table td:last-child {
+  width: 180px;
+}
+
+.memory-key {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.memory-empty {
+  padding: 14px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
 /* ── Settings ─────────────────────��───────────────────── */
 
 .settings-view { padding: 20px; max-width: 720px; }
@@ -1680,5 +1780,20 @@ th {
   .app-header {
     min-height: 44px;
     padding: 8px 12px 0;
+  }
+  .memory-header,
+  .memory-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .memory-header-actions {
+    flex-wrap: wrap;
+  }
+  .memory-toolbar .input {
+    max-width: none;
+  }
+  .memory-row-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
