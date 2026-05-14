@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"golang.org/x/net/html"
 )
 
 const defaultFirecrawlAPIURL = "https://api.firecrawl.dev"
+const readWeakReasonMetadataKey = "weak_reason"
 
 var readHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -102,18 +104,16 @@ func (a *AutoReadBackend) Read(ctx context.Context, targetURL string, opts ReadO
 	if err != nil || !isWeakReadResult(result) || a.Fallback == nil {
 		return result, err
 	}
+	weakReason := readWeakReason(result)
 	fallback, fbErr := a.Fallback.Read(ctx, targetURL, opts)
 	if fbErr != nil || !fallback.OK {
-		if result.Warning == "" {
-			result.Warning = fmt.Sprintf("firecrawl fallback failed: %v", firstNonNilError(fbErr, errorsFromReadResult(fallback)))
-		}
+		result.Warning = appendReadWarning(result.Warning, fmt.Sprintf("firecrawl fallback failed: %v", firstNonNilError(fbErr, errorsFromReadResult(fallback))))
 		return result, err
 	}
-	if fallback.Warning == "" {
-		fallback.Warning = "static backend weak; used firecrawl"
-	} else {
-		fallback.Warning = "static backend weak; used firecrawl; " + fallback.Warning
+	if weakReason == "" {
+		weakReason = "unknown"
 	}
+	fallback.Warning = appendReadWarning(fallback.Warning, fmt.Sprintf("static backend weak (%s); used firecrawl", weakReason))
 	return fallback, nil
 }
 
@@ -160,6 +160,7 @@ func (b *StaticReadBackend) Read(ctx context.Context, targetURL string, _ ReadOp
 	case !isReadableWebContentType(result.ContentType):
 		result.Error = "unsupported content type: " + result.ContentType
 	}
+	result = annotateStaticReadQuality(result, rawHTML)
 	return result, nil
 }
 
@@ -335,7 +336,160 @@ func (f *FirecrawlReadBackend) Read(ctx context.Context, targetURL string, _ Rea
 }
 
 func isWeakReadResult(result ReadResult) bool {
-	return !result.OK || (strings.TrimSpace(result.Text) == "" && strings.TrimSpace(result.Markdown) == "")
+	return readWeakReason(result) != ""
+}
+
+func readWeakReason(result ReadResult) string {
+	if !result.OK {
+		if strings.TrimSpace(result.Error) != "" {
+			return "fetch_failed"
+		}
+		return "not_ok"
+	}
+	if result.Metadata != nil {
+		if reason, _ := result.Metadata[readWeakReasonMetadataKey].(string); strings.TrimSpace(reason) != "" {
+			return strings.TrimSpace(reason)
+		}
+	}
+	if strings.TrimSpace(result.Text) == "" && strings.TrimSpace(result.Markdown) == "" {
+		return "empty_content"
+	}
+	return ""
+}
+
+func annotateStaticReadQuality(result ReadResult, rawHTML string) ReadResult {
+	if !result.OK {
+		return result
+	}
+	reason := staticReadWeakReason(result, rawHTML)
+	if reason == "" {
+		return result
+	}
+	if result.Metadata == nil {
+		result.Metadata = map[string]any{}
+	}
+	result.Metadata[readWeakReasonMetadataKey] = reason
+	result.Warning = appendReadWarning(result.Warning, "static backend weak: "+reason)
+	return result
+}
+
+func staticReadWeakReason(result ReadResult, rawHTML string) string {
+	visibleText := htmlVisibleText(rawHTML)
+	text := strings.ToLower(strings.Join([]string{visibleText, result.Markdown}, " "))
+	html := strings.ToLower(rawHTML)
+
+	switch {
+	case readContainsAny(text,
+		"checking if the site connection is secure",
+		"checking your browser",
+		"access denied",
+		"attention required",
+		"captcha",
+		"cf-challenge",
+	) || readContainsAny(html, "cf-challenge", "g-recaptcha"):
+		return "access_challenge"
+	case readContainsAny(text,
+		"sign in to continue",
+		"log in to continue",
+		"login required",
+		"please log in",
+		"please login",
+		"subscribe to continue",
+	):
+		return "login_required"
+	case readContainsAny(text,
+		"enable javascript",
+		"javascript is disabled",
+		"requires javascript",
+		"please enable js",
+	):
+		return "javascript_required"
+	case looksLikeJSShell(visibleText, rawHTML):
+		return "javascript_app_shell"
+	default:
+		return ""
+	}
+}
+
+func htmlVisibleText(htmlContent string) string {
+	z := html.NewTokenizer(strings.NewReader(htmlContent))
+	var out strings.Builder
+	skipDepth := 0
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return strings.TrimSpace(out.String())
+		case html.TextToken:
+			if skipDepth > 0 {
+				continue
+			}
+			text := collapseWhitespace(string(z.Text()))
+			if text == "" {
+				continue
+			}
+			if out.Len() > 0 {
+				out.WriteByte(' ')
+			}
+			out.WriteString(text)
+		case html.StartTagToken:
+			if isNonVisibleTag(z) {
+				skipDepth++
+			}
+		case html.EndTagToken:
+			if skipDepth > 0 && isNonVisibleTag(z) {
+				skipDepth--
+			}
+		}
+	}
+}
+
+func isNonVisibleTag(z *html.Tokenizer) bool {
+	name, _ := z.TagName()
+	switch strings.ToLower(string(name)) {
+	case "script", "style", "noscript":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeJSShell(text, rawHTML string) bool {
+	html := strings.ToLower(rawHTML)
+	if strings.Count(html, "<script") < 2 {
+		return false
+	}
+	if !(readContainsAny(html, `id="root"`, `id='root'`, `id="app"`, `id='app'`, `data-reactroot`, "__next")) {
+		return false
+	}
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) == 0 {
+		return true
+	}
+	if len(trimmed) > 200 {
+		return false
+	}
+	return readContainsAny(strings.ToLower(trimmed), "loading", "please wait", "app")
+}
+
+func readContainsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendReadWarning(existing, addition string) string {
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return existing
+	}
+	existing = strings.TrimSpace(existing)
+	if existing == "" {
+		return addition
+	}
+	return existing + "; " + addition
 }
 
 func isReadableWebContentType(contentType string) bool {

@@ -179,6 +179,146 @@ func TestAutoReadBackendFallsBackToFirecrawlWhenStaticWeak(t *testing.T) {
 	}
 }
 
+func TestAutoReadBackendFallsBackWhenStaticLooksLikeJSShell(t *testing.T) {
+	appShell := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html>
+			<head><title>App</title><script src="/runtime.js"></script><script src="/app.js"></script></head>
+			<body><div id="root">Loading...</div></body>
+		</html>`))
+	}))
+	defer appShell.Close()
+
+	firecrawl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"data": {
+				"markdown": "Rendered article text",
+				"html": "<main>Rendered article html</main>",
+				"metadata": {"title": "Rendered", "sourceURL": "https://example.com/rendered", "statusCode": 200}
+			}
+		}`))
+	}))
+	defer firecrawl.Close()
+
+	backend, err := NewReadBackend(&core.WebConfig{
+		ReadBackend:  "auto",
+		FirecrawlKey: "fc-test",
+		FirecrawlURL: firecrawl.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewReadBackend: %v", err)
+	}
+	result, err := backend.Read(context.Background(), appShell.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if result.Backend != "firecrawl" || !result.OK {
+		t.Fatalf("result = %+v, want firecrawl fallback", result)
+	}
+	if !strings.Contains(result.Warning, "javascript_app_shell") {
+		t.Fatalf("warning = %q, want weak reason", result.Warning)
+	}
+}
+
+func TestAutoReadBackendReportsWeakStaticWhenNoFallback(t *testing.T) {
+	appShell := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html>
+			<head><title>App</title><script src="/runtime.js"></script><script src="/app.js"></script></head>
+			<body><div id="app">Loading...</div></body>
+		</html>`))
+	}))
+	defer appShell.Close()
+
+	backend, err := NewReadBackend(&core.WebConfig{ReadBackend: "auto"})
+	if err != nil {
+		t.Fatalf("NewReadBackend: %v", err)
+	}
+	result, err := backend.Read(context.Background(), appShell.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !result.OK || result.Backend != "static" {
+		t.Fatalf("result = %+v, want static HTTP success with weak warning", result)
+	}
+	if !strings.Contains(result.Warning, "javascript_app_shell") {
+		t.Fatalf("warning = %q, want weak reason", result.Warning)
+	}
+	if got, _ := result.Metadata["weak_reason"].(string); got != "javascript_app_shell" {
+		t.Fatalf("weak_reason = %q, want javascript_app_shell", got)
+	}
+}
+
+func TestAutoReadBackendReportsWeakStaticForInlineScriptAppShell(t *testing.T) {
+	appShell := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html>
+			<head>
+				<title>App</title>
+				<script>window.__BOOTSTRAP__ = "` + strings.Repeat("x", 600) + `";</script>
+				<script>window.__ROUTES__ = ["home","feed","profile"];</script>
+			</head>
+			<body><div id="root">Loading...</div></body>
+		</html>`))
+	}))
+	defer appShell.Close()
+
+	backend, err := NewReadBackend(&core.WebConfig{ReadBackend: "auto"})
+	if err != nil {
+		t.Fatalf("NewReadBackend: %v", err)
+	}
+	result, err := backend.Read(context.Background(), appShell.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !result.OK || result.Backend != "static" {
+		t.Fatalf("result = %+v, want static HTTP success with weak warning", result)
+	}
+	if got, _ := result.Metadata["weak_reason"].(string); got != "javascript_app_shell" {
+		t.Fatalf("weak_reason = %q, want javascript_app_shell; text len=%d text=%q", got, len(result.Text), result.Text)
+	}
+}
+
+func TestStaticReadBackendAnnotatesAccessChallenge(t *testing.T) {
+	challenge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><title>Blocked</title></head><body>Checking if the site connection is secure. Enable JavaScript and cookies to continue.</body></html>`))
+	}))
+	defer challenge.Close()
+
+	result, err := (&StaticReadBackend{}).Read(context.Background(), challenge.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("result = %+v, want HTTP success with weak warning", result)
+	}
+	if got, _ := result.Metadata["weak_reason"].(string); got != "access_challenge" {
+		t.Fatalf("weak_reason = %q, want access_challenge", got)
+	}
+}
+
+func TestStaticReadBackendLeavesNormalPageUnmarked(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><title>Article</title></head><body><main>This article has enough readable text to be useful without browser rendering. It includes several sentences, concrete details, and no login or JavaScript challenge.</main></body></html>`))
+	}))
+	defer page.Close()
+
+	result, err := (&StaticReadBackend{}).Read(context.Background(), page.URL, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !result.OK || result.Warning != "" {
+		t.Fatalf("result = %+v, want normal static page without warning", result)
+	}
+	if got := result.Metadata["weak_reason"]; got != nil {
+		t.Fatalf("weak_reason = %v, want none", got)
+	}
+}
+
 func TestExecuteHTTPWebFetchUsesConfiguredFirecrawlReadBackend(t *testing.T) {
 	firecrawl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
