@@ -49,6 +49,13 @@ func (s *Server) enqueueChannelEvent(ctx context.Context, job channelEventJob) {
 			"account", job.event.AccountID,
 			"chat_id", job.payload.ChatID,
 		)
+		s.publishAccountEvent(job.event.AccountID, AccountEvent{
+			Type:           EventStreamTurnRejected,
+			Channel:        string(job.event.Type),
+			ConversationID: job.payload.ConversationID,
+			ChatID:         job.payload.ChatID,
+			ErrorClass:     "channel_queue_full",
+		})
 		s.sendOrQueueChannelFailure(ctx, job, channelQueueOverflowResponse)
 	}
 }
@@ -141,7 +148,17 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		slog.Warn("channel event: no channel for response routing, enqueuing for retry",
 			"type", job.event.Type, "account", job.event.AccountID)
 		if job.event.Type != core.EventKakaoTalk {
-			_ = s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, response)
+			if err := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, response); err != nil {
+				slog.Error("channel event: enqueue response failed", "error", err)
+				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryFailed, job.event.Type, job.payload.ChatID, map[string]string{
+					"error_class": "enqueue_failed",
+					"reason":      "channel_not_running",
+				})
+			} else {
+				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
+					"reason": "channel_not_running",
+				})
+			}
 		}
 		return
 	}
@@ -156,6 +173,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		} else {
 			pendingID = id
 			pendingQueued = true
+			publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, nil)
 		}
 	}
 	if err := sendChannelResponse(ctx, job.ch, job.payload.ChatID, outbound, job.payload.ReplyToMessageID); err != nil {
@@ -168,8 +186,15 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 		if job.event.Type != core.EventKakaoTalk && !pendingQueued {
 			if qErr := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, outbound.Text); qErr != nil {
 				slog.Error("channel event: enqueue response failed", "error", qErr)
+			} else {
+				publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
+					"reason": "send_failed",
+				})
 			}
 		}
+		publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryFailed, job.event.Type, job.payload.ChatID, map[string]string{
+			"error_class": "send_failed",
+		})
 		return
 	}
 	if pendingQueued {
@@ -181,6 +206,7 @@ func (s *Server) processChannelEvent(ctx context.Context, key string, job channe
 				"error", err,
 			)
 		}
+		publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryDelivered, job.event.Type, job.payload.ChatID, nil)
 	}
 }
 
@@ -214,7 +240,11 @@ func (s *Server) sendOrQueueChannelFailure(ctx context.Context, job channelEvent
 	}
 	if qErr := s.store.EnqueueResponse(job.event.AccountID, string(job.event.Type), job.payload.ChatID, message); qErr != nil {
 		slog.Error("channel event: enqueue failure response failed", "error", qErr)
+		return
 	}
+	publishDeliveryEvent(s, job.event.AccountID, EventStreamDeliveryQueued, job.event.Type, job.payload.ChatID, map[string]string{
+		"reason": "failure_response",
+	})
 }
 
 func (s *Server) channelTurnTimeoutDuration() time.Duration {

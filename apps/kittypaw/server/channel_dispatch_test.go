@@ -418,6 +418,61 @@ func TestDispatchLoop_PersistsResponseBeforeSending(t *testing.T) {
 	t.Fatal("pending response row was not removed after successful send")
 }
 
+func TestProcessChannelEventDoesNotEmitQueuedWhenEnqueueFails(t *testing.T) {
+	root := t.TempDir()
+	deps := buildAccountDeps(t, root, "alice", &core.Config{})
+	srv := New([]*AccountDeps{deps}, "test", "alice")
+	sub := srv.eventStream.Subscribe("alice")
+	defer sub.Close()
+
+	if err := srv.store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	event := dispatchTestEvent(t, core.EventTelegram, "alice", "alice-chat", "/help")
+	payload, err := event.ParsePayload()
+	if err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	srv.processChannelEvent(context.Background(), "test-worker", channelEventJob{
+		event:   event,
+		payload: payload,
+		runtime: srv.accounts.Runtime("alice"),
+		chOK:    false,
+	})
+
+	events := collectAccountEvents(sub.events, 100*time.Millisecond)
+	var sawQueued, sawFailed bool
+	for _, event := range events {
+		switch event.Type {
+		case EventStreamDeliveryQueued:
+			sawQueued = true
+		case EventStreamDeliveryFailed:
+			sawFailed = true
+		}
+	}
+	if sawQueued {
+		t.Fatalf("events = %+v, must not include delivery.queued after enqueue failure", events)
+	}
+	if !sawFailed {
+		t.Fatalf("events = %+v, want delivery.failed after enqueue failure", events)
+	}
+}
+
+func collectAccountEvents(ch <-chan AccountEvent, wait time.Duration) []AccountEvent {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	var events []AccountEvent
+	for {
+		select {
+		case event := <-ch:
+			events = append(events, event)
+		case <-timer.C:
+			return events
+		}
+	}
+}
+
 func TestDispatchLoop_SuppressesNormalReplyAfterDirectNotifySend(t *testing.T) {
 	root := t.TempDir()
 	cfg := core.DefaultConfig()

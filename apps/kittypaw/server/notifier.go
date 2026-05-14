@@ -66,14 +66,26 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		if channelType == core.EventKakaoTalk {
 			return fmt.Errorf("delivery channel %s is not running", channelType)
 		}
-		return s.store.EnqueueResponse(accountID, string(channelType), chatID, text)
+		if err := s.store.EnqueueResponse(accountID, string(channelType), chatID, text); err != nil {
+			return err
+		}
+		publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
+			"reason": "spawner_unavailable",
+		})
+		return nil
 	}
 	ch, ok := s.spawner.GetChannel(accountID, channelType)
 	if !ok {
 		if channelType == core.EventKakaoTalk {
 			return fmt.Errorf("delivery channel %s is not running", channelType)
 		}
-		return s.store.EnqueueResponse(accountID, string(channelType), chatID, text)
+		if err := s.store.EnqueueResponse(accountID, string(channelType), chatID, text); err != nil {
+			return err
+		}
+		publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
+			"reason": "channel_not_running",
+		})
+		return nil
 	}
 
 	outbound := core.ParseOutboundResponse(text)
@@ -87,6 +99,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		} else {
 			pendingID = id
 			pendingQueued = true
+			publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, nil)
 		}
 	}
 
@@ -97,9 +110,18 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 			if qErr := s.store.EnqueueResponse(accountID, string(channelType), chatID, outbound.Text); qErr != nil {
 				return fmt.Errorf("send failed: %v; enqueue failed: %w", err, qErr)
 			}
+			publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
+				"reason": "send_failed",
+			})
+			publishDeliveryEvent(s, accountID, EventStreamDeliveryFailed, channelType, chatID, map[string]string{
+				"error_class": "send_failed",
+			})
 			return nil
 		}
 		if pendingQueued {
+			publishDeliveryEvent(s, accountID, EventStreamDeliveryFailed, channelType, chatID, map[string]string{
+				"error_class": "send_failed",
+			})
 			return nil
 		}
 		return err
@@ -110,6 +132,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 				"id", pendingID, "account", accountID, "channel", channelType,
 				"chat_id", chatID, "error", err)
 		}
+		publishDeliveryEvent(s, accountID, EventStreamDeliveryDelivered, channelType, chatID, nil)
 	}
 	return nil
 }

@@ -226,6 +226,7 @@ func (s *Server) rebuildRuntimeForConfigLocked(td *AccountDeps, old *engine.Acco
 		runtime.SetActiveModel(old.GetActiveModel())
 	}
 	s.attachRuntimeNotifier(td.Account.ID, runtime)
+	s.attachRuntimeEventSink(td.Account.ID, runtime)
 
 	if roots := td.Account.Config.WorkspaceRoots(); len(roots) > 0 {
 		if err := td.Store.SeedWorkspaceRootsFromConfig(roots); err != nil {

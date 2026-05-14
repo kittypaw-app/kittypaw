@@ -105,6 +105,7 @@ func (s *Server) AddAccount(t *core.Account) error {
 
 	sess := buildAccountRuntime(td, s.accountRegistry, s.eventCh)
 	s.attachRuntimeNotifier(t.ID, sess)
+	s.attachRuntimeEventSink(t.ID, sess)
 
 	s.accountRegistry.Register(t)
 	rollback = append(rollback, func() { s.accountRegistry.Unregister(t.ID) })

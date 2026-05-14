@@ -153,6 +153,7 @@ type AccountRuntime struct {
 	ServiceTokenMgr   *core.ServiceTokenManager // nil when external OAuth services are not configured
 	ProjectJobRuntime *ProjectJobRuntime
 	Notifier          Notifier                 // nil when outbound delivery is not wired (bare engine tests/CLI)
+	EventSink         RuntimeEventSink         // nil when runtime lifecycle streaming is not wired
 	Admission         *RuntimeAdmission        // nil disables account runtime admission (bare tests/CLI)
 	allowedPaths      atomic.Pointer[[]string] // cached workspace paths for isPathAllowed
 
@@ -385,20 +386,34 @@ func admissionClassForEvent(event core.Event) AdmissionClass {
 }
 
 // Run processes a single event through the runner loop.
-func (s *AccountRuntime) Run(ctx context.Context, event core.Event, opts *RunOptions) (string, error) {
+func (s *AccountRuntime) Run(ctx context.Context, event core.Event, opts *RunOptions) (response string, err error) {
+	runEvent := s.runtimeRunEvent(event)
 	var admissionLease *RuntimeAdmissionLease
-	var err error
 	ctx, admissionLease, err = s.acquireTurnAdmission(ctx, event)
 	if err != nil {
+		s.publishRuntimeEvent(ctx, runtimeRunEventWithError(runEvent, RuntimeEventTurnRejected, err))
 		return "", err
 	}
 	defer admissionLease.Release()
+	s.publishRuntimeEvent(ctx, runtimeRunEventWithError(runEvent, RuntimeEventTurnStarted, nil))
+	defer func() {
+		if p := recover(); p != nil {
+			s.publishRuntimeEvent(ctx, runtimeRunEventWithError(runEvent, RuntimeEventTurnFailed, fmt.Errorf("panic: %v", p)))
+			panic(p)
+		}
+		if err != nil {
+			s.publishRuntimeEvent(ctx, runtimeRunEventWithError(runEvent, RuntimeEventTurnFailed, err))
+			return
+		}
+		s.publishRuntimeEvent(ctx, runtimeRunEventWithError(runEvent, RuntimeEventTurnFinished, nil))
+	}()
 
 	eventText := FormatEvent(&event)
 	ctx = ContextWithEvent(ctx, &event)
 	ctx = ContextWithConversationID(ctx, conversationKeyForEvent(s, &event))
 	if opts != nil && opts.ForceAgentLoop {
-		return s.runAgentLoop(ctx, event, eventText, opts)
+		response, err = s.runAgentLoop(ctx, event, eventText, opts)
+		return response, err
 	}
 
 	// Fast path: slash commands
@@ -456,7 +471,8 @@ func (s *AccountRuntime) Run(ctx context.Context, event core.Event, opts *RunOpt
 		return response, nil
 	}
 
-	return s.runAgentLoop(ctx, event, eventText, opts)
+	response, err = s.runAgentLoop(ctx, event, eventText, opts)
+	return response, err
 }
 
 // followupQueryRuneCap caps the rune length of a "short follow-up" —

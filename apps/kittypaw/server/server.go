@@ -39,7 +39,8 @@ type Server struct {
 	accountList        []*core.Account       // ordered account metadata for startup validation
 	accountRegistry    *core.AccountRegistry // shared cross-account registry (Share.read / Fanout)
 	eventCh            chan core.Event       // shared event channel between channels and dispatch loop
-	accountMu          sync.Mutex            // serializes AddAccount/RemoveAccount — validation→register→reconcile must not interleave
+	eventStream        *eventStreamBroker
+	accountMu          sync.Mutex // serializes AddAccount/RemoveAccount — validation→register→reconcile must not interleave
 	channelWorkersMu   sync.Mutex
 	channelWorkers     map[string]*channelEventWorker
 	channelTurnTimeout time.Duration
@@ -136,6 +137,7 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 		accountList:     accountList,
 		accountRegistry: registry,
 		eventCh:         eventCh,
+		eventStream:     newEventStreamBroker(),
 		channelWorkers:  make(map[string]*channelEventWorker),
 		accountDeps:     depsByID,
 		removingAccount: make(map[string]bool),
@@ -151,6 +153,7 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 			continue
 		}
 		s.attachRuntimeNotifier(td.Account.ID, router.Runtime(td.Account.ID))
+		s.attachRuntimeEventSink(td.Account.ID, router.Runtime(td.Account.ID))
 	}
 	s.router = s.setupRoutes()
 	return s
@@ -552,6 +555,11 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 		})
 	})
 
+	// Account-scoped live observability. Keep SSE outside the request timeout:
+	// the stream is bounded by the client connection and heartbeat, not the
+	// ordinary API request deadline.
+	r.Get("/api/v1/events", s.handleEvents)
+
 	// WebSocket sits outside /api/v1 — auth is done via query param or header.
 	// Keep it outside the HTTP request timeout middleware: local LLM turns can
 	// legitimately run longer than 60s, while wsMaxLifetime + heartbeat still
@@ -728,6 +736,12 @@ func (s *Server) dispatchLoop(ctx context.Context) {
 				"chat_id", payload.ChatID,
 				"from", payload.FromName,
 			)
+			s.publishAccountEvent(event.AccountID, AccountEvent{
+				Type:           EventStreamChannelReceived,
+				Channel:        string(event.Type),
+				ConversationID: payload.ConversationID,
+				ChatID:         payload.ChatID,
+			})
 
 			// Build base RunOptions with Confirmer-based permission callback if available.
 			// Chat active-model overrides are folded by the worker after dequeue.
