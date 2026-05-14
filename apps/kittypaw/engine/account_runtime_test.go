@@ -174,6 +174,63 @@ func TestResolveStaffName_ChannelBinding(t *testing.T) {
 	}
 }
 
+func TestResolveStaffForEvent_SourceRouteBeatsChannelBinding(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.Staff = []core.StaffConfig{
+		{ID: "tg-bot", Nick: "TG", Channels: []string{"telegram"}},
+	}
+	st := openTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "tg-bot", "", "telegram staff")
+	seedActiveStaffFile(t, baseDir, "ops-bot", "", "ops staff")
+	if _, err := st.UpsertStaffSourceRoute(store.UpsertStaffSourceRouteRequest{
+		SourceChannel: "telegram",
+		MatchField:    store.StaffSourceMatchChatID,
+		PatternKind:   store.StaffSourcePatternExact,
+		Pattern:       "chat-ops",
+		StaffID:       "ops-bot",
+	}); err != nil {
+		t.Fatalf("UpsertStaffSourceRoute: %v", err)
+	}
+	event := chatEventForStaffRoute(t, core.EventTelegram, "chat-ops", "user-1")
+
+	got := ResolveStaffNameForEvent(&cfg, event, "general:telegram:chat-ops", "", st, baseDir)
+	if got != "ops-bot" {
+		t.Fatalf("ResolveStaffNameForEvent = %q, want ops-bot", got)
+	}
+}
+
+func TestResolveStaffForEvent_ConversationDefaultBeatsSourceRoute(t *testing.T) {
+	cfg := core.DefaultConfig()
+	st := openTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "conv-bot", "", "conversation staff")
+	seedActiveStaffFile(t, baseDir, "ops-bot", "", "ops staff")
+	conv, err := st.CreateConversation(store.CreateConversationRequest{
+		ScopeType:      "general",
+		ScopeID:        "conv-staff-thread",
+		DefaultStaffID: "conv-bot",
+	})
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if _, err := st.UpsertStaffSourceRoute(store.UpsertStaffSourceRouteRequest{
+		SourceChannel: "telegram",
+		MatchField:    store.StaffSourceMatchChatID,
+		PatternKind:   store.StaffSourcePatternExact,
+		Pattern:       "chat-ops",
+		StaffID:       "ops-bot",
+	}); err != nil {
+		t.Fatalf("UpsertStaffSourceRoute: %v", err)
+	}
+	event := chatEventForStaffRoute(t, core.EventTelegram, "chat-ops", "user-1")
+
+	got := ResolveStaffNameForEvent(&cfg, event, conv.ID, "", st, baseDir)
+	if got != "conv-bot" {
+		t.Fatalf("ResolveStaffNameForEvent = %q, want conv-bot", got)
+	}
+}
+
 func TestResolveStaffName_Default(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.DefaultStaff = "my-default"
@@ -191,6 +248,19 @@ func TestResolveStaffName_NilStore(t *testing.T) {
 	if got != cfg.DefaultStaff {
 		t.Errorf("got %q, want %q", got, cfg.DefaultStaff)
 	}
+}
+
+func chatEventForStaffRoute(t *testing.T, eventType core.EventType, chatID, sessionID string) *core.Event {
+	t.Helper()
+	raw, err := json.Marshal(core.ChatPayload{
+		ChatID:          chatID,
+		SourceSessionID: sessionID,
+		Text:            "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &core.Event{Type: eventType, Payload: raw}
 }
 
 // --- T5: Staff.switch integration ---

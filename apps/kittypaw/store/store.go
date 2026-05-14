@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -96,6 +97,39 @@ type ConversationRoute struct {
 	ChatID          string `json:"chat_id,omitempty"`
 	CreatedAt       string `json:"created_at,omitempty"`
 	UpdatedAt       string `json:"updated_at,omitempty"`
+}
+
+const (
+	StaffSourceMatchChatID          = "chat_id"
+	StaffSourceMatchSourceSessionID = "source_session_id"
+
+	StaffSourcePatternExact  = "exact"
+	StaffSourcePatternPrefix = "prefix"
+	StaffSourcePatternGlob   = "glob"
+)
+
+type StaffSourceRoute struct {
+	ID            int64  `json:"id"`
+	SourceChannel string `json:"source_channel"`
+	MatchField    string `json:"match_field"`
+	PatternKind   string `json:"pattern_kind"`
+	Pattern       string `json:"pattern"`
+	StaffID       string `json:"staff_id"`
+	Priority      int    `json:"priority"`
+	Enabled       bool   `json:"enabled"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+type UpsertStaffSourceRouteRequest struct {
+	ID            int64
+	SourceChannel string
+	MatchField    string
+	PatternKind   string
+	Pattern       string
+	StaffID       string
+	Priority      int
+	Enabled       *bool
 }
 
 type CreateRolloverConversationRequest struct {
@@ -866,6 +900,182 @@ func (s *Store) ConversationRoute(routeKey string) (*ConversationRoute, bool, er
 		return nil, false, err
 	}
 	return &route, true, nil
+}
+
+func (s *Store) UpsertStaffSourceRoute(req UpsertStaffSourceRouteRequest) (*StaffSourceRoute, error) {
+	sourceChannel := strings.TrimSpace(req.SourceChannel)
+	matchField := strings.TrimSpace(req.MatchField)
+	patternKind := strings.TrimSpace(req.PatternKind)
+	pattern := strings.TrimSpace(req.Pattern)
+	staffID := strings.TrimSpace(req.StaffID)
+	if sourceChannel == "" {
+		return nil, errors.New("source channel is required")
+	}
+	if !isValidStaffSourceMatchField(matchField) {
+		return nil, errors.New("match field must be chat_id or source_session_id")
+	}
+	if !isValidStaffSourcePatternKind(patternKind) {
+		return nil, errors.New("pattern kind must be exact, prefix, or glob")
+	}
+	if pattern == "" {
+		return nil, errors.New("pattern is required")
+	}
+	if patternKind == StaffSourcePatternGlob {
+		if _, err := path.Match(pattern, ""); err != nil {
+			return nil, fmt.Errorf("pattern: %w", err)
+		}
+	}
+	if err := core.ValidateStaffID(staffID); err != nil {
+		return nil, fmt.Errorf("staff id: %w", err)
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+
+	var id int64
+	if req.ID > 0 {
+		result, err := s.db.Exec(`
+			UPDATE staff_source_routes
+			SET source_channel = ?,
+			    match_field = ?,
+			    pattern_kind = ?,
+			    pattern = ?,
+			    staff_id = ?,
+			    priority = ?,
+			    enabled = ?,
+			    updated_at = datetime('now')
+			WHERE id = ?`,
+			sourceChannel, matchField, patternKind, pattern, staffID, req.Priority, enabledInt, req.ID)
+		if err != nil {
+			return nil, err
+		}
+		if rows, err := result.RowsAffected(); err != nil {
+			return nil, err
+		} else if rows == 0 {
+			return nil, fmt.Errorf("staff source route %d not found", req.ID)
+		}
+		id = req.ID
+	} else {
+		if err := s.db.QueryRow(`
+			INSERT INTO staff_source_routes (
+				source_channel, match_field, pattern_kind, pattern, staff_id,
+				priority, enabled, created_at, updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+			ON CONFLICT(source_channel, match_field, pattern_kind, pattern) DO UPDATE SET
+				staff_id = excluded.staff_id,
+				priority = excluded.priority,
+				enabled = excluded.enabled,
+				updated_at = datetime('now')
+			RETURNING id`,
+			sourceChannel, matchField, patternKind, pattern, staffID, req.Priority, enabledInt).Scan(&id); err != nil {
+			return nil, err
+		}
+	}
+	route, ok, err := s.StaffSourceRoute(id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("staff source route %d not found after save", id)
+	}
+	return route, nil
+}
+
+func (s *Store) StaffSourceRoute(id int64) (*StaffSourceRoute, bool, error) {
+	if id <= 0 {
+		return nil, false, nil
+	}
+	row := s.db.QueryRow(`
+		SELECT id, source_channel, match_field, pattern_kind, pattern, staff_id,
+		       priority, enabled, created_at, updated_at
+		FROM staff_source_routes
+		WHERE id = ?`, id)
+	return scanStaffSourceRoute(row)
+}
+
+func (s *Store) ListStaffSourceRoutes() ([]StaffSourceRoute, error) {
+	rows, err := s.db.Query(`
+		SELECT id, source_channel, match_field, pattern_kind, pattern, staff_id,
+		       priority, enabled, created_at, updated_at
+		FROM staff_source_routes
+		ORDER BY source_channel ASC, priority DESC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanStaffSourceRouteRows(rows)
+}
+
+func (s *Store) ListStaffSourceRoutesForChannel(sourceChannel string) ([]StaffSourceRoute, error) {
+	sourceChannel = strings.TrimSpace(sourceChannel)
+	if sourceChannel == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT id, source_channel, match_field, pattern_kind, pattern, staff_id,
+		       priority, enabled, created_at, updated_at
+		FROM staff_source_routes
+		WHERE source_channel = ? AND enabled = 1
+		ORDER BY priority DESC, id ASC`, sourceChannel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanStaffSourceRouteRows(rows)
+}
+
+func (s *Store) DeleteStaffSourceRoute(id int64) error {
+	if id <= 0 {
+		return errors.New("staff source route id is required")
+	}
+	_, err := s.db.Exec(`DELETE FROM staff_source_routes WHERE id = ?`, id)
+	return err
+}
+
+func scanStaffSourceRoute(row interface {
+	Scan(dest ...any) error
+}) (*StaffSourceRoute, bool, error) {
+	var route StaffSourceRoute
+	var enabled int
+	err := row.Scan(
+		&route.ID, &route.SourceChannel, &route.MatchField, &route.PatternKind,
+		&route.Pattern, &route.StaffID, &route.Priority, &enabled,
+		&route.CreatedAt, &route.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	route.Enabled = enabled != 0
+	return &route, true, nil
+}
+
+func scanStaffSourceRouteRows(rows *sql.Rows) ([]StaffSourceRoute, error) {
+	var out []StaffSourceRoute
+	for rows.Next() {
+		route, _, err := scanStaffSourceRoute(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *route)
+	}
+	return out, rows.Err()
+}
+
+func isValidStaffSourceMatchField(field string) bool {
+	return field == StaffSourceMatchChatID || field == StaffSourceMatchSourceSessionID
+}
+
+func isValidStaffSourcePatternKind(kind string) bool {
+	return kind == StaffSourcePatternExact || kind == StaffSourcePatternPrefix || kind == StaffSourcePatternGlob
 }
 
 func (s *Store) CreateRolloverConversation(req CreateRolloverConversationRequest) (*ConversationRecord, error) {

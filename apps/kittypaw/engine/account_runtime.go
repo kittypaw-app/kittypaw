@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -724,7 +725,7 @@ func stripBranchControlMarker(response string) string {
 func (s *AccountRuntime) recordPipelineTurn(event core.Event, eventText, response string) error {
 	convKey := conversationKeyForEvent(s, &event)
 	meta := conversationTurnSource(&event)
-	staffID := ResolveStaffName(s.Config, event.Type.ChannelName(), convKey, "", s.Store, s.BaseDir)
+	staffID := ResolveStaffNameForEvent(s.Config, &event, convKey, "", s.Store, s.BaseDir)
 	state, err := s.loadConversationStateForRun(convKey)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
@@ -874,7 +875,7 @@ func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, raw
 	// persisted turns and its runtime policy applies to prompt/tool execution.
 	staffID := staffOverride
 	if staffID == "" {
-		staffID = ResolveStaffName(s.Config, channelName, convKey, mentionOverride, s.Store, s.BaseDir)
+		staffID = ResolveStaffNameForEvent(s.Config, &event, convKey, mentionOverride, s.Store, s.BaseDir)
 	}
 	staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
 	runCtx := ContextWithStaffPolicy(ctx, staffID, staff.AllowedSkills)
@@ -1402,6 +1403,35 @@ func ResolveStaffName(
 	st *store.Store,
 	baseDir string,
 ) string {
+	return resolveStaffName(config, channelType, nil, conversationID, mentionOverride, st, baseDir)
+}
+
+// ResolveStaffNameForEvent resolves staff with source-specific route rules.
+// Priority: mentionOverride > conversation default > source route > legacy account override > channel binding > default.
+func ResolveStaffNameForEvent(
+	config *core.Config,
+	event *core.Event,
+	conversationID string,
+	mentionOverride string,
+	st *store.Store,
+	baseDir string,
+) string {
+	channelType := ""
+	if event != nil {
+		channelType = event.Type.ChannelName()
+	}
+	return resolveStaffName(config, channelType, event, conversationID, mentionOverride, st, baseDir)
+}
+
+func resolveStaffName(
+	config *core.Config,
+	channelType string,
+	event *core.Event,
+	conversationID string,
+	mentionOverride string,
+	st *store.Store,
+	baseDir string,
+) string {
 	// 1. @mention override (highest priority).
 	if mentionOverride != "" {
 		return mentionOverride
@@ -1417,14 +1447,19 @@ func ResolveStaffName(
 		return val
 	}
 
-	// 3. Legacy account-wide staff from older Staff.switch or /staff use paths.
+	// 3. Source route from channel/chat/session metadata.
+	if val, ok := sourceRouteStaff(base, st, event); ok {
+		return val
+	}
+
+	// 4. Legacy account-wide staff from older Staff.switch or /staff use paths.
 	if st != nil {
 		if val, ok, err := st.ConversationStaff(); err == nil && ok && val != "" && core.StaffHasSoul(base, val) {
 			return val
 		}
 	}
 
-	// 4. Channel binding from config.
+	// 5. Channel binding from config.
 	for _, sc := range config.Staff {
 		for _, ch := range sc.Channels {
 			if ch == channelType && core.StaffHasSoul(base, sc.ID) {
@@ -1433,11 +1468,79 @@ func ResolveStaffName(
 		}
 	}
 
-	// 5. Default staff.
+	// 6. Default staff.
 	if config.DefaultStaff != "" {
 		return config.DefaultStaff
 	}
 	return "default"
+}
+
+func sourceRouteStaff(base string, st *store.Store, event *core.Event) (string, bool) {
+	route, ok := matchedStaffSourceRoute(base, st, event)
+	if !ok {
+		return "", false
+	}
+	return route.StaffID, true
+}
+
+func matchedStaffSourceRoute(base string, st *store.Store, event *core.Event) (store.StaffSourceRoute, bool) {
+	if st == nil || event == nil {
+		return store.StaffSourceRoute{}, false
+	}
+	payload, err := event.ParsePayload()
+	if err != nil {
+		return store.StaffSourceRoute{}, false
+	}
+	for _, sourceChannel := range sourceRouteChannels(event.Type) {
+		routes, err := st.ListStaffSourceRoutesForChannel(sourceChannel)
+		if err != nil {
+			slog.Warn("staff source route lookup failed", "source_channel", sourceChannel, "error", err)
+			continue
+		}
+		for _, route := range routes {
+			if routeMatchesChatPayload(route, payload) && core.StaffHasSoul(base, route.StaffID) {
+				return route, true
+			}
+		}
+	}
+	return store.StaffSourceRoute{}, false
+}
+
+func sourceRouteChannels(eventType core.EventType) []string {
+	channelName := eventType.ChannelName()
+	raw := string(eventType)
+	if raw == "" || raw == channelName {
+		return []string{channelName}
+	}
+	return []string{channelName, raw}
+}
+
+func routeMatchesChatPayload(route store.StaffSourceRoute, payload core.ChatPayload) bool {
+	var value string
+	switch route.MatchField {
+	case store.StaffSourceMatchChatID:
+		value = payload.ChatID
+	case store.StaffSourceMatchSourceSessionID:
+		value = payload.SourceSessionID
+	default:
+		return false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	pattern := strings.TrimSpace(route.Pattern)
+	switch route.PatternKind {
+	case store.StaffSourcePatternExact:
+		return value == pattern
+	case store.StaffSourcePatternPrefix:
+		return strings.HasPrefix(value, pattern)
+	case store.StaffSourcePatternGlob:
+		ok, err := path.Match(pattern, value)
+		return err == nil && ok
+	default:
+		return false
+	}
 }
 
 // loadStaffForPrompt loads staff from disk and enriches it with config nick.

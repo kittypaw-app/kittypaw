@@ -30,8 +30,53 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 39 {
-		t.Fatalf("expected 39 migrations, got %d", count)
+	if count != 40 {
+		t.Fatalf("expected 40 migrations, got %d", count)
+	}
+}
+
+func TestStaffSourceRoutesUpsertListAndDelete(t *testing.T) {
+	st := openTestStore(t)
+
+	route, err := st.UpsertStaffSourceRoute(UpsertStaffSourceRouteRequest{
+		SourceChannel: "telegram",
+		MatchField:    StaffSourceMatchChatID,
+		PatternKind:   StaffSourcePatternExact,
+		Pattern:       "chat-ops",
+		StaffID:       "ops-bot",
+	})
+	if err != nil {
+		t.Fatalf("UpsertStaffSourceRoute: %v", err)
+	}
+	if route.ID == 0 || route.SourceChannel != "telegram" || route.MatchField != StaffSourceMatchChatID || route.StaffID != "ops-bot" {
+		t.Fatalf("route = %+v", route)
+	}
+
+	routes, err := st.ListStaffSourceRoutes()
+	if err != nil {
+		t.Fatalf("ListStaffSourceRoutes: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Pattern != "chat-ops" {
+		t.Fatalf("routes = %+v", routes)
+	}
+
+	channelRoutes, err := st.ListStaffSourceRoutesForChannel("telegram")
+	if err != nil {
+		t.Fatalf("ListStaffSourceRoutesForChannel: %v", err)
+	}
+	if len(channelRoutes) != 1 || channelRoutes[0].ID != route.ID {
+		t.Fatalf("channel routes = %+v, want route id %d", channelRoutes, route.ID)
+	}
+
+	if err := st.DeleteStaffSourceRoute(route.ID); err != nil {
+		t.Fatalf("DeleteStaffSourceRoute: %v", err)
+	}
+	routes, err = st.ListStaffSourceRoutes()
+	if err != nil {
+		t.Fatalf("ListStaffSourceRoutes after delete: %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("routes after delete = %+v, want empty", routes)
 	}
 }
 

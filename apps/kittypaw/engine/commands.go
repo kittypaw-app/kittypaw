@@ -84,7 +84,7 @@ var slashCommandRegistry = []slashCommand{
 	},
 	{
 		Name:    "/staff",
-		Usage:   "/staff <current|list|show|use|routes|route|hire|cancel>",
+		Usage:   "/staff <current|list|show|use|routes|route|source-routes|source-route|hire|cancel>",
 		Summary: "staff 상태 조회 및 전환",
 		Risk:    "mixed",
 		History: true,
@@ -95,6 +95,9 @@ var slashCommandRegistry = []slashCommand{
 			"/staff use <staff-id>",
 			"/staff routes",
 			"/staff route <conversation-id> <staff-id>",
+			"/staff source-routes",
+			"/staff source-route add <source> <chat_id|source_session_id> <exact|prefix|glob> <pattern> <staff-id>",
+			"/staff source-route delete <id>",
 			"/staff hire <역할>",
 			"/staff cancel",
 		},
@@ -348,8 +351,18 @@ func staffCommandRecordsHistory(args []string) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
-	case "current", "list", "show", "routes":
+	case "current", "list", "show", "routes", "source-routes":
 		return false
+	case "source-route":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(args[1])) {
+		case "list", "ls":
+			return false
+		default:
+			return true
+		}
 	default:
 		return true
 	}
@@ -1125,6 +1138,10 @@ func handleStaffCommand(ctx context.Context, args []string, s *AccountRuntime) s
 			return "사용법: /staff route <conversation-id> <staff-id|clear>"
 		}
 		return handleStaffRoute(args[1], strings.Join(args[2:], " "), s)
+	case "source-routes":
+		return handleStaffSourceRoutes(s)
+	case "source-route":
+		return handleStaffSourceRoute(args[1:], s)
 	case "hire":
 		if len(args) < 2 {
 			return "사용법: /staff hire <역할>"
@@ -1143,7 +1160,7 @@ func handleStaffOverview(ctx context.Context, s *AccountRuntime) string {
 	sb.WriteString(handleStaffCurrent(ctx, s))
 	sb.WriteString("\n\n")
 	sb.WriteString(handleStaffList(s))
-	sb.WriteString("\n\n명령어: /staff current | list | show <id> | use <id> | routes | route <conversation-id> <id> | hire <역할> | cancel")
+	sb.WriteString("\n\n명령어: /staff current | list | show <id> | use <id> | routes | route <conversation-id> <id> | source-routes | source-route add ... | hire <역할> | cancel")
 	return sb.String()
 }
 
@@ -1161,6 +1178,10 @@ func handleStaffCurrent(ctx context.Context, s *AccountRuntime) string {
 		base, _ := core.ResolveBaseDir(s.BaseDir)
 		if val, ok := conversationDefaultStaff(base, s.Store, conversationID); ok {
 			return fmt.Sprintf("current staff: %s (conversation:%s)", val, conversationID)
+		}
+		if route, ok := matchedStaffSourceRoute(base, s.Store, EventFromContext(ctx)); ok {
+			return fmt.Sprintf("current staff: %s (source-route:#%d %s %s %s %q)",
+				route.StaffID, route.ID, route.SourceChannel, route.MatchField, route.PatternKind, route.Pattern)
 		}
 		if val, ok, err := s.Store.ConversationStaff(); err == nil && ok && val != "" {
 			current = val
@@ -1274,6 +1295,149 @@ func handleStaffRoutes(s *AccountRuntime) string {
 		return "staff routes: 없음"
 	}
 	return out
+}
+
+func handleStaffSourceRoutes(s *AccountRuntime) string {
+	if s == nil || s.Store == nil {
+		return "staff source route 조회를 위한 저장소가 준비되지 않았습니다."
+	}
+	routes, err := s.Store.ListStaffSourceRoutes()
+	if err != nil {
+		return fmt.Sprintf("staff source route 조회 실패: %s", err)
+	}
+	if len(routes) == 0 {
+		return "staff source routes: 없음"
+	}
+	var sb strings.Builder
+	sb.WriteString("staff source routes:\n")
+	for _, route := range routes {
+		state := ""
+		if !route.Enabled {
+			state = " disabled"
+		}
+		fmt.Fprintf(&sb, "- #%d %s %s %s %q -> %s%s\n",
+			route.ID, route.SourceChannel, route.MatchField, route.PatternKind,
+			route.Pattern, route.StaffID, state)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleStaffSourceRoute(args []string, s *AccountRuntime) string {
+	if len(args) == 0 {
+		return staffSourceRouteUsage()
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "list", "ls":
+		return handleStaffSourceRoutes(s)
+	case "add", "set":
+		return handleStaffSourceRouteAdd(args[1:], s)
+	case "delete", "del", "remove", "rm":
+		if len(args) < 2 {
+			return "사용법: /staff source-route delete <id>"
+		}
+		return handleStaffSourceRouteDelete(args[1], s)
+	default:
+		return staffSourceRouteUsage()
+	}
+}
+
+func handleStaffSourceRouteAdd(args []string, s *AccountRuntime) string {
+	if s == nil || s.Store == nil {
+		return "staff source route 변경을 위한 저장소가 준비되지 않았습니다."
+	}
+	if len(args) < 5 {
+		return staffSourceRouteUsage()
+	}
+	sourceChannel := normalizeStaffSourceChannel(args[0])
+	matchField, ok := normalizeStaffSourceMatchField(args[1])
+	if !ok {
+		return "match field는 chat_id 또는 source_session_id여야 합니다."
+	}
+	patternKind, ok := normalizeStaffSourcePatternKind(args[2])
+	if !ok {
+		return "pattern kind는 exact, prefix, glob 중 하나여야 합니다."
+	}
+	pattern := strings.TrimSpace(args[3])
+	if pattern == "" {
+		return "pattern이 비어 있습니다."
+	}
+	staffRef := strings.Join(args[4:], " ")
+	base, err := core.ResolveBaseDir(s.BaseDir)
+	if err != nil {
+		return fmt.Sprintf("staff source route 변경 실패: %s", err)
+	}
+	staffID, ok, err := core.ResolveStaffReference(base, staffRef)
+	if err != nil {
+		return fmt.Sprintf("staff source route 변경 실패: %s", err)
+	}
+	if !ok {
+		return fmt.Sprintf("staff %q를 찾지 못했습니다.", strings.TrimSpace(staffRef))
+	}
+	route, err := s.Store.UpsertStaffSourceRoute(store.UpsertStaffSourceRouteRequest{
+		SourceChannel: sourceChannel,
+		MatchField:    matchField,
+		PatternKind:   patternKind,
+		Pattern:       pattern,
+		StaffID:       staffID,
+	})
+	if err != nil {
+		return fmt.Sprintf("staff source route 변경 실패: %s", err)
+	}
+	return fmt.Sprintf("staff source route #%d: %s %s %s %q -> %s",
+		route.ID, route.SourceChannel, route.MatchField, route.PatternKind, route.Pattern, route.StaffID)
+}
+
+func handleStaffSourceRouteDelete(idText string, s *AccountRuntime) string {
+	if s == nil || s.Store == nil {
+		return "staff source route 삭제를 위한 저장소가 준비되지 않았습니다."
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(idText), 10, 64)
+	if err != nil || id <= 0 {
+		return "staff source route id가 올바르지 않습니다."
+	}
+	if err := s.Store.DeleteStaffSourceRoute(id); err != nil {
+		return fmt.Sprintf("staff source route 삭제 실패: %s", err)
+	}
+	return fmt.Sprintf("staff source route #%d를 삭제했습니다.", id)
+}
+
+func staffSourceRouteUsage() string {
+	return "사용법: /staff source-route add <source> <chat_id|source_session_id> <exact|prefix|glob> <pattern> <staff-id> 또는 /staff source-route delete <id>"
+}
+
+func normalizeStaffSourceChannel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "web_chat", "websocket":
+		return "web"
+	case "kakao", "kakaotalk":
+		return "kakao_talk"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func normalizeStaffSourceMatchField(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "chat", "chat_id":
+		return store.StaffSourceMatchChatID, true
+	case "session", "source_session", "source_session_id", "user", "user_id":
+		return store.StaffSourceMatchSourceSessionID, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeStaffSourcePatternKind(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "exact", "=":
+		return store.StaffSourcePatternExact, true
+	case "prefix", "starts_with":
+		return store.StaffSourcePatternPrefix, true
+	case "glob", "wildcard":
+		return store.StaffSourcePatternGlob, true
+	default:
+		return "", false
+	}
 }
 
 func handleStaffRoute(conversationID, idOrAlias string, s *AccountRuntime) string {

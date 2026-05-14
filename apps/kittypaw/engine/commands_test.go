@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -663,6 +664,57 @@ func TestConversationCommandShowsRolloverMetadata(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("/conversation output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestSlashStaffSourceRouteAddsListsAndDeletes(t *testing.T) {
+	st := openTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "ops-bot", "", "ops staff")
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{
+		Store:     st,
+		Config:    &cfg,
+		AccountID: "alice",
+		BaseDir:   baseDir,
+	}
+
+	out, handled := tryHandleCommand(context.Background(), "/staff source-route add telegram chat_id exact chat-ops ops-bot", sess)
+	if !handled {
+		t.Fatal("/staff source-route add was not handled")
+	}
+	if !strings.Contains(out, "ops-bot") || !strings.Contains(out, "chat-ops") {
+		t.Fatalf("add output = %q", out)
+	}
+	routes, err := st.ListStaffSourceRoutes()
+	if err != nil {
+		t.Fatalf("ListStaffSourceRoutes: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("routes = %+v, want one route", routes)
+	}
+
+	out, handled = tryHandleCommand(context.Background(), "/staff source-routes", sess)
+	if !handled {
+		t.Fatal("/staff source-routes was not handled")
+	}
+	if !strings.Contains(out, "chat-ops") || !strings.Contains(out, "ops-bot") {
+		t.Fatalf("list output = %q", out)
+	}
+
+	out, handled = tryHandleCommand(context.Background(), fmt.Sprintf("/staff source-route delete %d", routes[0].ID), sess)
+	if !handled {
+		t.Fatal("/staff source-route delete was not handled")
+	}
+	if !strings.Contains(out, "삭제") {
+		t.Fatalf("delete output = %q", out)
+	}
+	routes, err = st.ListStaffSourceRoutes()
+	if err != nil {
+		t.Fatalf("ListStaffSourceRoutes after delete: %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("routes after delete = %+v, want empty", routes)
 	}
 }
 
