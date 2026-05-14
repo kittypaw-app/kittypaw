@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jinto/kittypaw/core"
@@ -134,6 +135,17 @@ var slashCommandRegistry = []slashCommand{
 		Risk:    "read",
 		Handler: func(ctx context.Context, _ []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleContext(ctx, s))
+		},
+	},
+	{
+		Name:    "/compact",
+		Usage:   "/compact [keep_recent]",
+		Summary: "현재 대화 prompt compaction 실행",
+		Risk:    "write",
+		History: true,
+		Handler: func(ctx context.Context, args []string, s *AccountRuntime) slashCommandResult {
+			text, record := handleCompactCommand(ctx, args, s)
+			return slashCommandResult{Text: text, RecordHistory: record}
 		},
 	},
 	{
@@ -597,6 +609,33 @@ func handleContext(ctx context.Context, s *AccountRuntime) string {
 	fmt.Fprintf(&sb, "context_window: %d\n", contextWindow)
 	fmt.Fprintf(&sb, "max_tokens: %d", maxTokens)
 	return sb.String()
+}
+
+func handleCompactCommand(ctx context.Context, args []string, s *AccountRuntime) (string, bool) {
+	if s == nil || s.Store == nil {
+		return "compact 실행을 위한 store가 준비되지 않았습니다.", false
+	}
+	if len(args) > 1 {
+		return compactUsage(), false
+	}
+	keepRecent := 40
+	if len(args) == 1 {
+		n, err := strconv.Atoi(strings.TrimSpace(args[0]))
+		if err != nil || n <= 0 {
+			return compactUsage(), false
+		}
+		keepRecent = n
+	}
+	conversationID := commandConversationID(ctx, s)
+	compacted, err := s.Store.CompactConversationByID(conversationID, keepRecent)
+	if err != nil {
+		return fmt.Sprintf("compact 실행 실패: %s", err), false
+	}
+	return fmt.Sprintf("conversation: %s\nturns_compacted: %d\nkeep_recent: %d", conversationID, compacted, keepRecent), true
+}
+
+func compactUsage() string {
+	return "사용법: /compact [keep_recent]"
 }
 
 func currentModelLimits(s *AccountRuntime) (int, int) {

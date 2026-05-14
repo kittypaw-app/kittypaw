@@ -485,6 +485,74 @@ func TestSlashSessionAndContextDiagnostics(t *testing.T) {
 	}
 }
 
+func TestCompactCommandCompactsCurrentConversation(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.SetConversationScope("project:alpha", "project", "alpha"); err != nil {
+		t.Fatalf("SetConversationScope: %v", err)
+	}
+	for _, content := range []string{"general-0", "general-1", "general-2", "general-3", "general-4"} {
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			ConversationID: store.DefaultConversationID,
+			Role:           core.RoleUser,
+			Content:        content,
+			Timestamp:      content,
+		}); err != nil {
+			t.Fatalf("AddConversationTurn(general): %v", err)
+		}
+	}
+	for _, content := range []string{"project-0", "project-1", "project-2", "project-3", "project-4"} {
+		if err := st.AddConversationTurn(&core.ConversationTurn{
+			ConversationID: "project:alpha",
+			Role:           core.RoleUser,
+			Content:        content,
+			Timestamp:      content,
+		}); err != nil {
+			t.Fatalf("AddConversationTurn(project): %v", err)
+		}
+	}
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
+
+	out, handled := tryHandleCommand(ContextWithConversationID(context.Background(), "project:alpha"), "/compact 2", sess)
+	if !handled {
+		t.Fatal("/compact was not handled")
+	}
+	for _, want := range []string{"conversation: project:alpha", "turns_compacted: 3", "keep_recent: 2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/compact output missing %q:\n%s", want, out)
+		}
+	}
+
+	projectState, err := st.LoadConversationStateForChat("project:alpha")
+	if err != nil {
+		t.Fatalf("LoadConversationStateForChat(project): %v", err)
+	}
+	if len(projectState.Turns) != 3 || !strings.Contains(projectState.Turns[0].Content, "오래된 대화 3개") {
+		t.Fatalf("project state = %+v, want summary + 2 recent", projectState.Turns)
+	}
+	generalState, err := st.LoadConversationStateForChat(store.DefaultConversationID)
+	if err != nil {
+		t.Fatalf("LoadConversationStateForChat(general): %v", err)
+	}
+	if got := len(generalState.Turns); got != 5 {
+		t.Fatalf("general turns = %d, want un-compacted 5", got)
+	}
+}
+
+func TestCompactCommandRejectsInvalidKeepRecent(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{Store: st, Config: &cfg, AccountID: "alice"}
+
+	out, handled := tryHandleCommand(context.Background(), "/compact nope", sess)
+	if !handled {
+		t.Fatal("/compact was not handled")
+	}
+	if !strings.Contains(out, "사용법: /compact [keep_recent]") {
+		t.Fatalf("/compact invalid output = %q, want usage", out)
+	}
+}
+
 func TestConversationCommandShowsRolloverMetadata(t *testing.T) {
 	st := openTestStore(t)
 	parent, err := st.CreateConversation(store.CreateConversationRequest{ScopeType: "general", ScopeID: "parent"})
