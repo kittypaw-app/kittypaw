@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -54,9 +55,9 @@ func TestFilterSkillsByPermissionsAll(t *testing.T) {
 }
 
 func TestBuildPromptModeSystemPrompt(t *testing.T) {
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "test-skill",
-		Format:      core.SkillFormatMd,
+		Format:      core.SkillFormatMarkdown,
 		Permissions: core.SkillPermissions{Primitives: []string{"Http", "Storage"}},
 	}
 	body := "You are a helpful assistant that fetches weather data."
@@ -77,14 +78,24 @@ func TestBuildPromptModeSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestIsPromptModeSkill(t *testing.T) {
-	native := &core.Skill{Format: core.SkillFormatNative}
-	md := &core.Skill{Format: core.SkillFormatMd}
+func TestIsMarkdownSkill(t *testing.T) {
+	script := &core.SkillManifest{Format: core.SkillFormatScript}
+	markdown := &core.SkillManifest{Format: core.SkillFormatMarkdown}
 
-	if IsPromptModeSkill(native) {
-		t.Error("native skill should not be prompt mode")
+	if IsMarkdownSkill(script) {
+		t.Error("script skill should not be markdown skill")
 	}
-	if !IsPromptModeSkill(md) {
-		t.Error("skillmd skill should be prompt mode")
+	if !IsMarkdownSkill(markdown) {
+		t.Error("markdown skill should be markdown skill")
+	}
+}
+
+func TestPromptModeLegacyWrapperRemoved(t *testing.T) {
+	raw, err := os.ReadFile("prompt_mode.go")
+	if err != nil {
+		t.Fatalf("read prompt_mode.go: %v", err)
+	}
+	if strings.Contains(string(raw), "IsPrompt"+"ModeSkill") {
+		t.Fatal("prompt_mode.go still exposes legacy prompt-mode skill wrapper")
 	}
 }

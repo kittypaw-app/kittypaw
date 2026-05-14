@@ -1,5 +1,7 @@
 package core
 
+import "strings"
+
 // SkillMethodMeta describes one method on a skill global.
 type SkillMethodMeta struct {
 	Name             string         // method name used in JS stubs: e.g. "get"
@@ -34,14 +36,30 @@ type SkillMeta struct {
 var stringSchema = map[string]any{"type": "string"}
 var boolSchema = map[string]any{"type": "boolean"}
 var integerSchema = map[string]any{"type": "integer"}
+var numberSchema = map[string]any{"type": "number"}
 
 func objectSchema(required []string, properties map[string]any) map[string]any {
-	return map[string]any{
+	schema := map[string]any{
 		"type":                 "object",
-		"required":             required,
 		"properties":           properties,
 		"additionalProperties": false,
 	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+func flexibleObjectSchema(required []string, properties map[string]any) map[string]any {
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": true,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
 }
 
 var fileEditParametersSchema = objectSchema(
@@ -63,11 +81,266 @@ var fileEditResultSchema = objectSchema(
 	},
 )
 
+func jsonValueSchema() map[string]any {
+	return map[string]any{"description": "Any JSON value."}
+}
+
+func stringArraySchema() map[string]any {
+	return map[string]any{"type": "array", "items": stringSchema}
+}
+
+func stringMapSchema() map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": stringSchema}
+}
+
+func enumStringSchema(values ...string) map[string]any {
+	return map[string]any{"type": "string", "enum": values}
+}
+
+func httpOptionsSchema() map[string]any {
+	return objectSchema(nil, map[string]any{"headers": stringMapSchema()})
+}
+
+func memoryKindSchema() map[string]any {
+	return enumStringSchema("fact", "preference", "decision", "state", "ongoing_task", "open_question")
+}
+
+func memoryScopeSchema() map[string]any {
+	return enumStringSchema("global", "conversation", "project", "channel")
+}
+
+func deliveryTargetSchema() map[string]any {
+	return objectSchema(nil, map[string]any{
+		"account_id":       stringSchema,
+		"channel":          stringSchema,
+		"chat_id":          stringSchema,
+		"conversation_id":  stringSchema,
+		"channel_user_id":  stringSchema,
+		"reply_to_message": stringSchema,
+	})
+}
+
+func fileSearchOptionsProperties() map[string]any {
+	return map[string]any{
+		"path":   stringSchema,
+		"ext":    stringSchema,
+		"limit":  integerSchema,
+		"offset": integerSchema,
+	}
+}
+
+func browserTargetOptionsSchema() map[string]any {
+	return objectSchema(nil, map[string]any{"target_id": stringSchema, "targetId": stringSchema})
+}
+
+var curatedParameterSchemas = map[string]map[string]any{
+	"Http.get":    objectSchema([]string{"url"}, map[string]any{"url": stringSchema, "options": httpOptionsSchema()}),
+	"Http.post":   objectSchema([]string{"url", "body"}, map[string]any{"url": stringSchema, "body": jsonValueSchema(), "options": httpOptionsSchema()}),
+	"Http.put":    objectSchema([]string{"url", "body"}, map[string]any{"url": stringSchema, "body": jsonValueSchema(), "options": httpOptionsSchema()}),
+	"Http.delete": objectSchema([]string{"url"}, map[string]any{"url": stringSchema, "options": httpOptionsSchema()}),
+	"Http.patch":  objectSchema([]string{"url", "body"}, map[string]any{"url": stringSchema, "body": jsonValueSchema(), "options": httpOptionsSchema()}),
+	"Http.head":   objectSchema([]string{"url"}, map[string]any{"url": stringSchema, "options": httpOptionsSchema()}),
+
+	"File.read":    objectSchema([]string{"path"}, map[string]any{"path": stringSchema}),
+	"File.write":   objectSchema([]string{"path", "content"}, map[string]any{"path": stringSchema, "content": stringSchema}),
+	"File.append":  objectSchema([]string{"path", "content"}, map[string]any{"path": stringSchema, "content": stringSchema}),
+	"File.edit":    fileEditParametersSchema,
+	"File.delete":  objectSchema([]string{"path"}, map[string]any{"path": stringSchema}),
+	"File.list":    objectSchema([]string{"dir"}, map[string]any{"dir": stringSchema}),
+	"File.exists":  objectSchema([]string{"path"}, map[string]any{"path": stringSchema}),
+	"File.mkdir":   objectSchema([]string{"path"}, map[string]any{"path": stringSchema}),
+	"File.search":  objectSchema([]string{"query"}, map[string]any{"query": stringSchema, "path": stringSchema, "ext": stringSchema, "limit": integerSchema, "offset": integerSchema, "options": objectSchema(nil, fileSearchOptionsProperties())}),
+	"File.stats":   objectSchema(nil, map[string]any{"path": stringSchema}),
+	"File.reindex": objectSchema(nil, map[string]any{"path": stringSchema}),
+	"File.summary": objectSchema([]string{"path"}, map[string]any{"path": stringSchema, "model": stringSchema, "force_refresh": boolSchema, "options": objectSchema(nil, map[string]any{"model": stringSchema, "force_refresh": boolSchema})}),
+
+	"Storage.get":    objectSchema([]string{"key"}, map[string]any{"key": stringSchema}),
+	"Storage.set":    objectSchema([]string{"key", "value"}, map[string]any{"key": stringSchema, "value": jsonValueSchema()}),
+	"Storage.delete": objectSchema([]string{"key"}, map[string]any{"key": stringSchema}),
+	"Storage.list":   objectSchema(nil, map[string]any{}),
+
+	"Notify.send":          objectSchema([]string{"text"}, map[string]any{"text": stringSchema, "target": deliveryTargetSchema()}),
+	"Telegram.send":        objectSchema([]string{"text"}, map[string]any{"text": stringSchema}),
+	"Telegram.sendMessage": objectSchema([]string{"text"}, map[string]any{"text": stringSchema}),
+	"Slack.send":           objectSchema([]string{"text"}, map[string]any{"text": stringSchema}),
+	"Discord.send":         objectSchema([]string{"text"}, map[string]any{"text": stringSchema}),
+
+	"Gmail.list":   objectSchema(nil, map[string]any{"query": stringSchema, "limit": integerSchema, "options": objectSchema(nil, map[string]any{"query": stringSchema, "limit": integerSchema})}),
+	"Gmail.search": objectSchema([]string{"query"}, map[string]any{"query": stringSchema, "limit": integerSchema, "options": objectSchema(nil, map[string]any{"limit": integerSchema})}),
+	"Gmail.read":   objectSchema([]string{"id"}, map[string]any{"id": stringSchema}),
+
+	"X.searchRecent": objectSchema([]string{"query"}, map[string]any{"query": stringSchema, "limit": integerSchema, "options": objectSchema(nil, map[string]any{"limit": integerSchema})}),
+	"X.homeTimeline": objectSchema(nil, map[string]any{"limit": integerSchema, "options": objectSchema(nil, map[string]any{"limit": integerSchema})}),
+	"X.user":         objectSchema([]string{"username"}, map[string]any{"username": stringSchema}),
+	"X.userPosts":    objectSchema([]string{"username"}, map[string]any{"username": stringSchema, "limit": integerSchema, "options": objectSchema(nil, map[string]any{"limit": integerSchema})}),
+	"X.post":         objectSchema([]string{"id_or_url"}, map[string]any{"id_or_url": stringSchema, "id": stringSchema, "url": stringSchema}),
+
+	"Shell.exec": objectSchema([]string{"command"}, map[string]any{"command": stringSchema}),
+
+	"Git.status": objectSchema(nil, map[string]any{}),
+	"Git.log":    objectSchema(nil, map[string]any{"n": integerSchema}),
+	"Git.diff":   objectSchema(nil, map[string]any{}),
+	"Git.add":    objectSchema(nil, map[string]any{"path": stringSchema}),
+	"Git.commit": objectSchema([]string{"message"}, map[string]any{"message": stringSchema}),
+	"Git.push":   objectSchema(nil, map[string]any{}),
+	"Git.pull":   objectSchema(nil, map[string]any{}),
+
+	"Llm.generate": objectSchema([]string{"prompt"}, map[string]any{"prompt": stringSchema}),
+	"Moa.query":    objectSchema([]string{"prompt"}, map[string]any{"prompt": stringSchema, "models": stringArraySchema(), "synthesizer": stringSchema, "per_model_timeout_ms": integerSchema, "options": objectSchema(nil, map[string]any{"models": stringArraySchema(), "synthesizer": stringSchema, "per_model_timeout_ms": integerSchema})}),
+	"Code.exec":    objectSchema([]string{"js"}, map[string]any{"js": stringSchema}),
+
+	"Memory.search": objectSchema([]string{"query"}, map[string]any{"query": stringSchema}),
+	"Memory.set":    objectSchema([]string{"key", "value"}, map[string]any{"key": stringSchema, "value": stringSchema, "scope": memoryScopeSchema(), "kind": memoryKindSchema(), "confidence": numberSchema, "options": objectSchema(nil, map[string]any{"scope": memoryScopeSchema(), "kind": memoryKindSchema(), "confidence": numberSchema})}),
+	"Memory.get":    objectSchema([]string{"key"}, map[string]any{"key": stringSchema}),
+	"Memory.delete": objectSchema([]string{"key"}, map[string]any{"key": stringSchema}),
+	"Memory.user":   objectSchema([]string{"key", "value"}, map[string]any{"key": stringSchema, "value": stringSchema, "scope": memoryScopeSchema(), "kind": memoryKindSchema(), "confidence": numberSchema, "options": objectSchema(nil, map[string]any{"scope": memoryScopeSchema(), "kind": memoryKindSchema(), "confidence": numberSchema})}),
+
+	"Todo.list":   objectSchema(nil, map[string]any{}),
+	"Todo.add":    objectSchema([]string{"text"}, map[string]any{"text": stringSchema}),
+	"Todo.update": objectSchema([]string{"id", "text"}, map[string]any{"id": stringSchema, "text": stringSchema}),
+	"Todo.delete": objectSchema([]string{"id"}, map[string]any{"id": stringSchema}),
+
+	"Projects.list":             objectSchema(nil, map[string]any{}),
+	"Projects.current":          objectSchema(nil, map[string]any{}),
+	"Projects.show":             objectSchema([]string{"project"}, map[string]any{"project": stringSchema}),
+	"Projects.listTickets":      objectSchema([]string{"project"}, map[string]any{"project": stringSchema}),
+	"Projects.createTicket":     objectSchema([]string{"project", "title"}, map[string]any{"project": stringSchema, "title": stringSchema, "body": stringSchema, "status": stringSchema, "priority": integerSchema, "labels": stringArraySchema(), "created_by": stringSchema}),
+	"Projects.showTicket":       objectSchema([]string{"ticket"}, map[string]any{"ticket": stringSchema}),
+	"Projects.moveTicket":       objectSchema([]string{"ticket", "status"}, map[string]any{"ticket": stringSchema, "status": stringSchema, "actor_id": stringSchema, "message": stringSchema}),
+	"Projects.commentTicket":    objectSchema([]string{"ticket", "body"}, map[string]any{"ticket": stringSchema, "author_id": stringSchema, "body": stringSchema}),
+	"Projects.createBriefDraft": objectSchema([]string{"project", "title", "brief_json"}, map[string]any{"project": stringSchema, "title": stringSchema, "brief_json": stringSchema, "proposed_tickets_json": stringSchema, "created_by": stringSchema}),
+	"Projects.updateBriefDraft": objectSchema([]string{"draft"}, map[string]any{"draft": stringSchema, "title": stringSchema, "brief_json": stringSchema, "proposed_tickets_json": stringSchema}),
+	"Projects.commitBriefDraft": objectSchema([]string{"draft"}, map[string]any{"draft": stringSchema, "actor_id": stringSchema}),
+	"Projects.planJob":          objectSchema([]string{"ticket"}, map[string]any{"ticket": stringSchema, "driver_id": stringSchema, "mode": stringSchema, "worktree_path": stringSchema, "branch_name": stringSchema, "prompt_summary": stringSchema, "prompt_text": stringSchema, "created_by": stringSchema}),
+	"Projects.showJob":          objectSchema([]string{"job"}, map[string]any{"job": stringSchema}),
+	"Projects.cancelJob":        objectSchema([]string{"job"}, map[string]any{"job": stringSchema, "actor_id": stringSchema, "reason": stringSchema}),
+	"Projects.appendJobInput":   objectSchema([]string{"job", "text"}, map[string]any{"job": stringSchema, "actor_id": stringSchema, "text": stringSchema}),
+
+	"Env.get": objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
+
+	"Skill.list":                objectSchema(nil, map[string]any{}),
+	"Skill.run":                 objectSchema([]string{"name"}, map[string]any{"name": stringSchema, "params": flexibleObjectSchema(nil, map[string]any{})}),
+	"Skill.create":              objectSchema([]string{"name", "desc", "code"}, map[string]any{"name": stringSchema, "desc": stringSchema, "code": stringSchema, "triggerType": enumStringSchema("manual", "schedule", "once"), "schedule_or_run_at": stringSchema}),
+	"Skill.disable":             objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
+	"Skill.uninstall":           objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
+	"Skill.rollback":            objectSchema([]string{"name"}, map[string]any{"name": stringSchema}),
+	"Skill.search":              objectSchema([]string{"query"}, map[string]any{"query": stringSchema}),
+	"Skill.installFromRegistry": objectSchema([]string{"id"}, map[string]any{"id": stringSchema}),
+
+	"Tts.speak":                objectSchema([]string{"text"}, map[string]any{"text": stringSchema}),
+	"Image.generate":           objectSchema([]string{"prompt"}, map[string]any{"prompt": stringSchema}),
+	"Vision.analyze":           objectSchema([]string{"imageUrl", "prompt"}, map[string]any{"imageUrl": stringSchema, "prompt": stringSchema}),
+	"Vision.analyzeAttachment": objectSchema([]string{"attachmentId", "prompt"}, map[string]any{"attachmentId": stringSchema, "prompt": stringSchema}),
+
+	"Mcp.call":      objectSchema([]string{"server", "tool", "args"}, map[string]any{"server": stringSchema, "tool": stringSchema, "args": flexibleObjectSchema(nil, map[string]any{})}),
+	"Mcp.listTools": objectSchema([]string{"server"}, map[string]any{"server": stringSchema}),
+
+	"Runner.delegate": objectSchema([]string{"staffId", "task"}, map[string]any{"staffId": stringSchema, "task": stringSchema}),
+	"Runner.observe":  objectSchema([]string{"data"}, map[string]any{"data": jsonValueSchema(), "label": stringSchema}),
+
+	"Staff.list":   objectSchema(nil, map[string]any{}),
+	"Staff.switch": objectSchema([]string{"id"}, map[string]any{"id": stringSchema}),
+	"Staff.create": objectSchema([]string{"id", "desc"}, map[string]any{"id": stringSchema, "desc": stringSchema}),
+	"Staff.update": objectSchema([]string{"id", "desc"}, map[string]any{"id": stringSchema, "desc": stringSchema}),
+
+	"Web.search": objectSchema([]string{"query"}, map[string]any{"query": stringSchema}),
+	"Web.fetch":  objectSchema([]string{"url"}, map[string]any{"url": stringSchema}),
+
+	"Browser.status":     objectSchema(nil, map[string]any{}),
+	"Browser.open":       objectSchema(nil, map[string]any{"url": stringSchema}),
+	"Browser.tabs":       objectSchema(nil, map[string]any{}),
+	"Browser.use":        objectSchema([]string{"target_id"}, map[string]any{"target_id": stringSchema}),
+	"Browser.navigate":   objectSchema([]string{"url"}, map[string]any{"url": stringSchema}),
+	"Browser.snapshot":   objectSchema(nil, map[string]any{"target_id": stringSchema, "targetId": stringSchema, "options": browserTargetOptionsSchema()}),
+	"Browser.click":      objectSchema([]string{"ref_or_selector"}, map[string]any{"ref_or_selector": stringSchema, "ref": stringSchema, "selector": stringSchema}),
+	"Browser.type":       objectSchema([]string{"ref_or_selector", "text"}, map[string]any{"ref_or_selector": stringSchema, "ref": stringSchema, "selector": stringSchema, "text": stringSchema}),
+	"Browser.evaluate":   objectSchema([]string{"js"}, map[string]any{"js": stringSchema}),
+	"Browser.screenshot": objectSchema(nil, map[string]any{"format": enumStringSchema("png", "jpeg"), "options": objectSchema(nil, map[string]any{"format": enumStringSchema("png", "jpeg")})}),
+	"Browser.close":      objectSchema(nil, map[string]any{"target_id": stringSchema}),
+
+	"Share.read": objectSchema([]string{"account_id", "path"}, map[string]any{"account_id": stringSchema, "path": stringSchema}),
+
+	"Fanout.send":      objectSchema([]string{"account_id", "text"}, map[string]any{"account_id": stringSchema, "text": stringSchema, "channel_hint": stringSchema}),
+	"Fanout.broadcast": objectSchema([]string{"text"}, map[string]any{"text": stringSchema, "channel_hint": stringSchema}),
+}
+
+func curatedParameterSchema(skillName, methodName string) map[string]any {
+	return curatedParameterSchemas[skillName+"."+methodName]
+}
+
+func withParameterSchemas(registry []SkillMeta) []SkillMeta {
+	for i := range registry {
+		for j := range registry[i].Methods {
+			if schema := curatedParameterSchema(registry[i].Name, registry[i].Methods[j].Name); schema != nil {
+				registry[i].Methods[j].ParametersSchema = schema
+			} else if registry[i].Methods[j].ParametersSchema == nil {
+				registry[i].Methods[j].ParametersSchema = parameterSchemaFromSignature(registry[i].Methods[j].Signature)
+			}
+		}
+	}
+	return registry
+}
+
+func parameterSchemaFromSignature(signature string) map[string]any {
+	start := strings.IndexByte(signature, '(')
+	end := strings.IndexByte(signature, ')')
+	if start < 0 || end <= start+1 {
+		return objectSchema(nil, map[string]any{})
+	}
+	inside := signature[start+1 : end]
+	parts := splitSchemaSignatureArgs(inside)
+	properties := map[string]any{}
+	var required []string
+	for _, part := range parts {
+		raw := strings.TrimSpace(part)
+		if raw == "" {
+			continue
+		}
+		optional := strings.Contains(raw, "?") || strings.Contains(raw, "[") || strings.Contains(raw, "]")
+		raw = strings.Trim(raw, "[]{}?")
+		if idx := strings.IndexAny(raw, " :"); idx >= 0 {
+			raw = raw[:idx]
+		}
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		properties[name] = schemaForParameterName(name)
+		if !optional {
+			required = append(required, name)
+		}
+	}
+	return objectSchema(required, properties)
+}
+
+func splitSchemaSignatureArgs(inside string) []string {
+	parts := strings.Split(inside, ",")
+	if len(parts) == 1 && strings.TrimSpace(parts[0]) == "" {
+		return nil
+	}
+	return parts
+}
+
+func schemaForParameterName(name string) map[string]any {
+	switch name {
+	case "options", "target", "params", "payload", "args":
+		return flexibleObjectSchema(nil, map[string]any{})
+	case "body", "value", "data":
+		return map[string]any{"description": "Any JSON value."}
+	case "priority", "limit", "offset", "n", "per_model_timeout_ms":
+		return integerSchema
+	case "labels", "models", "candidates":
+		return map[string]any{"type": "array"}
+	default:
+		return stringSchema
+	}
+}
+
 // SkillRegistry is the canonical list of all skill globals.
 // Both the sandbox JS wrapper and the LLM system prompt are generated from
 // this single source, preventing drift between what the sandbox provides
 // and what the LLM is told is available.
-var SkillRegistry = []SkillMeta{
+var SkillRegistry = withParameterSchemas([]SkillMeta{
 	{Name: "Http", Methods: []SkillMethodMeta{
 		{Name: "get", Signature: "Http.get(url, options?) — options: {headers: {key: value}}"},
 		{Name: "post", Signature: "Http.post(url, body, options?) — options: {headers: {key: value}}"},
@@ -233,4 +506,4 @@ var SkillRegistry = []SkillMeta{
 		{Name: "send", Signature: "Fanout.send(accountID, {text, channel_hint?}) — push a message to a configured team-space member; TEAM SPACE ONLY"},
 		{Name: "broadcast", Signature: "Fanout.broadcast({text, channel_hint?}) — push to configured team-space members; TEAM SPACE ONLY"},
 	}},
-}
+})

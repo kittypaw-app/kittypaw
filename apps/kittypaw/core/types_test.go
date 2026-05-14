@@ -415,6 +415,164 @@ func TestSkillRegistryCompleteness(t *testing.T) {
 	}
 }
 
+func TestSkillRegistryMethodsHaveParameterSchemas(t *testing.T) {
+	for _, skill := range SkillRegistry {
+		for _, method := range skill.Methods {
+			if method.ParametersSchema == nil {
+				t.Errorf("%s.%s ParametersSchema missing", skill.Name, method.Name)
+				continue
+			}
+			if typ, _ := method.ParametersSchema["type"].(string); typ != "object" {
+				t.Errorf("%s.%s ParametersSchema type = %q, want object", skill.Name, method.Name, typ)
+			}
+			if _, ok := method.ParametersSchema["properties"].(map[string]any); !ok {
+				t.Errorf("%s.%s ParametersSchema properties missing or wrong type", skill.Name, method.Name)
+			}
+			if required, ok := method.ParametersSchema["required"]; ok && required == nil {
+				t.Errorf("%s.%s ParametersSchema required is nil; omit it or use []string", skill.Name, method.Name)
+			}
+		}
+	}
+}
+
+func TestSkillRegistryMethodsUseCuratedParameterSchemas(t *testing.T) {
+	registryKeys := make(map[string]bool)
+	for _, skill := range SkillRegistry {
+		for _, method := range skill.Methods {
+			registryKeys[skill.Name+"."+method.Name] = true
+			if curatedParameterSchema(skill.Name, method.Name) == nil {
+				t.Errorf("%s.%s is missing from curated parameter schema catalog", skill.Name, method.Name)
+			}
+		}
+	}
+	for key := range curatedParameterSchemas {
+		if !registryKeys[key] {
+			t.Errorf("curated parameter schema catalog has stale entry %s", key)
+		}
+	}
+}
+
+func TestSkillRegistryCuratedSchemasExposeExecutionOptions(t *testing.T) {
+	memorySet := findSkillMethodForTest(t, "Memory", "set")
+	memoryProps := schemaPropertiesForTest(t, memorySet.ParametersSchema)
+	for _, want := range []string{"key", "value", "scope", "kind", "confidence"} {
+		if _, ok := memoryProps[want]; !ok {
+			t.Fatalf("Memory.set properties = %#v, missing %q", memoryProps, want)
+		}
+	}
+	if !schemaRequiredContainsForTest(t, memorySet.ParametersSchema, "key") ||
+		!schemaRequiredContainsForTest(t, memorySet.ParametersSchema, "value") {
+		t.Fatalf("Memory.set required = %#v, want key and value", memorySet.ParametersSchema["required"])
+	}
+
+	httpPost := findSkillMethodForTest(t, "Http", "post")
+	httpProps := schemaPropertiesForTest(t, httpPost.ParametersSchema)
+	options, ok := httpProps["options"].(map[string]any)
+	if !ok {
+		t.Fatalf("Http.post options schema = %#v, want object schema", httpProps["options"])
+	}
+	optionProps := schemaPropertiesForTest(t, options)
+	headers, ok := optionProps["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("Http.post options properties = %#v, missing headers object", optionProps)
+	}
+	if typ, _ := headers["type"].(string); typ != "object" {
+		t.Fatalf("Http.post headers schema = %#v, want object", headers)
+	}
+
+	fanoutSend := findSkillMethodForTest(t, "Fanout", "send")
+	fanoutProps := schemaPropertiesForTest(t, fanoutSend.ParametersSchema)
+	for _, want := range []string{"account_id", "text", "channel_hint"} {
+		if _, ok := fanoutProps[want]; !ok {
+			t.Fatalf("Fanout.send properties = %#v, missing %q", fanoutProps, want)
+		}
+	}
+	if _, ok := fanoutProps["payload"]; ok {
+		t.Fatalf("Fanout.send should expose payload fields at top level, got nested payload schema: %#v", fanoutProps["payload"])
+	}
+}
+
+func TestSkillRegistryParameterSchemasExposeObjectLiteralFields(t *testing.T) {
+	var createTicket *SkillMethodMeta
+	for _, skill := range SkillRegistry {
+		if skill.Name != "Projects" {
+			continue
+		}
+		for i := range skill.Methods {
+			if skill.Methods[i].Name == "createTicket" {
+				createTicket = &skill.Methods[i]
+			}
+		}
+	}
+	if createTicket == nil {
+		t.Fatal("Projects.createTicket metadata missing")
+	}
+	required, ok := createTicket.ParametersSchema["required"].([]string)
+	if !ok {
+		t.Fatalf("Projects.createTicket required = %#v, want []string", createTicket.ParametersSchema["required"])
+	}
+	for _, want := range []string{"project", "title"} {
+		found := false
+		for _, got := range required {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Projects.createTicket required = %#v, missing %q", required, want)
+		}
+	}
+	props := createTicket.ParametersSchema["properties"].(map[string]any)
+	for _, want := range []string{"project", "title", "body", "status", "priority", "labels", "created_by"} {
+		if _, ok := props[want]; !ok {
+			t.Fatalf("Projects.createTicket properties = %#v, missing %q", props, want)
+		}
+	}
+	if _, ok := props["project,"]; ok {
+		t.Fatalf("Projects.createTicket schema contains malformed property: %#v", props)
+	}
+}
+
+func findSkillMethodForTest(t *testing.T, skillName, methodName string) *SkillMethodMeta {
+	t.Helper()
+	for _, skill := range SkillRegistry {
+		if skill.Name != skillName {
+			continue
+		}
+		for i := range skill.Methods {
+			if skill.Methods[i].Name == methodName {
+				return &skill.Methods[i]
+			}
+		}
+	}
+	t.Fatalf("%s.%s metadata missing", skillName, methodName)
+	return nil
+}
+
+func schemaPropertiesForTest(t *testing.T, schema map[string]any) map[string]any {
+	t.Helper()
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v, want map[string]any", schema["properties"])
+	}
+	return props
+}
+
+func schemaRequiredContainsForTest(t *testing.T, schema map[string]any, want string) bool {
+	t.Helper()
+	required, ok := schema["required"].([]string)
+	if !ok {
+		return false
+	}
+	for _, got := range required {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFileEditMetadataHasSchemaAndCapabilities(t *testing.T) {
 	var edit *SkillMethodMeta
 	for _, skill := range SkillRegistry {

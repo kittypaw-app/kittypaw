@@ -15,8 +15,8 @@ import (
 type SourceFormat string
 
 const (
-	SourceFormatNative  SourceFormat = "native"  // package.toml + main.js
-	SourceFormatSkillMd SourceFormat = "skillmd" // SKILL.md
+	SourceFormatNative        SourceFormat = "native"  // package.toml + main.js
+	SourceFormatMarkdownSkill SourceFormat = "skillmd" // SKILL.md
 )
 
 // SourceResult holds the result of resolving a skill source from GitHub.
@@ -72,7 +72,7 @@ func ResolveGitHubSource(baseURL, owner, repo string) (*SourceResult, error) {
 		body, err := fetchRaw(client, baseURL+path)
 		if err == nil {
 			return &SourceResult{
-				Format:         SourceFormatSkillMd,
+				Format:         SourceFormatMarkdownSkill,
 				SkillMdContent: string(body),
 				SourceURL:      fmt.Sprintf("https://github.com/%s/%s", owner, repo),
 			}, nil
@@ -121,7 +121,7 @@ func ResolveGitHubSource(baseURL, owner, repo string) (*SourceResult, error) {
 		body, err := fetchRaw(client, baseURL+path)
 		if err == nil {
 			return &SourceResult{
-				Format:         SourceFormatSkillMd,
+				Format:         SourceFormatMarkdownSkill,
 				SkillMdContent: string(body),
 				SourceURL:      fmt.Sprintf("https://github.com/%s/%s", owner, repo),
 			}, nil

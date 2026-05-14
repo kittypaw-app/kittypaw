@@ -325,6 +325,26 @@ func TestClaudeContentBlocksWire(t *testing.T) {
 	}
 }
 
+func TestClaudeToolDefinitionPreservesRegistrySchema(t *testing.T) {
+	p := NewClaude("key", "claude-3-opus-20240229", 1024)
+	edit := registryMethodForTest(t, "File", "edit")
+
+	body := p.buildRequestBodyWithTools("", []core.LlmMessage{{Role: core.RoleUser, Content: "edit file"}}, []Tool{{
+		Name:        "File__edit",
+		Description: edit.Signature,
+		InputSchema: edit.ParametersSchema,
+	}})
+
+	wireTools := body["tools"].([]map[string]any)
+	schema := wireTools[0]["input_schema"].(map[string]any)
+	required := schema["required"].([]string)
+	for _, want := range []string{"path", "old_text", "new_text"} {
+		if !testStringSliceContains(required, want) {
+			t.Fatalf("Claude tool required = %#v, missing %q", required, want)
+		}
+	}
+}
+
 // TestClaudeBackwardCompatStringContent verifies that legacy callers passing
 // only a string Content land on the wire as the original {"role":..., "content":"..."}
 // shape — no structural drift for the 30+ callsites that haven't migrated.

@@ -326,6 +326,31 @@ func TestOpenAIToolDefinitionWireShape(t *testing.T) {
 	}
 }
 
+func TestOpenAIToolDefinitionPreservesRegistrySchema(t *testing.T) {
+	p := NewOpenAI("key", "qwen3-32b", 1024,
+		WithBaseURL("http://example.com/v1/chat/completions"))
+	edit := registryMethodForTest(t, "File", "edit")
+
+	body := p.buildChatRequestBodyWithTools(
+		[]core.LlmMessage{{Role: core.RoleUser, Content: "edit file"}},
+		[]Tool{{
+			Name:        "File__edit",
+			Description: edit.Signature,
+			InputSchema: edit.ParametersSchema,
+		}},
+	)
+
+	wireTools := body["tools"].([]map[string]any)
+	fn := wireTools[0]["function"].(map[string]any)
+	params := fn["parameters"].(map[string]any)
+	required := params["required"].([]string)
+	for _, want := range []string{"path", "old_text", "new_text"} {
+		if !testStringSliceContains(required, want) {
+			t.Fatalf("OpenAI tool required = %#v, missing %q", required, want)
+		}
+	}
+}
+
 func TestOpenAIToolDefinitionNilSchema(t *testing.T) {
 	p := NewOpenAI("key", "x", 1024,
 		WithBaseURL("http://example.com/v1/chat/completions"))
@@ -1127,4 +1152,29 @@ func TestParseChatJSONResponse_ListOfBlocks(t *testing.T) {
 	if resp.Content != "final answer" {
 		t.Errorf("Content = %q, want \"final answer\"", resp.Content)
 	}
+}
+
+func registryMethodForTest(t *testing.T, skillName, methodName string) core.SkillMethodMeta {
+	t.Helper()
+	for _, skill := range core.SkillRegistry {
+		if skill.Name != skillName {
+			continue
+		}
+		for _, method := range skill.Methods {
+			if method.Name == methodName {
+				return method
+			}
+		}
+	}
+	t.Fatalf("%s.%s registry method not found", skillName, methodName)
+	return core.SkillMethodMeta{}
+}
+
+func testStringSliceContains(values []string, want string) bool {
+	for _, got := range values {
+		if got == want {
+			return true
+		}
+	}
+	return false
 }

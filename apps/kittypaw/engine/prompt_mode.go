@@ -7,10 +7,10 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
-// IsPromptModeSkill returns true if the skill uses SKILL.md prompt-based execution
-// rather than JavaScript sandbox execution.
-func IsPromptModeSkill(skill *core.Skill) bool {
-	return skill.Format == core.SkillFormatMd
+// IsMarkdownSkill returns true if the skill uses SKILL.md prompt-based
+// execution rather than JavaScript sandbox execution.
+func IsMarkdownSkill(skill *core.SkillManifest) bool {
+	return skill.Format == core.SkillFormatMarkdown
 }
 
 // FilterSkillsByPermissions returns only the skill globals whose Name appears
@@ -38,7 +38,7 @@ func FilterSkillsByPermissions(registry []core.SkillMeta, allowed []string) []co
 // BuildPromptModeSystemPrompt constructs the system prompt for executing a
 // SKILL.md skill. It includes the skill's instructions (body) and documents
 // only the permitted skill globals.
-func BuildPromptModeSystemPrompt(skill *core.Skill, body string) string {
+func BuildPromptModeSystemPrompt(skill *core.SkillManifest, body string) string {
 	allowed := FilterSkillsByPermissions(core.SkillRegistry, skill.Permissions.Primitives)
 
 	var sb strings.Builder

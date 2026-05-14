@@ -14,8 +14,14 @@ import (
 type SkillFormat string
 
 const (
-	SkillFormatNative SkillFormat = "native"  // .skill.toml + .js
-	SkillFormatMd     SkillFormat = "skillmd" // SKILL.md from agentskills.io
+	// SkillFormatScript is KittyPaw's JavaScript sandbox automation format.
+	// The persisted value remains "native" for backward compatibility with
+	// existing account skill metadata.
+	SkillFormatScript SkillFormat = "native"
+
+	// SkillFormatMarkdown is the SKILL.md prompt-mode format from AgentSkills.
+	// The persisted value remains "skillmd" for backward compatibility.
+	SkillFormatMarkdown SkillFormat = "skillmd"
 )
 
 // ModelTier classifies the LLM tier a skill requires.
@@ -26,8 +32,10 @@ const (
 	ModelTierAnalysis   ModelTier = "analysis"
 )
 
-// Skill represents a learnable, executable skill.
-type Skill struct {
+// SkillManifest is the persisted metadata envelope for an installed skill.
+// Format determines whether the runtime executes JavaScript code or SKILL.md
+// prompt-mode instructions.
+type SkillManifest struct {
 	Name        string           `toml:"name"        json:"name"`
 	Version     uint32           `toml:"version"     json:"version"`
 	Description string           `toml:"description" json:"description"`
@@ -101,8 +109,8 @@ func SkillsDirFrom(baseDir string) (string, error) {
 	return skillsDir, nil
 }
 
-// SaveSkill writes a skill definition and its JavaScript code to disk.
-func SaveSkill(skill *Skill, jsCode string) error {
+// SaveSkill writes a skill manifest and its executable body to disk.
+func SaveSkill(skill *SkillManifest, jsCode string) error {
 	dir, err := ConfigDir()
 	if err != nil {
 		return err
@@ -110,8 +118,8 @@ func SaveSkill(skill *Skill, jsCode string) error {
 	return SaveSkillTo(dir, skill, jsCode)
 }
 
-// SaveSkillTo writes a skill to the skills directory under baseDir.
-func SaveSkillTo(baseDir string, skill *Skill, jsCode string) error {
+// SaveSkillTo writes a skill manifest to the skills directory under baseDir.
+func SaveSkillTo(baseDir string, skill *SkillManifest, jsCode string) error {
 	if err := ValidateSkillName(skill.Name); err != nil {
 		return err
 	}
@@ -159,8 +167,8 @@ func SaveSkillTo(baseDir string, skill *Skill, jsCode string) error {
 	return os.WriteFile(jsPath, []byte(jsCode), 0o644)
 }
 
-// LoadSkill loads a single skill by name. Returns nil, nil if not found.
-func LoadSkill(name string) (*Skill, string, error) {
+// LoadSkill loads a single skill manifest by name. Returns nil, nil if not found.
+func LoadSkill(name string) (*SkillManifest, string, error) {
 	dir, err := ConfigDir()
 	if err != nil {
 		return nil, "", err
@@ -168,8 +176,8 @@ func LoadSkill(name string) (*Skill, string, error) {
 	return LoadSkillFrom(dir, name)
 }
 
-// LoadSkillFrom loads a skill from the skills directory under baseDir.
-func LoadSkillFrom(baseDir, name string) (*Skill, string, error) {
+// LoadSkillFrom loads a skill manifest from the skills directory under baseDir.
+func LoadSkillFrom(baseDir, name string) (*SkillManifest, string, error) {
 	if err := ValidateSkillName(name); err != nil {
 		return nil, "", err
 	}
@@ -180,8 +188,8 @@ func LoadSkillFrom(baseDir, name string) (*Skill, string, error) {
 	return loadSkillFrom(filepath.Join(dir, name), name)
 }
 
-// LoadAllSkills loads all skills from the skills directory.
-func LoadAllSkills() ([]SkillWithCode, error) {
+// LoadAllSkills loads all skill manifests from the skills directory.
+func LoadAllSkills() ([]SkillManifestWithCode, error) {
 	dir, err := ConfigDir()
 	if err != nil {
 		return nil, err
@@ -189,8 +197,8 @@ func LoadAllSkills() ([]SkillWithCode, error) {
 	return LoadAllSkillsFrom(dir)
 }
 
-// LoadAllSkillsFrom loads all skills from the skills directory under baseDir.
-func LoadAllSkillsFrom(baseDir string) ([]SkillWithCode, error) {
+// LoadAllSkillsFrom loads all skill manifests from the skills directory under baseDir.
+func LoadAllSkillsFrom(baseDir string) ([]SkillManifestWithCode, error) {
 	dir, err := SkillsDirFrom(baseDir)
 	if err != nil {
 		return nil, err
@@ -204,7 +212,7 @@ func LoadAllSkillsFrom(baseDir string) ([]SkillWithCode, error) {
 		return nil, err
 	}
 
-	var skills []SkillWithCode
+	var skills []SkillManifestWithCode
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -213,15 +221,16 @@ func LoadAllSkillsFrom(baseDir string) ([]SkillWithCode, error) {
 		if err != nil || skill == nil {
 			continue
 		}
-		skills = append(skills, SkillWithCode{Skill: *skill, Code: code})
+		skills = append(skills, SkillManifestWithCode{Manifest: *skill, Code: code})
 	}
 	return skills, nil
 }
 
-// SkillWithCode bundles a Skill with its JavaScript source.
-type SkillWithCode struct {
-	Skill Skill
-	Code  string
+// SkillManifestWithCode bundles a persisted skill manifest with its code or
+// prompt body.
+type SkillManifestWithCode struct {
+	Manifest SkillManifest
+	Code     string
 }
 
 // EnableSkill sets enabled=true for a skill on disk.
@@ -344,7 +353,7 @@ func RollbackSkillFrom(baseDir, name string) error {
 }
 
 // MatchTrigger checks if an event text activates a skill's keyword trigger.
-func MatchTrigger(skill *Skill, eventText string) bool {
+func MatchTrigger(skill *SkillManifest, eventText string) bool {
 	if skill.Trigger.Keyword == "" {
 		return false
 	}
@@ -354,7 +363,7 @@ func MatchTrigger(skill *Skill, eventText string) bool {
 	)
 }
 
-func loadSkillFrom(skillDir, name string) (*Skill, string, error) {
+func loadSkillFrom(skillDir, name string) (*SkillManifest, string, error) {
 	tomlPath := filepath.Join(skillDir, name+".skill.toml")
 	data, err := os.ReadFile(tomlPath)
 	if err != nil {
@@ -364,7 +373,7 @@ func loadSkillFrom(skillDir, name string) (*Skill, string, error) {
 		return nil, "", err
 	}
 
-	var skill Skill
+	var skill SkillManifest
 	if err := toml.Unmarshal(data, &skill); err != nil {
 		return nil, "", fmt.Errorf("parse skill %q: %w", name, err)
 	}

@@ -153,7 +153,7 @@ func newTestScheduler(t *testing.T) (*Scheduler, *store.Store) {
 
 func TestIsDue_ScheduleFirstRun(t *testing.T) {
 	sched, _ := newTestScheduler(t)
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-sched",
 		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 5m"},
 	}
@@ -166,7 +166,7 @@ func TestIsDue_ScheduleNotYetDue(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	_ = st.SetLastRun("test-sched", time.Now().Add(-2*time.Minute))
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-sched",
 		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 5m"},
 	}
@@ -179,7 +179,7 @@ func TestIsDue_ScheduleElapsed(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	_ = st.SetLastRun("test-sched", time.Now().Add(-6*time.Minute))
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-sched",
 		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 5m"},
 	}
@@ -190,7 +190,7 @@ func TestIsDue_ScheduleElapsed(t *testing.T) {
 
 func TestIsDue_OnceNeverRun(t *testing.T) {
 	sched, _ := newTestScheduler(t)
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-once",
 		Trigger: core.SkillTrigger{Type: "once"},
 	}
@@ -203,7 +203,7 @@ func TestIsDue_OnceAlreadyRan(t *testing.T) {
 	sched, st := newTestScheduler(t)
 	_ = st.SetLastRun("test-once", time.Now())
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-once",
 		Trigger: core.SkillTrigger{Type: "once"},
 	}
@@ -215,7 +215,7 @@ func TestIsDue_OnceAlreadyRan(t *testing.T) {
 func TestIsDue_OnceRunAtFuture(t *testing.T) {
 	sched, _ := newTestScheduler(t)
 	future := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-once-future",
 		Trigger: core.SkillTrigger{Type: "once", RunAt: future},
 	}
@@ -227,7 +227,7 @@ func TestIsDue_OnceRunAtFuture(t *testing.T) {
 func TestIsDue_OnceRunAtPast(t *testing.T) {
 	sched, _ := newTestScheduler(t)
 	past := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-once-past",
 		Trigger: core.SkillTrigger{Type: "once", RunAt: past},
 	}
@@ -245,7 +245,7 @@ func TestIsDue_FailureBackoff(t *testing.T) {
 	_ = st.IncrementFailureCount("test-backoff")
 	_ = st.IncrementFailureCount("test-backoff")
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:    "test-backoff",
 		Trigger: core.SkillTrigger{Type: "schedule", Cron: "every 1m"},
 	}
@@ -344,8 +344,8 @@ func TestRunSkillAutoDeliversReturnToTriggerDeliveryTarget(t *testing.T) {
 		Notifier:  notifier,
 	}
 	sched := NewScheduler(session, nil)
-	sched.runSkill(context.Background(), &core.SkillWithCode{
-		Skill: core.Skill{
+	sched.runSkill(context.Background(), &core.SkillManifestWithCode{
+		Manifest: core.SkillManifest{
 			Name:    "scheduled-output",
 			Enabled: true,
 			Trigger: core.SkillTrigger{
@@ -389,8 +389,8 @@ func TestRunSkillSkipsAutoDeliveryAfterNotifySend(t *testing.T) {
 		Notifier:  notifier,
 	}
 	sched := NewScheduler(session, nil)
-	sched.runSkill(context.Background(), &core.SkillWithCode{
-		Skill: core.Skill{
+	sched.runSkill(context.Background(), &core.SkillManifestWithCode{
+		Manifest: core.SkillManifest{
 			Name:    "scheduled-notify",
 			Enabled: true,
 			Trigger: core.SkillTrigger{
@@ -430,12 +430,12 @@ func TestRunOnceSkillDeletesAfterDeliveryFailure(t *testing.T) {
 		AccountID: "alice",
 		Notifier:  notifier,
 	}
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "once-delivery-fails",
 		Version:     1,
 		Description: "one-shot reminder",
 		Enabled:     true,
-		Format:      core.SkillFormatNative,
+		Format:      core.SkillFormatScript,
 		Trigger: core.SkillTrigger{
 			Type: "once",
 			Delivery: core.DeliveryTarget{
@@ -450,9 +450,9 @@ func TestRunOnceSkillDeletesAfterDeliveryFailure(t *testing.T) {
 	}
 
 	sched := NewScheduler(session, nil)
-	sched.runSkill(context.Background(), &core.SkillWithCode{
-		Skill: *skill,
-		Code:  `return "ignored";`,
+	sched.runSkill(context.Background(), &core.SkillManifestWithCode{
+		Manifest: *skill,
+		Code:     `return "ignored";`,
 	})
 
 	got, _, err := core.LoadSkillFrom(baseDir, skill.Name)
@@ -490,12 +490,12 @@ func TestRunSkillAdmissionBusyLeavesOnceSkillDue(t *testing.T) {
 	}
 	defer lease.Release()
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "once-admission-busy",
 		Version:     1,
 		Description: "one-shot reminder",
 		Enabled:     true,
-		Format:      core.SkillFormatNative,
+		Format:      core.SkillFormatScript,
 		Trigger:     core.SkillTrigger{Type: "once"},
 	}
 	if err := core.SaveSkillTo(baseDir, skill, `return "scheduled output";`); err != nil {
@@ -503,9 +503,9 @@ func TestRunSkillAdmissionBusyLeavesOnceSkillDue(t *testing.T) {
 	}
 
 	sched := NewScheduler(session, nil)
-	sched.runSkill(context.Background(), &core.SkillWithCode{
-		Skill: *skill,
-		Code:  `return "ignored";`,
+	sched.runSkill(context.Background(), &core.SkillManifestWithCode{
+		Manifest: *skill,
+		Code:     `return "ignored";`,
 	})
 
 	if lastRun, _ := st.GetLastRun(skill.Name); lastRun != nil {

@@ -1427,12 +1427,12 @@ func TestRunPromptModeSkillUsesProvider(t *testing.T) {
 	skipWithoutRuntime(t)
 
 	baseDir := t.TempDir()
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "prompt-reminder",
 		Version:     1,
 		Description: "Prompt mode reminder skill",
 		Enabled:     true,
-		Format:      core.SkillFormatMd,
+		Format:      core.SkillFormatMarkdown,
 		Permissions: core.SkillPermissions{Primitives: []string{"Memory"}},
 	}
 	body := "Always answer with a concise reminder. This is SKILL.md text, not JavaScript."
@@ -1515,12 +1515,12 @@ func (p *promptModeToolProvider) MaxTokens() int     { return 4096 }
 func TestRunPromptModeSkillExecutesDeclaredTools(t *testing.T) {
 	baseDir := t.TempDir()
 	st := openTestStore(t)
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "prompt-memory",
 		Version:     1,
 		Description: "Prompt mode memory skill",
 		Enabled:     true,
-		Format:      core.SkillFormatMd,
+		Format:      core.SkillFormatMarkdown,
 		Permissions: core.SkillPermissions{Primitives: []string{"Memory"}},
 	}
 	body := "Store the requested value by calling Memory.set, then report success."
@@ -1582,16 +1582,170 @@ func TestRunPromptModeSkillExecutesDeclaredTools(t *testing.T) {
 	}
 }
 
+func TestPromptModeToolDefinitionsUseDeclaredParameterSchemas(t *testing.T) {
+	skill := &core.SkillManifest{
+		Name:        "prompt-file",
+		Version:     1,
+		Description: "Prompt mode file skill",
+		Enabled:     true,
+		Format:      core.SkillFormatMarkdown,
+		Permissions: core.SkillPermissions{Primitives: []string{"File"}},
+	}
+
+	tools, _ := promptModeToolDefinitions(skill)
+	var edit *llm.Tool
+	for i := range tools {
+		if tools[i].Name == "File__edit" {
+			edit = &tools[i]
+			break
+		}
+	}
+	if edit == nil {
+		t.Fatalf("tools = %+v, want File__edit", tools)
+	}
+	required, ok := edit.InputSchema["required"].([]string)
+	if !ok {
+		t.Fatalf("File__edit required = %#v, want []string", edit.InputSchema["required"])
+	}
+	for _, want := range []string{"path", "old_text", "new_text"} {
+		if !stringSliceContains(required, want) {
+			t.Fatalf("File__edit schema required = %#v, missing %q", required, want)
+		}
+	}
+	props := edit.InputSchema["properties"].(map[string]any)
+	if _, hasArgs := props["args"]; hasArgs {
+		t.Fatalf("File__edit schema unexpectedly exposes generic args: %#v", props)
+	}
+}
+
+func TestPromptModeToolArgsPacksTrailingObjectArgument(t *testing.T) {
+	args, err := promptModeToolArgs(map[string]any{
+		"ticket":   "ticket-1",
+		"status":   "done",
+		"actor_id": "alice",
+		"message":  "finished",
+	}, []string{"ticket", "options"})
+	if err != nil {
+		t.Fatalf("promptModeToolArgs: %v", err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("args = %#v, want ticket plus options object", args)
+	}
+	var ticket string
+	if err := json.Unmarshal(args[0], &ticket); err != nil || ticket != "ticket-1" {
+		t.Fatalf("ticket arg = %q err=%v", ticket, err)
+	}
+	var options map[string]any
+	if err := json.Unmarshal(args[1], &options); err != nil {
+		t.Fatalf("options arg: %v", err)
+	}
+	for _, want := range []string{"status", "actor_id", "message"} {
+		if _, ok := options[want]; !ok {
+			t.Fatalf("options = %#v, missing %q", options, want)
+		}
+	}
+}
+
+func TestPromptModeToolArgsUsesSchemaFriendlyAliases(t *testing.T) {
+	args, err := promptModeToolArgs(map[string]any{
+		"query": "newer_than:1d",
+		"limit": 5,
+	}, []string{"queryOrOptions", "options"})
+	if err != nil {
+		t.Fatalf("promptModeToolArgs: %v", err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("args = %#v, want query plus options object", args)
+	}
+	var query string
+	if err := json.Unmarshal(args[0], &query); err != nil || query != "newer_than:1d" {
+		t.Fatalf("query arg = %q err=%v", query, err)
+	}
+	var options map[string]any
+	if err := json.Unmarshal(args[1], &options); err != nil {
+		t.Fatalf("options arg: %v", err)
+	}
+	if got, ok := options["limit"].(float64); !ok || got != 5 {
+		t.Fatalf("options = %#v, want limit 5", options)
+	}
+}
+
+func TestPromptModeToolArgsTreatsDeclaredArgsAsNamedInput(t *testing.T) {
+	args, err := promptModeToolArgs(map[string]any{
+		"server": "filesystem",
+		"tool":   "read_file",
+		"args": map[string]any{
+			"path": "/tmp/report.txt",
+		},
+	}, []string{"server", "tool", "args"})
+	if err != nil {
+		t.Fatalf("promptModeToolArgs: %v", err)
+	}
+	if len(args) != 3 {
+		t.Fatalf("args = %#v, want server, tool, args object", args)
+	}
+	var server, tool string
+	if err := json.Unmarshal(args[0], &server); err != nil || server != "filesystem" {
+		t.Fatalf("server arg = %q err=%v", server, err)
+	}
+	if err := json.Unmarshal(args[1], &tool); err != nil || tool != "read_file" {
+		t.Fatalf("tool arg = %q err=%v", tool, err)
+	}
+	var toolArgs map[string]any
+	if err := json.Unmarshal(args[2], &toolArgs); err != nil {
+		t.Fatalf("args object: %v", err)
+	}
+	if got, ok := toolArgs["path"].(string); !ok || got != "/tmp/report.txt" {
+		t.Fatalf("args object = %#v, want path", toolArgs)
+	}
+}
+
+func TestPromptModeToolArgsKeepsPositionalArgsEscapeForDeclaredArgs(t *testing.T) {
+	args, err := promptModeToolArgs(map[string]any{
+		"args": []any{
+			"filesystem",
+			"read_file",
+			map[string]any{"path": "/tmp/report.txt"},
+		},
+	}, []string{"server", "tool", "args"})
+	if err != nil {
+		t.Fatalf("promptModeToolArgs: %v", err)
+	}
+	if len(args) != 3 {
+		t.Fatalf("args = %#v, want positional server, tool, args object", args)
+	}
+	var server string
+	if err := json.Unmarshal(args[0], &server); err != nil || server != "filesystem" {
+		t.Fatalf("server arg = %q err=%v", server, err)
+	}
+}
+
+func TestGitLogLimitArgAcceptsSchemaInteger(t *testing.T) {
+	got := gitLogLimitArg([]json.RawMessage{json.RawMessage(`5`)})
+	if got != "5" {
+		t.Fatalf("gitLogLimitArg(number) = %q, want 5", got)
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, got := range values {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSkillListIncludesScheduleState(t *testing.T) {
 	baseDir := t.TempDir()
 	st := openTestStore(t)
 	runAt := time.Now().UTC().Add(30 * time.Minute).Format(time.RFC3339)
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "scheduled-reminder",
 		Version:     1,
 		Description: "Scheduled reminder",
 		Enabled:     true,
-		Format:      core.SkillFormatNative,
+		Format:      core.SkillFormatScript,
 		Trigger:     core.SkillTrigger{Type: "once", RunAt: runAt},
 	}
 	if err := core.SaveSkillTo(baseDir, skill, "return \"ok\";"); err != nil {

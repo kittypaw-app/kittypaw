@@ -740,12 +740,12 @@ func TestRunStoresToolTraceOnAssistantTurn(t *testing.T) {
 func TestRunPropagatesPermissionCallbackIntoSkillRunFileWrite(t *testing.T) {
 	base := t.TempDir()
 	workspaceRoot := resolveForValidation(t.TempDir())
-	if err := core.SaveSkillTo(base, &core.Skill{
+	if err := core.SaveSkillTo(base, &core.SkillManifest{
 		Name:        "writer",
 		Version:     1,
 		Description: "writes a workspace file",
 		Enabled:     true,
-		Format:      core.SkillFormatNative,
+		Format:      core.SkillFormatScript,
 		Trigger:     core.SkillTrigger{Type: "manual"},
 	}, `
 		const result = File.write("nested.txt", "nested ok");

@@ -334,7 +334,7 @@ func TestSlashRunExecutesInstalledSkill(t *testing.T) {
 		Config:  &cfg,
 		Sandbox: sandbox.New(cfg.Sandbox),
 	}
-	if err := core.SaveSkillTo(baseDir, &core.Skill{
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
 		Name:        "hello",
 		Description: "test skill",
 		Enabled:     true,
@@ -364,7 +364,7 @@ func TestSlashRunResultIsRecordedInConversationHistory(t *testing.T) {
 		Store:   st,
 		Sandbox: sandbox.New(cfg.Sandbox),
 	}
-	if err := core.SaveSkillTo(baseDir, &core.Skill{
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
 		Name:        "hello",
 		Description: "test skill",
 		Enabled:     true,

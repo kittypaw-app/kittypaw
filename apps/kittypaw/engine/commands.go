@@ -399,10 +399,10 @@ func handleSkills(s *AccountRuntime) string {
 	sb.WriteString("📋 스킬 목록:\n")
 	for _, s := range skills {
 		status := "✅"
-		if !s.Skill.Enabled {
+		if !s.Manifest.Enabled {
 			status = "⛔"
 		}
-		sb.WriteString(fmt.Sprintf("  %s %s — %s\n", status, s.Skill.Name, s.Skill.Description))
+		sb.WriteString(fmt.Sprintf("  %s %s — %s\n", status, s.Manifest.Name, s.Manifest.Description))
 	}
 	return sb.String()
 }

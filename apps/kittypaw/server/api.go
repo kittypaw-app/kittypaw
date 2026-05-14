@@ -461,21 +461,21 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 	items := make([]skillItem, 0, len(skills))
 	now := time.Now()
 	for _, sk := range skills {
-		lastRun, _ := s.store.GetLastRun(sk.Skill.Name)
-		failureCount, _ := s.store.GetFailureCount(sk.Skill.Name)
-		status := engine.SkillScheduleStateFor(&sk.Skill, lastRun, failureCount, now)
+		lastRun, _ := s.store.GetLastRun(sk.Manifest.Name)
+		failureCount, _ := s.store.GetFailureCount(sk.Manifest.Name)
+		status := engine.SkillScheduleStateFor(&sk.Manifest, lastRun, failureCount, now)
 		item := skillItem{
-			Name:         sk.Skill.Name,
-			Description:  sk.Skill.Description,
-			Enabled:      sk.Skill.Enabled,
-			Version:      sk.Skill.Version,
-			Trigger:      sk.Skill.Trigger.Type,
-			Cron:         sk.Skill.Trigger.Cron,
-			RunAt:        sk.Skill.Trigger.RunAt,
+			Name:         sk.Manifest.Name,
+			Description:  sk.Manifest.Description,
+			Enabled:      sk.Manifest.Enabled,
+			Version:      sk.Manifest.Version,
+			Trigger:      sk.Manifest.Trigger.Type,
+			Cron:         sk.Manifest.Trigger.Cron,
+			RunAt:        sk.Manifest.Trigger.RunAt,
 			FailureCount: failureCount,
 			Due:          status.Due,
-			CreatedAt:    sk.Skill.CreatedAt,
-			UpdatedAt:    sk.Skill.UpdatedAt,
+			CreatedAt:    sk.Manifest.CreatedAt,
+			UpdatedAt:    sk.Manifest.UpdatedAt,
 		}
 		if lastRun != nil {
 			item.LastRun = lastRun.UTC().Format(time.RFC3339)

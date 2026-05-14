@@ -366,12 +366,12 @@ func TestRunSkillDryRunUsesSelectedAccount(t *testing.T) {
 	flagAccount = "bob"
 	flagRemote = ""
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        "account-skill",
 		Version:     1,
 		Description: "bob-only skill",
 		Enabled:     true,
-		Format:      core.SkillFormatNative,
+		Format:      core.SkillFormatScript,
 		Trigger:     core.SkillTrigger{Type: "manual"},
 	}
 	if err := core.SaveSkillTo(filepath.Join(root, "accounts", "bob"), skill, `return "bob"`); err != nil {

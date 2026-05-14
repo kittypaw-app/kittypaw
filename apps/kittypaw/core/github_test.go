@@ -68,8 +68,8 @@ Do things.
 	if err != nil {
 		t.Fatalf("ResolveGitHubSource: %v", err)
 	}
-	if result.Format != SourceFormatSkillMd {
-		t.Errorf("Format = %q, want %q", result.Format, SourceFormatSkillMd)
+	if result.Format != SourceFormatMarkdownSkill {
+		t.Errorf("Format = %q, want %q", result.Format, SourceFormatMarkdownSkill)
 	}
 	if result.SkillMdContent == "" {
 		t.Error("SkillMdContent should not be empty")
@@ -129,7 +129,7 @@ body
 	if err != nil {
 		t.Fatalf("ResolveGitHubSource: %v", err)
 	}
-	if result.Format != SourceFormatSkillMd {
+	if result.Format != SourceFormatMarkdownSkill {
 		t.Errorf("Format = %q, want skillmd", result.Format)
 	}
 }

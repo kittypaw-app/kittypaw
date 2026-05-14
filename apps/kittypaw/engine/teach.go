@@ -70,12 +70,12 @@ func ApproveSkill(baseDir string, result *TeachResult) error {
 		}
 	}
 
-	skill := &core.Skill{
+	skill := &core.SkillManifest{
 		Name:        result.SkillName,
 		Version:     1,
 		Description: result.Description,
 		Enabled:     true,
-		Format:      core.SkillFormatNative,
+		Format:      core.SkillFormatScript,
 		Trigger:     result.Trigger,
 		Permissions: core.SkillPermissions{
 			Primitives: result.Permissions,

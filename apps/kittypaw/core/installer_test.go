@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestDetectSourceFormatSkillMd(t *testing.T) {
+func TestDetectSourceFormatMarkdownSkill(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: x\n---\nbody"), 0o644)
 
@@ -16,7 +16,7 @@ func TestDetectSourceFormatSkillMd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectSourceFormat: %v", err)
 	}
-	if f != SourceFormatSkillMd {
+	if f != SourceFormatMarkdownSkill {
 		t.Errorf("format = %q, want skillmd", f)
 	}
 }
@@ -50,7 +50,7 @@ func TestDetectSourceFormatPreferSkillMd(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "main.js"), []byte(""), 0o644)
 
 	f, _ := DetectSourceFormat(dir)
-	if f != SourceFormatSkillMd {
+	if f != SourceFormatMarkdownSkill {
 		t.Errorf("when both exist, SKILL.md should take priority, got %q", f)
 	}
 }
@@ -106,7 +106,7 @@ Do things.
 	if result.SkillName != "local-skill" {
 		t.Errorf("SkillName = %q, want local-skill", result.SkillName)
 	}
-	if result.Format != SourceFormatSkillMd {
+	if result.Format != SourceFormatMarkdownSkill {
 		t.Errorf("Format = %q", result.Format)
 	}
 
@@ -118,7 +118,7 @@ Do things.
 	if skill == nil {
 		t.Fatal("skill should exist after install")
 	}
-	if skill.Format != SkillFormatMd {
+	if skill.Format != SkillFormatMarkdown {
 		t.Errorf("skill Format = %q, want skillmd", skill.Format)
 	}
 	if skill.SourceURL != "" {

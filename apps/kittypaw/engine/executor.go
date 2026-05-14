@@ -1140,11 +1140,7 @@ func executeGit(ctx context.Context, call core.SkillCall, s *AccountRuntime) (st
 	case "status":
 		args = []string{"status", "--short"}
 	case "log":
-		n := "10"
-		if len(call.Args) > 0 {
-			_ = json.Unmarshal(call.Args[0], &n)
-		}
-		args = []string{"log", "--oneline", "-n", n}
+		args = []string{"log", "--oneline", "-n", gitLogLimitArg(call.Args)}
 	case "diff":
 		args = []string{"diff"}
 	case "add":
@@ -1176,6 +1172,22 @@ func executeGit(ctx context.Context, call core.SkillCall, s *AccountRuntime) (st
 		return jsonResult(map[string]any{"output": string(output), "error": err.Error()})
 	}
 	return jsonResult(map[string]any{"output": string(output)})
+}
+
+func gitLogLimitArg(args []json.RawMessage) string {
+	const defaultLimit = "10"
+	if len(args) == 0 {
+		return defaultLimit
+	}
+	var n string
+	if json.Unmarshal(args[0], &n) == nil && strings.TrimSpace(n) != "" {
+		return strings.TrimSpace(n)
+	}
+	var numeric int
+	if json.Unmarshal(args[0], &numeric) == nil && numeric > 0 {
+		return fmt.Sprintf("%d", numeric)
+	}
+	return defaultLimit
 }
 
 // --- LLM ---
@@ -1942,17 +1954,17 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 		var items []map[string]any
 		for _, sk := range skills {
 			item := map[string]any{
-				"name":        sk.Skill.Name,
-				"description": sk.Skill.Description,
-				"enabled":     sk.Skill.Enabled,
-				"trigger":     sk.Skill.Trigger.Type,
-				"cron":        sk.Skill.Trigger.Cron,
-				"run_at":      sk.Skill.Trigger.RunAt,
+				"name":        sk.Manifest.Name,
+				"description": sk.Manifest.Description,
+				"enabled":     sk.Manifest.Enabled,
+				"trigger":     sk.Manifest.Trigger.Type,
+				"cron":        sk.Manifest.Trigger.Cron,
+				"run_at":      sk.Manifest.Trigger.RunAt,
 			}
 			if s.Store != nil {
-				lastRun, _ := s.Store.GetLastRun(sk.Skill.Name)
-				failCount, _ := s.Store.GetFailureCount(sk.Skill.Name)
-				state := SkillScheduleStateFor(&sk.Skill, lastRun, failCount, time.Now())
+				lastRun, _ := s.Store.GetLastRun(sk.Manifest.Name)
+				failCount, _ := s.Store.GetFailureCount(sk.Manifest.Name)
+				state := SkillScheduleStateFor(&sk.Manifest, lastRun, failCount, time.Now())
 				item["last_run"] = formatOptionalScheduleTime(state.LastRun)
 				item["next_run"] = formatOptionalScheduleTime(state.NextRun)
 				item["failure_count"] = state.FailureCount
@@ -2025,12 +2037,12 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 			_ = json.Unmarshal(call.Args[4], &schedule)
 		}
 
-		skill := &core.Skill{
+		skill := &core.SkillManifest{
 			Name:        name,
 			Version:     1,
 			Description: desc,
 			Enabled:     true,
-			Format:      core.SkillFormatNative,
+			Format:      core.SkillFormatScript,
 			Trigger: core.SkillTrigger{
 				Type: triggerType,
 			},
@@ -2279,11 +2291,11 @@ func runSkillOrPackageWithParams(ctx context.Context, name string, s *AccountRun
 	}
 	// Try user-created skill first.
 	skill, code, err := core.LoadSkillFrom(s.BaseDir, name)
-	if err == nil && skill != nil && (code != "" || IsPromptModeSkill(skill)) {
+	if err == nil && skill != nil && (code != "" || IsMarkdownSkill(skill)) {
 		if !skill.Enabled {
 			return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q is disabled", name)})
 		}
-		if IsPromptModeSkill(skill) {
+		if IsMarkdownSkill(skill) {
 			body := code
 			if body == "" {
 				body = skill.SourceText
@@ -2412,7 +2424,7 @@ func runSkillOrPackageWithParams(ctx context.Context, name string, s *AccountRun
 	return jsonResult(map[string]any{"success": true, "output": output})
 }
 
-func runPromptModeSkill(ctx context.Context, name string, skill *core.Skill, body string, s *AccountRuntime, params map[string]any) (string, error) {
+func runPromptModeSkill(ctx context.Context, name string, skill *core.SkillManifest, body string, s *AccountRuntime, params map[string]any) (string, error) {
 	if s == nil || s.Provider == nil {
 		return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q requires an LLM provider", name)})
 	}
@@ -2487,7 +2499,7 @@ func runPromptModeSkillWithTools(ctx context.Context, name string, messages []co
 	return jsonResult(map[string]any{"error": fmt.Sprintf("skill %q exceeded prompt-mode tool iteration limit", name)})
 }
 
-func promptModeToolDefinitions(skill *core.Skill) ([]llm.Tool, map[string]promptModeToolBinding) {
+func promptModeToolDefinitions(skill *core.SkillManifest) ([]llm.Tool, map[string]promptModeToolBinding) {
 	allowed := FilterSkillsByPermissions(core.SkillRegistry, skill.Permissions.Primitives)
 	tools := make([]llm.Tool, 0)
 	bindings := map[string]promptModeToolBinding{}
@@ -2496,7 +2508,7 @@ func promptModeToolDefinitions(skill *core.Skill) ([]llm.Tool, map[string]prompt
 			name := promptModeToolName(skillMeta.Name, method.Name)
 			tools = append(tools, llm.Tool{
 				Name:        name,
-				Description: fmt.Sprintf("Call %s.%s. Signature: %s. Provide positional arguments as {\"args\": [...]} or named fields matching the signature.", skillMeta.Name, method.Name, method.Signature),
+				Description: fmt.Sprintf("Call %s.%s. Signature: %s. Provide named fields described by the input schema, or positional arguments as {\"args\": [...]}.", skillMeta.Name, method.Name, method.Signature),
 				InputSchema: promptModeToolInputSchema(method),
 			})
 			bindings[name] = promptModeToolBinding{
@@ -2510,6 +2522,9 @@ func promptModeToolDefinitions(skill *core.Skill) ([]llm.Tool, map[string]prompt
 }
 
 func promptModeToolInputSchema(method core.SkillMethodMeta) map[string]any {
+	if method.ParametersSchema != nil {
+		return method.ParametersSchema
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -2566,13 +2581,24 @@ func promptModeToolArgs(input map[string]any, argNames []string) ([]json.RawMess
 	if len(input) == 0 {
 		return nil, nil
 	}
-	if rawArgs, ok := input["args"]; ok {
+	if rawArgs, ok := input["args"]; ok && promptModeShouldUsePositionalArgs(input, argNames, rawArgs) {
 		return promptModeRawArgs(rawArgs)
 	}
 	var args []json.RawMessage
+	used := map[string]bool{}
 	for _, name := range argNames {
-		value, ok := input[name]
+		value, usedKey, ok := promptModeToolInputValue(input, name)
 		if !ok {
+			if len(args) > 0 && isPromptModeObjectArgumentName(name) {
+				remaining := promptModeRemainingInput(input, used)
+				if len(remaining) > 0 {
+					data, err := json.Marshal(remaining)
+					if err != nil {
+						return nil, fmt.Errorf("marshal %s argument: %w", name, err)
+					}
+					args = append(args, json.RawMessage(data))
+				}
+			}
 			break
 		}
 		data, err := json.Marshal(value)
@@ -2580,6 +2606,7 @@ func promptModeToolArgs(input map[string]any, argNames []string) ([]json.RawMess
 			return nil, fmt.Errorf("marshal %s argument: %w", name, err)
 		}
 		args = append(args, json.RawMessage(data))
+		used[usedKey] = true
 	}
 	if len(args) > 0 {
 		return args, nil
@@ -2592,6 +2619,107 @@ func promptModeToolArgs(input map[string]any, argNames []string) ([]json.RawMess
 		return []json.RawMessage{data}, nil
 	}
 	return nil, nil
+}
+
+func promptModeShouldUsePositionalArgs(input map[string]any, argNames []string, rawArgs any) bool {
+	if !promptModeArgNameDeclared("args", argNames) {
+		return true
+	}
+	if promptModeHasNamedInputBesidesArgs(input, argNames) {
+		return false
+	}
+	return promptModeLooksLikePositionalArgs(rawArgs)
+}
+
+func promptModeArgNameDeclared(name string, argNames []string) bool {
+	for _, argName := range argNames {
+		if argName == name {
+			return true
+		}
+	}
+	return false
+}
+
+func promptModeHasNamedInputBesidesArgs(input map[string]any, argNames []string) bool {
+	for _, name := range argNames {
+		if name == "args" {
+			continue
+		}
+		if _, _, ok := promptModeToolInputValue(input, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func promptModeLooksLikePositionalArgs(value any) bool {
+	if raw, ok := value.(string); ok {
+		var out []json.RawMessage
+		return json.Unmarshal([]byte(raw), &out) == nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	var out []json.RawMessage
+	return json.Unmarshal(data, &out) == nil
+}
+
+func promptModeToolInputValue(input map[string]any, name string) (any, string, bool) {
+	if value, ok := input[name]; ok {
+		return value, name, true
+	}
+	for _, alias := range promptModeArgumentAliases(name) {
+		if value, ok := input[alias]; ok {
+			return value, alias, true
+		}
+	}
+	return nil, "", false
+}
+
+func promptModeArgumentAliases(name string) []string {
+	switch name {
+	case "accountID":
+		return []string{"account_id"}
+	case "idOrUrl":
+		return []string{"id_or_url", "id", "url"}
+	case "jsCode":
+		return []string{"js", "code"}
+	case "msg":
+		return []string{"message"}
+	case "queryOrOptions":
+		return []string{"query"}
+	case "refOrSelector":
+		return []string{"ref_or_selector", "ref", "selector"}
+	case "scheduleOrRunAt":
+		return []string{"schedule_or_run_at", "schedule", "run_at"}
+	case "targetId":
+		return []string{"target_id"}
+	case "usernameOrOptions":
+		return []string{"username"}
+	default:
+		return nil
+	}
+}
+
+func promptModeRemainingInput(input map[string]any, used map[string]bool) map[string]any {
+	out := map[string]any{}
+	for key, value := range input {
+		if used[key] {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func isPromptModeObjectArgumentName(name string) bool {
+	switch name {
+	case "options", "target", "params", "payload", "args", "input", "request", "observation":
+		return true
+	default:
+		return false
+	}
 }
 
 func promptModeRawArgs(value any) ([]json.RawMessage, error) {
@@ -2624,10 +2752,18 @@ func promptModeArgNames(signature string) []string {
 		return nil
 	}
 	inside := signature[start+1 : end]
-	parts := strings.Split(inside, ",")
+	parts := splitPromptModeSignatureArgs(inside)
 	names := make([]string, 0, len(parts))
-	for _, part := range parts {
+	for i, part := range parts {
 		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "{") {
+			if len(parts) == 1 {
+				names = append(names, "input")
+			} else if i == len(parts)-1 {
+				names = append(names, "options")
+			}
+			continue
+		}
 		part = strings.Trim(part, "[]")
 		part = strings.TrimSuffix(part, "?")
 		if part == "" {
@@ -2642,6 +2778,32 @@ func promptModeArgNames(signature string) []string {
 		}
 	}
 	return names
+}
+
+func splitPromptModeSignatureArgs(inside string) []string {
+	var parts []string
+	start := 0
+	depth := 0
+	for i, r := range inside {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				parts = append(parts, inside[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, inside[start:])
+	if len(parts) == 1 && strings.TrimSpace(parts[0]) == "" {
+		return nil
+	}
+	return parts
 }
 
 func buildPromptModeUserPrompt(ctx context.Context, name string, params map[string]any) string {

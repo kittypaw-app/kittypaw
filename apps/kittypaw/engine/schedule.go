@@ -326,30 +326,30 @@ func (s *Scheduler) checkAndRun(ctx context.Context) {
 	}
 
 	for _, sk := range skills {
-		if !sk.Skill.Enabled {
+		if !sk.Manifest.Enabled {
 			continue
 		}
-		if sk.Skill.Trigger.Type != "schedule" && sk.Skill.Trigger.Type != "once" {
+		if sk.Manifest.Trigger.Type != "schedule" && sk.Manifest.Trigger.Type != "once" {
 			continue
 		}
 
-		if s.isDue(&sk.Skill) {
-			if _, loaded := s.inflight.LoadOrStore(sk.Skill.Name, struct{}{}); loaded {
-				slog.Debug("scheduler: skill still running, skipping", "name", sk.Skill.Name)
+		if s.isDue(&sk.Manifest) {
+			if _, loaded := s.inflight.LoadOrStore(sk.Manifest.Name, struct{}{}); loaded {
+				slog.Debug("scheduler: skill still running, skipping", "name", sk.Manifest.Name)
 				continue
 			}
 			releaseSlot, ok := s.acquireScheduledSlot()
 			if !ok {
-				s.inflight.Delete(sk.Skill.Name)
-				slog.Warn("scheduler: account scheduled job cap reached, skipping tick", "name", sk.Skill.Name)
+				s.inflight.Delete(sk.Manifest.Name)
+				slog.Warn("scheduler: account scheduled job cap reached, skipping tick", "name", sk.Manifest.Name)
 				continue
 			}
-			slog.Info("scheduler: running skill", "name", sk.Skill.Name, "trigger", sk.Skill.Trigger.Type)
+			slog.Info("scheduler: running skill", "name", sk.Manifest.Name, "trigger", sk.Manifest.Trigger.Type)
 			s.wg.Add(1)
-			go func(sk core.SkillWithCode) {
+			go func(sk core.SkillManifestWithCode) {
 				defer s.wg.Done()
 				defer releaseSlot()
-				defer s.inflight.Delete(sk.Skill.Name)
+				defer s.inflight.Delete(sk.Manifest.Name)
 				runWithAccountRecover(s.runtime, "scheduler.runSkill", func() {
 					s.runSkill(ctx, &sk)
 				})
@@ -530,7 +530,7 @@ func (s *Scheduler) executePackageCode(ctx context.Context, pkg *core.SkillPacka
 	return s.runtime.Run(ctx, event, opts)
 }
 
-func (s *Scheduler) isDue(skill *core.Skill) bool {
+func (s *Scheduler) isDue(skill *core.SkillManifest) bool {
 	lastRun, err := s.runtime.Store.GetLastRun(skill.Name)
 	if err != nil {
 		return false
@@ -540,10 +540,10 @@ func (s *Scheduler) isDue(skill *core.Skill) bool {
 	return SkillScheduleStateFor(skill, lastRun, failCount, time.Now()).Due
 }
 
-func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
+func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillManifestWithCode) {
 	// Create a synthetic event
 	payload, _ := json.Marshal(core.ChatPayload{
-		Text:   "skill:" + sk.Skill.Name,
+		Text:   "skill:" + sk.Manifest.Name,
 		ChatID: "scheduler",
 	})
 	event := core.Event{
@@ -554,48 +554,48 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 	admissionCtx, admissionLease, err := s.runtime.acquireTurnAdmission(ctx, event)
 	if err != nil {
 		if errors.Is(err, ErrRuntimeAdmissionBusy) {
-			slog.Warn("scheduler: account runtime busy, leaving skill due", "name", sk.Skill.Name)
+			slog.Warn("scheduler: account runtime busy, leaving skill due", "name", sk.Manifest.Name)
 		} else {
-			slog.Error("scheduler: admission failed, leaving skill due", "name", sk.Skill.Name, "error", err)
+			slog.Error("scheduler: admission failed, leaving skill due", "name", sk.Manifest.Name, "error", err)
 		}
 		return
 	}
 	defer admissionLease.Release()
 
-	if err := s.runtime.Store.SetLastRun(sk.Skill.Name, time.Now()); err != nil {
+	if err := s.runtime.Store.SetLastRun(sk.Manifest.Name, time.Now()); err != nil {
 		slog.Error("scheduler: SetLastRun failed, aborting to prevent duplicate execution",
-			"name", sk.Skill.Name, "trigger", sk.Skill.Trigger.Type, "error", err)
+			"name", sk.Manifest.Name, "trigger", sk.Manifest.Trigger.Type, "error", err)
 		return
 	}
 
-	target := sk.Skill.Trigger.Delivery
+	target := sk.Manifest.Trigger.Delivery
 	runCtx := ContextWithDeliveryTarget(admissionCtx, target)
 	state := &deliveryState{}
 	runCtx = contextWithDeliveryState(runCtx, state)
 	output, err := s.runtime.Run(runCtx, event, nil)
 	if err != nil {
-		slog.Error("scheduler: skill execution failed", "name", sk.Skill.Name, "error", err)
-		_ = s.runtime.Store.IncrementFailureCount(sk.Skill.Name)
+		slog.Error("scheduler: skill execution failed", "name", sk.Manifest.Name, "error", err)
+		_ = s.runtime.Store.IncrementFailureCount(sk.Manifest.Name)
 
 		// Auto-delete one-shot skills even on failure.
-		if sk.Skill.Trigger.Type == "once" {
-			if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Skill.Name); delErr != nil {
-				slog.Error("scheduler: failed to delete one-shot skill after failure", "name", sk.Skill.Name, "error", delErr)
+		if sk.Manifest.Trigger.Type == "once" {
+			if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Manifest.Name); delErr != nil {
+				slog.Error("scheduler: failed to delete one-shot skill after failure", "name", sk.Manifest.Name, "error", delErr)
 			}
 			return
 		}
 		return
 	}
 
-	_ = s.runtime.Store.ResetFailureCount(sk.Skill.Name)
+	_ = s.runtime.Store.ResetFailureCount(sk.Manifest.Name)
 
 	if strings.TrimSpace(output) != "" && !notificationSent(runCtx) && s.runtime.Notifier != nil && !target.IsZero() {
 		if err := s.runtime.Notifier.SendNotification(ctx, target, output); err != nil {
-			slog.Error("scheduler: skill output delivery failed", "name", sk.Skill.Name, "error", err)
-			_ = s.runtime.Store.IncrementFailureCount(sk.Skill.Name)
-			if sk.Skill.Trigger.Type == "once" {
-				if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Skill.Name); delErr != nil {
-					slog.Error("scheduler: failed to delete one-shot skill after delivery failure", "name", sk.Skill.Name, "error", delErr)
+			slog.Error("scheduler: skill output delivery failed", "name", sk.Manifest.Name, "error", err)
+			_ = s.runtime.Store.IncrementFailureCount(sk.Manifest.Name)
+			if sk.Manifest.Trigger.Type == "once" {
+				if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Manifest.Name); delErr != nil {
+					slog.Error("scheduler: failed to delete one-shot skill after delivery failure", "name", sk.Manifest.Name, "error", delErr)
 				}
 			}
 			return
@@ -603,11 +603,11 @@ func (s *Scheduler) runSkill(ctx context.Context, sk *core.SkillWithCode) {
 	}
 
 	// Delete one-shot skills after successful execution
-	if sk.Skill.Trigger.Type == "once" {
-		if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Skill.Name); delErr != nil {
-			slog.Error("scheduler: failed to delete one-shot skill after success", "name", sk.Skill.Name, "error", delErr)
+	if sk.Manifest.Trigger.Type == "once" {
+		if delErr := core.DeleteSkillFrom(s.runtime.BaseDir, sk.Manifest.Name); delErr != nil {
+			slog.Error("scheduler: failed to delete one-shot skill after success", "name", sk.Manifest.Name, "error", delErr)
 		} else {
-			slog.Info("scheduler: one-shot skill completed and deleted", "name", sk.Skill.Name)
+			slog.Info("scheduler: one-shot skill completed and deleted", "name", sk.Manifest.Name)
 		}
 	}
 }
@@ -687,7 +687,7 @@ func parseCronSchedule(expr string) (cron.Schedule, error) {
 	return parser.Parse(expr)
 }
 
-func SkillScheduleStateFor(skill *core.Skill, lastRun *time.Time, failureCount int, now time.Time) SkillScheduleState {
+func SkillScheduleStateFor(skill *core.SkillManifest, lastRun *time.Time, failureCount int, now time.Time) SkillScheduleState {
 	state := SkillScheduleState{LastRun: lastRun, FailureCount: failureCount}
 	if skill == nil {
 		return state

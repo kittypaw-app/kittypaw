@@ -661,9 +661,9 @@ func buildSkillsSection(baseDir string, allowed ...[]string) string {
 		// User-created skills.
 		if userSkills, err := core.LoadAllSkillsFrom(baseDir); err == nil {
 			for _, sk := range userSkills {
-				if sk.Skill.Enabled && sk.Skill.Description != "" {
-					name := sanitizePromptMetadata(sk.Skill.Name, 80)
-					desc := sanitizePromptMetadata(sk.Skill.Description, 220)
+				if sk.Manifest.Enabled && sk.Manifest.Description != "" {
+					name := sanitizePromptMetadata(sk.Manifest.Name, 80)
+					desc := sanitizePromptMetadata(sk.Manifest.Description, 220)
 					if name != "" && desc != "" {
 						runnable = append(runnable, fmt.Sprintf("- Skill.run(\"%s\") — %s", name, desc))
 					}

@@ -3,18 +3,19 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestSkillProvenanceRoundtrip(t *testing.T) {
 	baseDir := t.TempDir()
 
-	skill := &Skill{
+	skill := &SkillManifest{
 		Name:        "provenance-test",
 		Version:     1,
 		Description: "test provenance fields",
 		Enabled:     true,
-		Format:      SkillFormatNative,
+		Format:      SkillFormatScript,
 		Trigger:     SkillTrigger{Type: "manual"},
 		SourceURL:   "https://github.com/user/repo",
 		SourceHash:  "sha256:abc123def456",
@@ -44,14 +45,69 @@ func TestSkillProvenanceRoundtrip(t *testing.T) {
 	}
 }
 
+func TestScriptAndMarkdownSkillFormatNamesPreserveStorageValues(t *testing.T) {
+	if SkillFormatScript != "native" {
+		t.Fatalf("SkillFormatScript storage value = %q, want native", SkillFormatScript)
+	}
+	if SkillFormatMarkdown != "skillmd" {
+		t.Fatalf("SkillFormatMarkdown storage value = %q, want skillmd", SkillFormatMarkdown)
+	}
+}
+
+func TestSkillNamingDoesNotExposeLegacyAliases(t *testing.T) {
+	checks := []struct {
+		path      string
+		forbidden []string
+	}{
+		{
+			path: "skill.go",
+			forbidden: []string{
+				"SkillFormat" + "Native",
+				"SkillFormat" + "Md",
+				"type Skill =",
+				"type Script" + "Skill",
+				"type Markdown" + "Skill",
+				"Script" + "SkillWithCode",
+			},
+		},
+		{
+			path:      "github.go",
+			forbidden: []string{"SourceFormat" + "SkillMd"},
+		},
+	}
+
+	for _, check := range checks {
+		raw, err := os.ReadFile(check.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", check.path, err)
+		}
+		source := string(raw)
+		for _, symbol := range check.forbidden {
+			if strings.Contains(source, symbol) {
+				t.Fatalf("%s still exposes legacy symbol %q", check.path, symbol)
+			}
+		}
+	}
+}
+
+func TestSkillManifestIsTheStorageEnvelope(t *testing.T) {
+	raw, err := os.ReadFile("skill.go")
+	if err != nil {
+		t.Fatalf("read skill.go: %v", err)
+	}
+	if !strings.Contains(string(raw), "type SkillManifest struct") {
+		t.Fatal("skill.go should expose SkillManifest as the stored skill metadata envelope")
+	}
+}
+
 func TestSkillProvenanceEmpty(t *testing.T) {
 	baseDir := t.TempDir()
 
-	skill := &Skill{
+	skill := &SkillManifest{
 		Name:    "no-provenance",
 		Version: 1,
 		Enabled: true,
-		Format:  SkillFormatNative,
+		Format:  SkillFormatScript,
 		Trigger: SkillTrigger{Type: "manual"},
 	}
 

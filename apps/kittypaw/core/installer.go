@@ -50,7 +50,7 @@ func InstallSkillSource(baseDir, sourcePath string, opts InstallOptions) (*Insta
 	}
 
 	switch format {
-	case SourceFormatSkillMd:
+	case SourceFormatMarkdownSkill:
 		return installSkillMd(baseDir, sourcePath, opts)
 	case SourceFormatNative:
 		return installNative(baseDir, sourcePath, opts)
@@ -81,18 +81,18 @@ func installSkillMd(baseDir, sourcePath string, opts InstallOptions) (*InstallRe
 		// to invoke the teach pipeline.
 		return &InstallResult{
 			SkillName: meta.Name,
-			Format:    SourceFormatSkillMd,
+			Format:    SourceFormatMarkdownSkill,
 			Mode:      "native",
 		}, fmt.Errorf("install: native conversion requires teach pipeline (not implemented in installer)")
 	}
 
 	// Prompt mode: save SKILL.md content as the skill's "code".
-	skill := &Skill{
+	skill := &SkillManifest{
 		Name:        meta.Name,
 		Version:     1,
 		Description: meta.Description,
 		Enabled:     true,
-		Format:      SkillFormatMd,
+		Format:      SkillFormatMarkdown,
 		Trigger:     meta.Trigger,
 		Permissions: SkillPermissions{
 			Primitives: meta.Permissions,
@@ -111,7 +111,7 @@ func installSkillMd(baseDir, sourcePath string, opts InstallOptions) (*InstallRe
 
 	return &InstallResult{
 		SkillName: meta.Name,
-		Format:    SourceFormatSkillMd,
+		Format:    SourceFormatMarkdownSkill,
 		Mode:      "prompt",
 	}, nil
 }
@@ -134,7 +134,7 @@ func installNative(baseDir, sourcePath string, opts InstallOptions) (*InstallRes
 // SKILL.md takes priority over package.toml when both exist.
 func DetectSourceFormat(dir string) (SourceFormat, error) {
 	if fileExists(filepath.Join(dir, "SKILL.md")) {
-		return SourceFormatSkillMd, nil
+		return SourceFormatMarkdownSkill, nil
 	}
 	if fileExists(filepath.Join(dir, "package.toml")) && fileExists(filepath.Join(dir, "main.js")) {
 		return SourceFormatNative, nil

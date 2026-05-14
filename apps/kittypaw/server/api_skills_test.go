@@ -15,7 +15,7 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 	baseDir := srv.defaultRuntime().BaseDir
 
 	runAt := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
-	if err := core.SaveSkillTo(baseDir, &core.Skill{
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
 		Name:        "remind",
 		Version:     1,
 		Description: "one-shot reminder",
@@ -24,7 +24,7 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 	}, `return "ok";`); err != nil {
 		t.Fatalf("save once skill: %v", err)
 	}
-	if err := core.SaveSkillTo(baseDir, &core.Skill{
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
 		Name:        "poll",
 		Version:     1,
 		Description: "scheduled poll",
