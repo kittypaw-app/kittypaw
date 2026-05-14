@@ -8,6 +8,13 @@ import (
 	"github.com/jinto/kittypaw/core"
 )
 
+const (
+	promptRecentTurnContentLimit = 8000
+	promptRecentSkillOutputLimit = 8000
+	promptObservationDataLimit   = 12000
+	promptTruncationMarkerFormat = "\n...[truncated, original_chars=%d]"
+)
+
 // CompactionConfig controls 3-stage context window management.
 type CompactionConfig struct {
 	RecentWindow int // recent turns kept in full
@@ -103,12 +110,16 @@ func turnToMessage(turn *core.ConversationTurn, truncateTo int) (core.LlmMessage
 		}
 		if truncateTo > 0 {
 			content = truncate(content, truncateTo)
+		} else {
+			content = capPromptPayload(content, promptRecentTurnContentLimit)
 		}
 		return core.LlmMessage{Role: core.RoleUser, Content: content}, true
 	case core.RoleAssistant:
 		content := turn.Content
 		if truncateTo > 0 {
 			content = truncate(content, truncateTo)
+		} else {
+			content = capPromptPayload(content, promptRecentTurnContentLimit)
 		}
 		return core.LlmMessage{Role: core.RoleAssistant, Content: content}, true
 	}
@@ -218,4 +229,17 @@ func truncate(s string, maxLen int) string {
 	}
 	runes := []rune(s)
 	return string(runes[:maxLen]) + "…"
+}
+
+func capPromptPayload(s string, maxRunes int) string {
+	if maxRunes <= 0 || utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	runes := []rune(s)
+	marker := fmt.Sprintf(promptTruncationMarkerFormat, len(runes))
+	markerRunes := []rune(marker)
+	if len(markerRunes) >= maxRunes {
+		return string(markerRunes[:maxRunes])
+	}
+	return string(runes[:maxRunes-len(markerRunes)]) + marker
 }

@@ -490,7 +490,7 @@ func BuildPromptWithRuntime(
 				sb.WriteString(obs.Label)
 				sb.WriteByte('\n')
 			}
-			sb.WriteString(obs.Data)
+			sb.WriteString(capPromptPayload(obs.Data, promptObservationDataLimit))
 			sb.WriteString("\n\n")
 		}
 	}

@@ -707,6 +707,22 @@ func TestBuildPrompt_WithObservations(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_CapsLargeObservationData(t *testing.T) {
+	state := &core.ConversationState{ConversationID: "test"}
+	obs := []core.Observation{
+		{Label: "large_page", Data: strings.Repeat("P", promptObservationDataLimit+200) + "OBSERVATION_TAIL_SHOULD_NOT_APPEAR"},
+	}
+
+	msgs := BuildPrompt(state, "test", CompactionConfig{RecentWindow: 5}, &core.Config{}, "web", nil, "", "", obs, "")
+	sys := msgs[0].Content
+	if strings.Contains(sys, "OBSERVATION_TAIL_SHOULD_NOT_APPEAR") {
+		t.Fatalf("observation data was not capped:\n%s", sys)
+	}
+	if !strings.Contains(sys, "truncated, original_chars=") {
+		t.Fatalf("observation data missing truncation marker:\n%s", sys)
+	}
+}
+
 func TestBuildPrompt_NilObservations(t *testing.T) {
 	// AC #10: When observations is nil, the prompt should be identical to before.
 	state := &core.ConversationState{ConversationID: "test"}

@@ -1950,6 +1950,24 @@ func TestAugmentSystemPromptWithRecentSkillOutput_AppendsBlock(t *testing.T) {
 	}
 }
 
+func TestAugmentSystemPromptWithRecentSkillOutput_CapsLargeOutput(t *testing.T) {
+	ps := NewPipelineState()
+	ps.RecordSkillOutput(strings.Repeat("R", promptRecentSkillOutputLimit+200) + "RECENT_SKILL_TAIL_SHOULD_NOT_APPEAR")
+
+	messages := []core.LlmMessage{
+		{Role: core.RoleSystem, Content: "base prompt"},
+	}
+	augmentSystemPromptWithRecentSkillOutput(messages, "원화로", ps)
+
+	got := messages[0].Content
+	if strings.Contains(got, "RECENT_SKILL_TAIL_SHOULD_NOT_APPEAR") {
+		t.Fatalf("recent skill output was not capped:\n%s", got)
+	}
+	if !strings.Contains(got, "truncated, original_chars=") {
+		t.Fatalf("recent skill output missing truncation marker:\n%s", got)
+	}
+}
+
 func TestAugmentSystemPromptWithRecentSkillOutput_NoOpWhenLong(t *testing.T) {
 	ps := NewPipelineState()
 	ps.RecordSkillOutput("data")

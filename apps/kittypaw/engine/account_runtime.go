@@ -492,6 +492,7 @@ func augmentSystemPromptWithRecentSkillOutput(messages []core.LlmMessage, userTe
 	if recent == "" {
 		return
 	}
+	recent = capPromptPayload(recent, promptRecentSkillOutputLimit)
 	const augmentTemplate = `
 
 ## Cross-turn context — recent skill output (load-bearing)

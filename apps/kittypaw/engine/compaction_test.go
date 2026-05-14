@@ -64,6 +64,28 @@ func TestCompactTurnsOldZoneSkipsSecretLookingSnippets(t *testing.T) {
 	}
 }
 
+func TestCompactTurnsCapsRecentLargeContentForPromptOnly(t *testing.T) {
+	userContent := strings.Repeat("U", promptRecentTurnContentLimit+200) + "USER_TAIL_SHOULD_NOT_APPEAR"
+	assistantContent := strings.Repeat("A", promptRecentTurnContentLimit+200) + "ASSISTANT_TAIL_SHOULD_NOT_APPEAR"
+	turns := []core.ConversationTurn{
+		{Role: core.RoleUser, Content: userContent},
+		{Role: core.RoleAssistant, Content: assistantContent},
+	}
+
+	messages := CompactTurns(turns, CompactionConfig{RecentWindow: 2})
+	if len(messages) != 2 {
+		t.Fatalf("messages = %+v, want two recent messages", messages)
+	}
+	for _, msg := range messages {
+		if strings.Contains(msg.Content, "TAIL_SHOULD_NOT_APPEAR") {
+			t.Fatalf("recent prompt content was not capped:\n%s", msg.Content)
+		}
+		if !strings.Contains(msg.Content, "truncated, original_chars=") {
+			t.Fatalf("capped prompt content missing truncation marker:\n%s", msg.Content)
+		}
+	}
+}
+
 func TestSemanticCompactionTranscriptIncludesNewestOldTurnsAtSizeCap(t *testing.T) {
 	var records []store.ConversationTurnRecord
 	for i := 0; i < 80; i++ {
