@@ -1168,27 +1168,37 @@ func handleStaffCurrent(ctx context.Context, s *AccountRuntime) string {
 	if s == nil || s.Config == nil {
 		return "현재 staff 정보를 위한 세션이 준비되지 않았습니다."
 	}
-	current := s.Config.DefaultStaff
-	source := "default"
-	if current == "" {
-		current = "default"
-	}
+	conversationID := commandConversationID(ctx, s)
+	decision := ResolveStaffDecisionForEvent(s.Config, EventFromContext(ctx), conversationID, "", s.Store, s.BaseDir)
 	if s.Store != nil {
-		conversationID := commandConversationID(ctx, s)
-		base, _ := core.ResolveBaseDir(s.BaseDir)
-		if val, ok := conversationDefaultStaff(base, s.Store, conversationID); ok {
-			return fmt.Sprintf("current staff: %s (conversation:%s)", val, conversationID)
-		}
-		if route, ok := matchedStaffSourceRoute(base, s.Store, EventFromContext(ctx)); ok {
-			return fmt.Sprintf("current staff: %s (source-route:#%d %s %s %s %q)",
-				route.StaffID, route.ID, route.SourceChannel, route.MatchField, route.PatternKind, route.Pattern)
-		}
-		if val, ok, err := s.Store.ConversationStaff(); err == nil && ok && val != "" {
-			current = val
-			source = "legacy-account"
-		}
+		decision.ConversationID = conversationID
 	}
-	return fmt.Sprintf("current staff: %s (%s)", current, source)
+	return formatStaffRouteDecision(decision)
+}
+
+func formatStaffRouteDecision(decision StaffRouteDecision) string {
+	if strings.TrimSpace(decision.StaffID) == "" {
+		decision.StaffID = "default"
+	}
+	if strings.TrimSpace(decision.Reason) == "" {
+		decision.Reason = StaffRouteReasonDefault
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "current staff: %s\nreason: %s", decision.StaffID, decision.Reason)
+	if decision.ConversationID != "" {
+		fmt.Fprintf(&sb, "\nconversation: %s", decision.ConversationID)
+	}
+	if decision.Channel != "" {
+		fmt.Fprintf(&sb, "\nchannel: %s", decision.Channel)
+	}
+	if decision.Reason == StaffRouteReasonSourceRoute {
+		if decision.SourceRouteID > 0 {
+			fmt.Fprintf(&sb, "\nsource_route_id: %d", decision.SourceRouteID)
+		}
+		fmt.Fprintf(&sb, "\nmatch: %s %s %s %q",
+			decision.SourceChannel, decision.MatchField, decision.PatternKind, decision.Pattern)
+	}
+	return sb.String()
 }
 
 func handleStaffList(s *AccountRuntime) string {

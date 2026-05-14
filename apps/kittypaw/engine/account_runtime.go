@@ -874,14 +874,22 @@ func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, raw
 	// Resolve and load staff once per turn. The selected staff is audited on
 	// persisted turns and its runtime policy applies to prompt/tool execution.
 	staffID := staffOverride
+	staffRoute := StaffRouteDecision{
+		StaffID:        staffID,
+		Reason:         StaffRouteReasonOverride,
+		ConversationID: convKey,
+		Channel:        channelName,
+	}
 	if staffID == "" {
-		staffID = ResolveStaffNameForEvent(s.Config, &event, convKey, mentionOverride, s.Store, s.BaseDir)
+		staffRoute = ResolveStaffDecisionForEvent(s.Config, &event, convKey, mentionOverride, s.Store, s.BaseDir)
+		staffID = staffRoute.StaffID
 	}
 	staff := loadStaffForPrompt(staffID, s.Config, s.BaseDir)
 	runCtx := ContextWithStaffPolicy(ctx, staffID, staff.AllowedSkills)
 	runtimeCtx := PromptRuntimeContext{
 		ConversationID: convKey,
 		StaffID:        staffID,
+		StaffRoute:     staffRoute,
 		ChannelName:    channelName,
 		ChannelUserID:  meta.ChannelUserID,
 		ChatID:         meta.ChatID,
@@ -1393,6 +1401,29 @@ func isLLMAdmissionLimitError(err error) bool {
 	return errors.Is(err, ErrLLMRateLimitExceeded) || errors.Is(err, ErrDailyTokenLimitExceeded)
 }
 
+const (
+	StaffRouteReasonMention             = "mention"
+	StaffRouteReasonOverride            = "override"
+	StaffRouteReasonConversationDefault = "conversation_default"
+	StaffRouteReasonSourceRoute         = "source_route"
+	StaffRouteReasonLegacyAccount       = "legacy_account"
+	StaffRouteReasonChannelBinding      = "channel_binding"
+	StaffRouteReasonDefault             = "default"
+)
+
+type StaffRouteDecision struct {
+	StaffID        string `json:"staff_id"`
+	Reason         string `json:"reason"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Channel        string `json:"channel,omitempty"`
+
+	SourceRouteID int64  `json:"source_route_id,omitempty"`
+	SourceChannel string `json:"source_channel,omitempty"`
+	MatchField    string `json:"match_field,omitempty"`
+	PatternKind   string `json:"pattern_kind,omitempty"`
+	Pattern       string `json:"pattern,omitempty"`
+}
+
 // ResolveStaffName determines which staff member to use for this request.
 // Priority: mentionOverride > conversation default > legacy account override > channel binding > default.
 func ResolveStaffName(
@@ -1403,7 +1434,7 @@ func ResolveStaffName(
 	st *store.Store,
 	baseDir string,
 ) string {
-	return resolveStaffName(config, channelType, nil, conversationID, mentionOverride, st, baseDir)
+	return ResolveStaffDecision(config, channelType, conversationID, mentionOverride, st, baseDir).StaffID
 }
 
 // ResolveStaffNameForEvent resolves staff with source-specific route rules.
@@ -1416,14 +1447,36 @@ func ResolveStaffNameForEvent(
 	st *store.Store,
 	baseDir string,
 ) string {
+	return ResolveStaffDecisionForEvent(config, event, conversationID, mentionOverride, st, baseDir).StaffID
+}
+
+func ResolveStaffDecision(
+	config *core.Config,
+	channelType string,
+	conversationID string,
+	mentionOverride string,
+	st *store.Store,
+	baseDir string,
+) StaffRouteDecision {
+	return resolveStaffDecision(config, channelType, nil, conversationID, mentionOverride, st, baseDir)
+}
+
+func ResolveStaffDecisionForEvent(
+	config *core.Config,
+	event *core.Event,
+	conversationID string,
+	mentionOverride string,
+	st *store.Store,
+	baseDir string,
+) StaffRouteDecision {
 	channelType := ""
 	if event != nil {
 		channelType = event.Type.ChannelName()
 	}
-	return resolveStaffName(config, channelType, event, conversationID, mentionOverride, st, baseDir)
+	return resolveStaffDecision(config, channelType, event, conversationID, mentionOverride, st, baseDir)
 }
 
-func resolveStaffName(
+func resolveStaffDecision(
 	config *core.Config,
 	channelType string,
 	event *core.Event,
@@ -1431,31 +1484,61 @@ func resolveStaffName(
 	mentionOverride string,
 	st *store.Store,
 	baseDir string,
-) string {
+) StaffRouteDecision {
 	// 1. @mention override (highest priority).
 	if mentionOverride != "" {
-		return mentionOverride
+		return StaffRouteDecision{
+			StaffID:        mentionOverride,
+			Reason:         StaffRouteReasonMention,
+			ConversationID: conversationID,
+			Channel:        channelType,
+		}
 	}
 	if config == nil {
-		return "default"
+		return StaffRouteDecision{
+			StaffID:        "default",
+			Reason:         StaffRouteReasonDefault,
+			ConversationID: conversationID,
+			Channel:        channelType,
+		}
 	}
 
 	base, _ := core.ResolveBaseDir(baseDir)
 
 	// 2. Conversation-scoped default staff from the first-class conversation row.
 	if val, ok := conversationDefaultStaff(base, st, conversationID); ok {
-		return val
+		return StaffRouteDecision{
+			StaffID:        val,
+			Reason:         StaffRouteReasonConversationDefault,
+			ConversationID: conversationID,
+			Channel:        channelType,
+		}
 	}
 
 	// 3. Source route from channel/chat/session metadata.
-	if val, ok := sourceRouteStaff(base, st, event); ok {
-		return val
+	if route, ok := matchedStaffSourceRoute(base, st, event); ok {
+		return StaffRouteDecision{
+			StaffID:        route.StaffID,
+			Reason:         StaffRouteReasonSourceRoute,
+			ConversationID: conversationID,
+			Channel:        channelType,
+			SourceRouteID:  route.ID,
+			SourceChannel:  route.SourceChannel,
+			MatchField:     route.MatchField,
+			PatternKind:    route.PatternKind,
+			Pattern:        route.Pattern,
+		}
 	}
 
 	// 4. Legacy account-wide staff from older Staff.switch or /staff use paths.
 	if st != nil {
 		if val, ok, err := st.ConversationStaff(); err == nil && ok && val != "" && core.StaffHasSoul(base, val) {
-			return val
+			return StaffRouteDecision{
+				StaffID:        val,
+				Reason:         StaffRouteReasonLegacyAccount,
+				ConversationID: conversationID,
+				Channel:        channelType,
+			}
 		}
 	}
 
@@ -1463,24 +1546,27 @@ func resolveStaffName(
 	for _, sc := range config.Staff {
 		for _, ch := range sc.Channels {
 			if ch == channelType && core.StaffHasSoul(base, sc.ID) {
-				return sc.ID
+				return StaffRouteDecision{
+					StaffID:        sc.ID,
+					Reason:         StaffRouteReasonChannelBinding,
+					ConversationID: conversationID,
+					Channel:        channelType,
+				}
 			}
 		}
 	}
 
 	// 6. Default staff.
+	staffID := "default"
 	if config.DefaultStaff != "" {
-		return config.DefaultStaff
+		staffID = config.DefaultStaff
 	}
-	return "default"
-}
-
-func sourceRouteStaff(base string, st *store.Store, event *core.Event) (string, bool) {
-	route, ok := matchedStaffSourceRoute(base, st, event)
-	if !ok {
-		return "", false
+	return StaffRouteDecision{
+		StaffID:        staffID,
+		Reason:         StaffRouteReasonDefault,
+		ConversationID: conversationID,
+		Channel:        channelType,
 	}
-	return route.StaffID, true
 }
 
 func matchedStaffSourceRoute(base string, st *store.Store, event *core.Event) (store.StaffSourceRoute, bool) {

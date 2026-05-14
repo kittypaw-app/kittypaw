@@ -677,7 +677,11 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 		StaffID        string   `json:"staff_id"`
 		ConversationID string   `json:"conversation_id"`
 		Channel        string   `json:"channel"`
-		Source         struct {
+		StaffRoute     struct {
+			Reason  string `json:"reason"`
+			StaffID string `json:"staff_id"`
+		} `json:"staff_route"`
+		Source struct {
 			ChatID        string `json:"chat_id"`
 			ChannelUserID string `json:"channel_user_id"`
 		} `json:"source"`
@@ -694,8 +698,65 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 	if meta.StaffID != "default" || meta.ConversationID != testWebChatConversationID || meta.Channel != "web" {
 		t.Fatalf("prompt audit route metadata = %+v", meta)
 	}
+	if meta.StaffRoute.Reason != "default" || meta.StaffRoute.StaffID != "default" {
+		t.Fatalf("prompt audit staff route = %+v, want default decision", meta.StaffRoute)
+	}
 	if meta.Source.ChatID != "test-chat" || meta.Source.ChannelUserID != "test-session" {
 		t.Fatalf("prompt audit source = %+v", meta.Source)
+	}
+}
+
+func TestPromptAuditIncludesSourceRouteDecision(t *testing.T) {
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.FreeformFallback = true
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "ops-bot", "", "ops staff")
+	if _, err := st.UpsertStaffSourceRoute(store.UpsertStaffSourceRouteRequest{
+		SourceChannel: "web",
+		MatchField:    store.StaffSourceMatchChatID,
+		PatternKind:   store.StaffSourcePatternExact,
+		Pattern:       "test-chat",
+		StaffID:       "ops-bot",
+	}); err != nil {
+		t.Fatalf("UpsertStaffSourceRoute: %v", err)
+	}
+	provider := &promptCaptureProvider{response: "audit ok"}
+	sess := &AccountRuntime{
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+
+	if _, err := sess.Run(context.Background(), webChatEvent("audit this source route"), nil); err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	execs, err := st.RecentExecutions(1)
+	if err != nil {
+		t.Fatalf("RecentExecutions: %v", err)
+	}
+	var meta struct {
+		StaffID    string `json:"staff_id"`
+		StaffRoute struct {
+			Reason        string `json:"reason"`
+			StaffID       string `json:"staff_id"`
+			SourceRouteID int64  `json:"source_route_id"`
+			MatchField    string `json:"match_field"`
+			PatternKind   string `json:"pattern_kind"`
+			Pattern       string `json:"pattern"`
+		} `json:"staff_route"`
+	}
+	if err := json.Unmarshal([]byte(execs[0].MetadataJSON), &meta); err != nil {
+		t.Fatalf("decode metadata %q: %v", execs[0].MetadataJSON, err)
+	}
+	if meta.StaffID != "ops-bot" || meta.StaffRoute.Reason != "source_route" || meta.StaffRoute.StaffID != "ops-bot" ||
+		meta.StaffRoute.SourceRouteID == 0 || meta.StaffRoute.MatchField != store.StaffSourceMatchChatID ||
+		meta.StaffRoute.PatternKind != store.StaffSourcePatternExact || meta.StaffRoute.Pattern != "test-chat" {
+		t.Fatalf("prompt audit source route decision = %+v", meta)
 	}
 }
 

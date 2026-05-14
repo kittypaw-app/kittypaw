@@ -350,6 +350,7 @@ func FormatExecResult(result *core.ExecutionResult) string {
 type PromptRuntimeContext struct {
 	ConversationID         string
 	StaffID                string
+	StaffRoute             StaffRouteDecision
 	ChannelName            string
 	ChannelUserID          string
 	ChatID                 string

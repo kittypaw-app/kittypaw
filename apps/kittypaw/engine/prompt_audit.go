@@ -35,6 +35,7 @@ type PromptAudit struct {
 	PromptHash     string                 `json:"prompt_hash"`
 	Layers         []string               `json:"layers"`
 	StaffID        string                 `json:"staff_id,omitempty"`
+	StaffRoute     StaffRouteDecision     `json:"staff_route"`
 	ConversationID string                 `json:"conversation_id,omitempty"`
 	Channel        string                 `json:"channel,omitempty"`
 	Source         PromptAuditSource      `json:"source,omitempty"`
@@ -70,6 +71,7 @@ func BuildPromptAudit(messages []core.LlmMessage, runtime PromptRuntimeContext, 
 		PromptHash:     promptMessagesHash(messages),
 		Layers:         append([]string(nil), promptLayerManifest...),
 		StaffID:        runtime.StaffID,
+		StaffRoute:     runtime.StaffRoute,
 		ConversationID: runtime.ConversationID,
 		Channel:        runtime.ChannelName,
 		Source: PromptAuditSource{

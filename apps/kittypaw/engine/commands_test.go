@@ -718,6 +718,32 @@ func TestSlashStaffSourceRouteAddsListsAndDeletes(t *testing.T) {
 	}
 }
 
+func TestStaffCurrentExplainsSourceRouteDecision(t *testing.T) {
+	st := openTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "ops-bot", "", "ops staff")
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{Store: st, Config: &cfg, BaseDir: baseDir}
+	if _, err := st.UpsertStaffSourceRoute(store.UpsertStaffSourceRouteRequest{
+		SourceChannel: "web",
+		MatchField:    store.StaffSourceMatchChatID,
+		PatternKind:   store.StaffSourcePatternExact,
+		Pattern:       "test-chat",
+		StaffID:       "ops-bot",
+	}); err != nil {
+		t.Fatalf("UpsertStaffSourceRoute: %v", err)
+	}
+	event := slashCommandEvent(t, "/staff current")
+	ctx := ContextWithEvent(context.Background(), &event)
+
+	out := handleStaffCurrent(ctx, sess)
+	for _, want := range []string{"current staff: ops-bot", "reason: source_route", "source_route_id:", "match: web chat_id exact \"test-chat\""} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("handleStaffCurrent output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestConversationCommandRenamesCurrentConversation(t *testing.T) {
 	st := openTestStore(t)
 	cfg := core.DefaultConfig()
