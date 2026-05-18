@@ -205,6 +205,36 @@ func (s *Store) GetScheduledRun(id int64) (*ScheduledRun, bool, error) {
 	return run, true, nil
 }
 
+func (s *Store) ListScheduledRunsForJob(jobKey string, limit int) ([]ScheduledRun, error) {
+	jobKey = strings.TrimSpace(jobKey)
+	if jobKey == "" {
+		return nil, fmt.Errorf("scheduled run job_key is required")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.Query(scheduledRunSelectSQL+`
+		WHERE job_key = ?
+		ORDER BY due_at DESC, id DESC
+		LIMIT ?`, jobKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScheduledRun
+	for rows.Next() {
+		run, err := scanScheduledRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *run)
+	}
+	return out, rows.Err()
+}
+
 func getActiveScheduledRunForUpdate(tx *sql.Tx, jobKey string) (*ScheduledRun, bool, error) {
 	run, err := scanScheduledRun(tx.QueryRow(scheduledRunSelectSQL+`
 		WHERE job_key = ? AND status IN (?, ?)

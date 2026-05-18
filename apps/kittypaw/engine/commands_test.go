@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/llm"
@@ -391,6 +392,129 @@ func TestSlashRunResultIsRecordedInConversationHistory(t *testing.T) {
 	}
 	if turns[0].Content != "/run hello" || turns[1].Content != "hello from slash history" {
 		t.Fatalf("turns = %+v, want slash command transcript", turns)
+	}
+}
+
+func TestSlashScheduleListShowPauseResumeDelete(t *testing.T) {
+	baseDir := t.TempDir()
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{
+		BaseDir: baseDir,
+		Config:  &cfg,
+		Store:   st,
+	}
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
+		Name:        "daily-brief",
+		Description: "daily brief",
+		Enabled:     true,
+		Trigger:     core.SkillTrigger{Type: "schedule", Cron: "every 1h"},
+	}, `return "brief";`); err != nil {
+		t.Fatalf("save daily-brief: %v", err)
+	}
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
+		Name:        "remind-once",
+		Description: "once reminder",
+		Enabled:     true,
+		Trigger:     core.SkillTrigger{Type: "once", RunAt: "2026-05-15T12:00:00Z"},
+	}, `return "remind";`); err != nil {
+		t.Fatalf("save remind-once: %v", err)
+	}
+	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{
+		Name:        "manual-only",
+		Description: "manual",
+		Enabled:     true,
+		Trigger:     core.SkillTrigger{Type: "manual"},
+	}, `return "manual";`); err != nil {
+		t.Fatalf("save manual-only: %v", err)
+	}
+
+	dueAt := time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC)
+	run, claimed, err := st.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        "daily-brief",
+		JobType:       "skill",
+		JobID:         "daily-brief",
+		TriggerType:   "schedule",
+		DueAt:         dueAt,
+		Now:           dueAt,
+		LeaseDuration: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("ClaimScheduledRun: %v", err)
+	}
+	if !claimed {
+		t.Fatal("scheduled run claim not acquired")
+	}
+	if ok, err := st.FinishScheduledRun(run.ID, run.ClaimToken, store.ScheduledRunStatusFailed, "test_error", "boom", dueAt.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("FinishScheduledRun ok=%v err=%v", ok, err)
+	}
+
+	out, handled := tryHandleCommand(context.Background(), "/schedule list", sess)
+	if !handled {
+		t.Fatal("/schedule list was not handled")
+	}
+	for _, want := range []string{"daily-brief", "remind-once", "next_run"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/schedule list missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "manual-only") {
+		t.Fatalf("/schedule list included manual skill:\n%s", out)
+	}
+
+	out, handled = tryHandleCommand(context.Background(), "/schedule show daily-brief", sess)
+	if !handled {
+		t.Fatal("/schedule show was not handled")
+	}
+	for _, want := range []string{"daily-brief", "trigger: schedule", "recent_runs:", "failed", "test_error"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/schedule show missing %q:\n%s", want, out)
+		}
+	}
+
+	out, handled = tryHandleCommand(context.Background(), "/schedule pause daily-brief", sess)
+	if !handled {
+		t.Fatal("/schedule pause was not handled")
+	}
+	if !strings.Contains(out, "paused") {
+		t.Fatalf("/schedule pause output = %q, want paused", out)
+	}
+	skill, _, err := core.LoadSkillFrom(baseDir, "daily-brief")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom after pause: %v", err)
+	}
+	if skill.Enabled {
+		t.Fatal("pause should disable the scheduled skill")
+	}
+
+	out, _ = tryHandleCommand(context.Background(), "/schedule resume daily-brief", sess)
+	if !strings.Contains(out, "resumed") {
+		t.Fatalf("/schedule resume output = %q, want resumed", out)
+	}
+	skill, _, err = core.LoadSkillFrom(baseDir, "daily-brief")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom after resume: %v", err)
+	}
+	if !skill.Enabled {
+		t.Fatal("resume should enable the scheduled skill")
+	}
+
+	out, _ = tryHandleCommand(context.Background(), "/schedule delete remind-once", sess)
+	if !strings.Contains(out, "deleted") {
+		t.Fatalf("/schedule delete output = %q, want deleted", out)
+	}
+	deleted, _, err := core.LoadSkillFrom(baseDir, "remind-once")
+	if err != nil {
+		t.Fatalf("LoadSkillFrom after delete: %v", err)
+	}
+	if deleted != nil {
+		t.Fatal("delete should remove scheduled skill")
+	}
+}
+
+func TestScheduleRemoveAliasIsRecordedInConversationHistory(t *testing.T) {
+	if !scheduleCommandRecordsHistory([]string{"remove", "daily-brief"}) {
+		t.Fatal("/schedule remove should be recorded in conversation history")
 	}
 }
 

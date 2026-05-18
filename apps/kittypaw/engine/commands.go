@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/store"
@@ -54,6 +55,23 @@ var slashCommandRegistry = []slashCommand{
 		Risk:    "read",
 		Handler: func(_ context.Context, _ []string, s *AccountRuntime) slashCommandResult {
 			return slashCommandText(handleSkills(s))
+		},
+	},
+	{
+		Name:    "/schedule",
+		Usage:   "/schedule <list|show|pause|resume|delete>",
+		Summary: "예약 스킬 조회 및 운영",
+		Risk:    "mixed",
+		History: true,
+		Details: []string{
+			"/schedule list",
+			"/schedule show <name>",
+			"/schedule pause <name>",
+			"/schedule resume <name>",
+			"/schedule delete <name>",
+		},
+		Handler: func(_ context.Context, args []string, s *AccountRuntime) slashCommandResult {
+			return slashCommandResult{Text: handleScheduleCommand(args, s), RecordHistory: scheduleCommandRecordsHistory(args)}
 		},
 	},
 	{
@@ -437,6 +455,233 @@ func handleSkills(s *AccountRuntime) string {
 	return sb.String()
 }
 
+func handleScheduleCommand(args []string, s *AccountRuntime) string {
+	if s == nil || strings.TrimSpace(s.BaseDir) == "" {
+		return "schedule 관리를 위한 runtime이 준비되지 않았습니다."
+	}
+	if len(args) == 0 {
+		return scheduleUsage()
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "list", "ls":
+		return handleScheduleList(s)
+	case "show":
+		if len(args) != 2 {
+			return "사용법: /schedule show <name>"
+		}
+		return handleScheduleShow(strings.TrimSpace(args[1]), s)
+	case "pause":
+		if len(args) != 2 {
+			return "사용법: /schedule pause <name>"
+		}
+		return handleSchedulePause(strings.TrimSpace(args[1]), s)
+	case "resume":
+		if len(args) != 2 {
+			return "사용법: /schedule resume <name>"
+		}
+		return handleScheduleResume(strings.TrimSpace(args[1]), s)
+	case "delete", "remove":
+		if len(args) != 2 {
+			return "사용법: /schedule delete <name>"
+		}
+		return handleScheduleDelete(strings.TrimSpace(args[1]), s)
+	default:
+		return scheduleUsage()
+	}
+}
+
+func scheduleUsage() string {
+	return "사용법: /schedule <list|show|pause|resume|delete>"
+}
+
+func handleScheduleList(s *AccountRuntime) string {
+	items, err := scheduledSkillItems(s)
+	if err != nil {
+		return fmt.Sprintf("schedule 목록 조회 실패: %s", err)
+	}
+	if len(items) == 0 {
+		return "예약된 스킬이 없습니다."
+	}
+	var sb strings.Builder
+	sb.WriteString("예약 스킬 목록:\n")
+	now := time.Now()
+	for _, item := range items {
+		status := "enabled"
+		if !item.Manifest.Enabled {
+			status = "paused"
+		}
+		lastRun, failCount := scheduleStoreState(s, item.Manifest.Name)
+		state := SkillScheduleStateFor(&item.Manifest, lastRun, failCount, now)
+		fmt.Fprintf(&sb, "- %s [%s] trigger=%s next_run=%s last_run=%s failure_count=%d\n",
+			item.Manifest.Name,
+			status,
+			item.Manifest.Trigger.Type,
+			formatOptionalScheduleTime(state.NextRun),
+			formatOptionalScheduleTime(state.LastRun),
+			state.FailureCount,
+		)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleScheduleShow(name string, s *AccountRuntime) string {
+	item, ok, err := loadScheduledSkillItem(s, name)
+	if err != nil {
+		return fmt.Sprintf("schedule 조회 실패: %s", err)
+	}
+	if !ok {
+		return fmt.Sprintf("예약 스킬을 찾지 못했습니다: %s", name)
+	}
+	lastRun, failCount := scheduleStoreState(s, item.Manifest.Name)
+	state := SkillScheduleStateFor(&item.Manifest, lastRun, failCount, time.Now())
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "name: %s\n", item.Manifest.Name)
+	fmt.Fprintf(&sb, "description: %s\n", item.Manifest.Description)
+	fmt.Fprintf(&sb, "enabled: %t\n", item.Manifest.Enabled)
+	fmt.Fprintf(&sb, "trigger: %s\n", item.Manifest.Trigger.Type)
+	if item.Manifest.Trigger.Cron != "" {
+		fmt.Fprintf(&sb, "cron: %s\n", item.Manifest.Trigger.Cron)
+	}
+	if item.Manifest.Trigger.RunAt != "" {
+		fmt.Fprintf(&sb, "run_at: %s\n", item.Manifest.Trigger.RunAt)
+	}
+	if item.Manifest.Trigger.RunOnInstall {
+		sb.WriteString("run_on_install: true\n")
+	}
+	fmt.Fprintf(&sb, "next_run: %s\n", formatOptionalScheduleTime(state.NextRun))
+	fmt.Fprintf(&sb, "last_run: %s\n", formatOptionalScheduleTime(state.LastRun))
+	fmt.Fprintf(&sb, "failure_count: %d\n", state.FailureCount)
+	if !item.Manifest.Trigger.Delivery.IsZero() {
+		fmt.Fprintf(&sb, "delivery: %s\n", summarizeDeliveryTarget(item.Manifest.Trigger.Delivery))
+	}
+	if s.Store != nil {
+		runs, err := s.Store.ListScheduledRunsForJob(item.Manifest.Name, 5)
+		if err != nil {
+			fmt.Fprintf(&sb, "recent_runs: error: %s", err)
+			return strings.TrimRight(sb.String(), "\n")
+		}
+		sb.WriteString("recent_runs:\n")
+		if len(runs) == 0 {
+			sb.WriteString("- none\n")
+		} else {
+			for _, run := range runs {
+				fmt.Fprintf(&sb, "- #%d %s due_at=%s attempt=%d", run.ID, run.Status, run.DueAt.Format(time.RFC3339), run.Attempt)
+				if run.ErrorClass != "" {
+					fmt.Fprintf(&sb, " error_class=%s", run.ErrorClass)
+				}
+				if run.FinishedAt != nil {
+					fmt.Fprintf(&sb, " finished_at=%s", run.FinishedAt.Format(time.RFC3339))
+				}
+				sb.WriteByte('\n')
+			}
+		}
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func handleSchedulePause(name string, s *AccountRuntime) string {
+	if _, ok, err := loadScheduledSkillItem(s, name); err != nil {
+		return fmt.Sprintf("schedule pause 실패: %s", err)
+	} else if !ok {
+		return fmt.Sprintf("예약 스킬을 찾지 못했습니다: %s", name)
+	}
+	if err := core.DisableSkillFrom(s.BaseDir, name); err != nil {
+		return fmt.Sprintf("schedule pause 실패: %s", err)
+	}
+	return fmt.Sprintf("schedule paused: %s", name)
+}
+
+func handleScheduleResume(name string, s *AccountRuntime) string {
+	if _, ok, err := loadScheduledSkillItem(s, name); err != nil {
+		return fmt.Sprintf("schedule resume 실패: %s", err)
+	} else if !ok {
+		return fmt.Sprintf("예약 스킬을 찾지 못했습니다: %s", name)
+	}
+	if err := core.EnableSkillFrom(s.BaseDir, name); err != nil {
+		return fmt.Sprintf("schedule resume 실패: %s", err)
+	}
+	return fmt.Sprintf("schedule resumed: %s", name)
+}
+
+func handleScheduleDelete(name string, s *AccountRuntime) string {
+	if _, ok, err := loadScheduledSkillItem(s, name); err != nil {
+		return fmt.Sprintf("schedule delete 실패: %s", err)
+	} else if !ok {
+		return fmt.Sprintf("예약 스킬을 찾지 못했습니다: %s", name)
+	}
+	if err := core.DeleteSkillFrom(s.BaseDir, name); err != nil {
+		return fmt.Sprintf("schedule delete 실패: %s", err)
+	}
+	return fmt.Sprintf("schedule deleted: %s", name)
+}
+
+func scheduledSkillItems(s *AccountRuntime) ([]core.SkillManifestWithCode, error) {
+	skills, err := core.LoadAllSkillsFrom(s.BaseDir)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]core.SkillManifestWithCode, 0, len(skills))
+	for _, skill := range skills {
+		if isScheduledTrigger(skill.Manifest.Trigger.Type) {
+			items = append(items, skill)
+		}
+	}
+	return items, nil
+}
+
+func loadScheduledSkillItem(s *AccountRuntime, name string) (core.SkillManifestWithCode, bool, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return core.SkillManifestWithCode{}, false, nil
+	}
+	skill, code, err := core.LoadSkillFrom(s.BaseDir, name)
+	if err != nil {
+		return core.SkillManifestWithCode{}, false, err
+	}
+	if skill == nil || !isScheduledTrigger(skill.Trigger.Type) {
+		return core.SkillManifestWithCode{}, false, nil
+	}
+	return core.SkillManifestWithCode{Manifest: *skill, Code: code}, true, nil
+}
+
+func isScheduledTrigger(trigger string) bool {
+	switch strings.ToLower(strings.TrimSpace(trigger)) {
+	case "schedule", "once":
+		return true
+	default:
+		return false
+	}
+}
+
+func scheduleStoreState(s *AccountRuntime, name string) (*time.Time, int) {
+	if s == nil || s.Store == nil {
+		return nil, 0
+	}
+	lastRun, _ := s.Store.GetLastRun(name)
+	failCount, _ := s.Store.GetFailureCount(name)
+	return lastRun, failCount
+}
+
+func summarizeDeliveryTarget(target core.DeliveryTarget) string {
+	parts := []string{}
+	if target.Channel != "" {
+		parts = append(parts, "channel="+target.Channel)
+	}
+	if target.ChatID != "" {
+		parts = append(parts, "chat_id="+target.ChatID)
+	}
+	if target.ChannelUserID != "" {
+		parts = append(parts, "channel_user_id="+target.ChannelUserID)
+	}
+	if target.ReplyToMessage != "" {
+		parts = append(parts, "reply_to_message="+target.ReplyToMessage)
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, " ")
+}
+
 func handleConversation(ctx context.Context, s *AccountRuntime) string {
 	conversationID := commandConversationID(ctx, s)
 	var sb strings.Builder
@@ -578,6 +823,18 @@ func ensureConversationExistsForRename(s *AccountRuntime, conversationID string)
 
 func conversationCommandRecordsHistory(args []string) bool {
 	return len(args) > 0 && strings.EqualFold(args[0], "rename")
+}
+
+func scheduleCommandRecordsHistory(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "pause", "resume", "delete", "remove":
+		return true
+	default:
+		return false
+	}
 }
 
 func handleContext(ctx context.Context, s *AccountRuntime) string {
