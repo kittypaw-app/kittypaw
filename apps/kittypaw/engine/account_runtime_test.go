@@ -146,6 +146,49 @@ func TestPopulatePromptWorkspaceContextMarksGeneralScopeProjectSelectionRequired
 	}
 }
 
+func TestPopulatePromptScheduleContextIncludesScheduledSkills(t *testing.T) {
+	baseDir := t.TempDir()
+	st := openTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.User.Timezone = "Asia/Seoul"
+	nextRun := time.Now().UTC().Add(30 * time.Minute).Format(time.RFC3339)
+	skill := &core.SkillManifest{
+		Name:        "scheduled-reminder",
+		Version:     1,
+		Description: "Do not expose this description",
+		Enabled:     true,
+		Format:      core.SkillFormatScript,
+		Trigger:     core.SkillTrigger{Type: "once", RunAt: nextRun},
+	}
+	if err := core.SaveSkillTo(baseDir, skill, "return \"ok\";"); err != nil {
+		t.Fatalf("SaveSkillTo: %v", err)
+	}
+	lastRun := time.Now().UTC().Add(-time.Hour)
+	if err := st.SetLastRun(skill.Name, lastRun); err != nil {
+		t.Fatalf("SetLastRun: %v", err)
+	}
+	if err := st.IncrementFailureCount(skill.Name); err != nil {
+		t.Fatalf("IncrementFailureCount: %v", err)
+	}
+	ctx := PromptRuntimeContext{}
+
+	populatePromptScheduleContext(&ctx, &AccountRuntime{BaseDir: baseDir, Store: st, Config: &cfg})
+
+	if ctx.ScheduleTimezone != "Asia/Seoul" {
+		t.Fatalf("ScheduleTimezone = %q, want Asia/Seoul", ctx.ScheduleTimezone)
+	}
+	if ctx.ScheduledTaskCount != 1 || len(ctx.ScheduledTasks) != 1 {
+		t.Fatalf("scheduled task counts = total %d visible %d, want 1/1", ctx.ScheduledTaskCount, len(ctx.ScheduledTasks))
+	}
+	task := ctx.ScheduledTasks[0]
+	if task.Kind != "skill" || task.Name != skill.Name || task.Status != "enabled" || task.Trigger != "once" || task.Schedule != nextRun {
+		t.Fatalf("scheduled task = %#v, want saved skill summary", task)
+	}
+	if task.LastRun == nil || task.FailureCount != 1 {
+		t.Fatalf("scheduled task state = %#v, want last_run and failure_count", task)
+	}
+}
+
 type promptCaptureProvider struct {
 	response string
 	messages []core.LlmMessage

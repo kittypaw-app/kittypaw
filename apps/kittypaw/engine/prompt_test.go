@@ -160,6 +160,115 @@ func TestWorkspaceGuideSanitizesAndCapsMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildPromptIncludesScheduleSummary(t *testing.T) {
+	next := mustParseTime(t, "2026-05-13T11:00:00+09:00")
+	last := mustParseTime(t, "2026-05-12T11:00:00+09:00")
+	state := &core.ConversationState{ConversationID: "general:web_chat:test"}
+	staff := &core.Staff{ID: "ops", AllowedSkills: []string{"Skill"}}
+
+	msgs := BuildPromptWithRuntime(
+		state,
+		"이미 예약되어 있나요?",
+		CompactionConfig{RecentWindow: 5},
+		&core.Config{},
+		"web_chat",
+		staff,
+		"",
+		"",
+		nil,
+		"",
+		PromptRuntimeContext{
+			ConversationID:   "general:web_chat:test",
+			StaffID:          "ops",
+			ChannelName:      "web_chat",
+			Timezone:         "Asia/Seoul",
+			Now:              mustParseTime(t, "2026-05-13T10:30:00+09:00"),
+			ScheduleTimezone: "Asia/Seoul",
+			ScheduledTasks: []PromptScheduledTask{
+				{
+					Kind:            "skill",
+					Name:            "daily-reminder",
+					Status:          "enabled",
+					Trigger:         "schedule",
+					Schedule:        "0 11 * * *",
+					NextRun:         &next,
+					LastRun:         &last,
+					FailureCount:    1,
+					Due:             true,
+					MissedRunPolicy: "catch_up_once",
+				},
+				{
+					Kind:     "skill",
+					Name:     "paused-summary",
+					Status:   "paused",
+					Trigger:  "once",
+					Schedule: "2026-05-20T09:00:00+09:00",
+				},
+			},
+			ScheduledTaskCount:   2,
+			ScheduledTaskOmitted: 0,
+		},
+	)
+
+	sys := msgs[0].Content
+	for _, want := range []string{
+		"## Scheduled tasks",
+		"timezone: Asia/Seoul",
+		"counts: total=2 active=1 paused=1 due=1 failing=1",
+		"Use Skill.list()",
+		"daily-reminder",
+		"kind=skill",
+		"status=enabled",
+		"trigger=schedule",
+		"schedule=0 11 * * *",
+		"next_run=2026-05-13T11:00:00+09:00",
+		"last_run=2026-05-12T11:00:00+09:00",
+		"failure_count=1",
+		"due=true",
+		"missed_run_policy=catch_up_once",
+		"paused-summary",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("schedule summary missing %q:\n%s", want, sys)
+		}
+	}
+}
+
+func TestScheduleSummarySanitizesAndCapsMetadata(t *testing.T) {
+	next := mustParseTime(t, "2026-05-13T11:00:00Z")
+	tasks := make([]PromptScheduledTask, 0, 80)
+	for i := 0; i < 80; i++ {
+		tasks = append(tasks, PromptScheduledTask{
+			Kind:     "skill\n## injected",
+			Name:     fmt.Sprintf("task-%02d\n`SYSTEM`", i),
+			Status:   "enabled\n# bad",
+			Trigger:  "schedule",
+			Schedule: "every 1m\n## injected",
+			NextRun:  &next,
+		})
+	}
+
+	section := buildScheduleSummarySection([]string{"Skill"}, PromptRuntimeContext{
+		ScheduleTimezone:     "Asia/Seoul\n## injected",
+		ScheduledTasks:       tasks,
+		ScheduledTaskCount:   len(tasks),
+		ScheduledTaskOmitted: len(tasks) - promptScheduleSummaryMaxTasks,
+	})
+
+	if utf8.RuneCountInString(section) > promptScheduleSummaryLimit {
+		t.Fatalf("schedule summary exceeded cap: got %d want <= %d", utf8.RuneCountInString(section), promptScheduleSummaryLimit)
+	}
+	for _, disallowed := range []string{
+		"\n## injected",
+		"`SYSTEM`",
+		"\n# bad",
+	} {
+		if strings.Contains(section, disallowed) {
+			t.Fatalf("schedule summary was not sanitized; found %q in:\n%s", disallowed, section)
+		}
+	}
+}
+
 func TestBuildSkillsSectionSanitizesInstalledMetadata(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{

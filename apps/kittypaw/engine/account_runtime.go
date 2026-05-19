@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -438,6 +439,143 @@ func populatePromptWorkspaceScope(ctx *PromptRuntimeContext, s *AccountRuntime, 
 		}
 		ctx.ProjectSelectionRequired = false
 	}
+}
+
+func populatePromptScheduleContext(ctx *PromptRuntimeContext, s *AccountRuntime) {
+	if ctx == nil || s == nil {
+		return
+	}
+	tz := scheduleTimezoneForRuntime(s)
+	ctx.ScheduleTimezone = tz.Name
+	now := time.Now()
+	var tasks []PromptScheduledTask
+	if strings.TrimSpace(s.BaseDir) != "" {
+		skills, err := core.LoadAllSkillsFrom(s.BaseDir)
+		if err != nil {
+			slog.Warn("prompt schedule context: load skills failed", "error", err)
+		} else {
+			for _, sk := range skills {
+				if isScheduledTrigger(sk.Manifest.Trigger.Type) {
+					tasks = append(tasks, promptScheduledTaskForSkill(s, &sk.Manifest, now, tz))
+				}
+			}
+		}
+	}
+	if s.PackageManager != nil {
+		packages, err := s.PackageManager.ListInstalled()
+		if err != nil {
+			slog.Warn("prompt schedule context: list packages failed", "error", err)
+		} else {
+			for _, pkg := range packages {
+				if strings.TrimSpace(pkg.Meta.Cron) != "" {
+					tasks = append(tasks, promptScheduledTaskForPackage(s, &pkg, now, tz))
+				}
+			}
+		}
+	}
+	sortPromptScheduledTasks(tasks)
+	ctx.ScheduledTaskCount = len(tasks)
+	for _, task := range tasks {
+		switch strings.ToLower(strings.TrimSpace(task.Status)) {
+		case "paused", "disabled":
+			ctx.ScheduledTaskPausedCount++
+		default:
+			ctx.ScheduledTaskActiveCount++
+		}
+		if task.Due {
+			ctx.ScheduledTaskDueCount++
+		}
+		if task.FailureCount > 0 {
+			ctx.ScheduledTaskFailingCount++
+		}
+	}
+	visible := tasks
+	if len(visible) > promptScheduleSummaryMaxTasks {
+		ctx.ScheduledTaskOmitted = len(visible) - promptScheduleSummaryMaxTasks
+		visible = visible[:promptScheduleSummaryMaxTasks]
+	}
+	ctx.ScheduledTasks = visible
+}
+
+func promptScheduledTaskForSkill(s *AccountRuntime, skill *core.SkillManifest, now time.Time, tz core.UserTimezone) PromptScheduledTask {
+	lastRun, failCount := scheduleStoreState(s, skill.Name)
+	state := SkillScheduleStateForLocation(skill, lastRun, failCount, now, tz.Location)
+	status := "enabled"
+	if !skill.Enabled {
+		status = "paused"
+		state.Due = false
+	}
+	schedule := strings.TrimSpace(skill.Trigger.Cron)
+	if schedule == "" {
+		schedule = strings.TrimSpace(skill.Trigger.RunAt)
+	}
+	return PromptScheduledTask{
+		Kind:            "skill",
+		Name:            skill.Name,
+		Status:          status,
+		Trigger:         skill.Trigger.Type,
+		Schedule:        schedule,
+		NextRun:         clonePromptTime(state.NextRun),
+		LastRun:         clonePromptTime(state.LastRun),
+		FailureCount:    state.FailureCount,
+		Due:             state.Due,
+		MissedRunPolicy: state.MissedRunPolicy,
+	}
+}
+
+func promptScheduledTaskForPackage(s *AccountRuntime, pkg *core.SkillPackage, now time.Time, tz core.UserTimezone) PromptScheduledTask {
+	jobKey := "pkg:" + pkg.Meta.ID
+	var lastRun *time.Time
+	var failCount int
+	if s != nil && s.Store != nil {
+		lastRun, _ = s.Store.GetLastRun(jobKey)
+		failCount, _ = s.Store.GetFailureCount(jobKey)
+	}
+	var nextRun *time.Time
+	var due bool
+	if next, ok := nextScheduledRunInLocation(pkg.Meta.Cron, lastRun, now, tz.Location); ok {
+		nextRun = &next
+		due = !now.UTC().Before(next)
+	}
+	return PromptScheduledTask{
+		Kind:            "package",
+		Name:            pkg.Meta.ID,
+		Status:          "enabled",
+		Trigger:         "package",
+		Schedule:        pkg.Meta.Cron,
+		NextRun:         clonePromptTime(nextRun),
+		LastRun:         clonePromptTime(lastRun),
+		FailureCount:    failCount,
+		Due:             due,
+		MissedRunPolicy: defaultMissedRunPolicy(),
+	}
+}
+
+func sortPromptScheduledTasks(tasks []PromptScheduledTask) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		a, b := tasks[i], tasks[j]
+		if a.Due != b.Due {
+			return a.Due
+		}
+		if a.NextRun != nil && b.NextRun != nil && !a.NextRun.Equal(*b.NextRun) {
+			return a.NextRun.Before(*b.NextRun)
+		}
+		if a.NextRun != nil && b.NextRun == nil {
+			return true
+		}
+		if a.NextRun == nil && b.NextRun != nil {
+			return false
+		}
+		return strings.Compare(a.Name, b.Name) < 0
+	})
+}
+
+func clonePromptTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	clone := t.UTC()
+	return &clone
 }
 
 func admissionClassForEvent(event core.Event) AdmissionClass {
@@ -975,6 +1113,7 @@ func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, raw
 		runtimeCtx.Timezone = s.Config.User.Timezone
 	}
 	populatePromptWorkspaceContext(&runtimeCtx, s)
+	populatePromptScheduleContext(&runtimeCtx, s)
 
 	// Add user turn
 	userTurn := core.ConversationTurn{

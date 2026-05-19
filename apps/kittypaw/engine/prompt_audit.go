@@ -15,6 +15,7 @@ var promptLayerManifest = []string{
 	"channel_delivery",
 	"runtime_context",
 	"workspace_guide",
+	"scheduled_tasks",
 	"staff_dispatch",
 	"skills",
 	"skill_creation",
