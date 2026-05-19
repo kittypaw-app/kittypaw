@@ -130,6 +130,40 @@ func TestReflectionDueParsesDefaultSixFieldCron(t *testing.T) {
 	}
 }
 
+func TestFirstScheduledRunAfterInLocationUsesAccountTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) // 08:00 in New York.
+
+	got, ok := firstScheduledRunAfterInLocation("0 9 * * *", now, loc)
+	if !ok {
+		t.Fatal("firstScheduledRunAfterInLocation returned !ok")
+	}
+	want := time.Date(2026, 5, 15, 13, 0, 0, 0, time.UTC) // 09:00 in New York.
+	if !got.Equal(want) {
+		t.Fatalf("next run = %s, want %s", got, want)
+	}
+}
+
+func TestNextScheduledRunInLocationSkipsDSTSpringForwardGap(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastRun := time.Date(2026, 3, 7, 7, 30, 0, 0, time.UTC) // 02:30 EST.
+
+	got, ok := nextScheduledRunInLocation("30 2 * * *", &lastRun, lastRun, loc)
+	if !ok {
+		t.Fatal("nextScheduledRunInLocation returned !ok")
+	}
+	want := time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC) // 02:30 EDT; Mar 8 02:30 does not exist.
+	if !got.Equal(want) {
+		t.Fatalf("next run = %s, want %s", got, want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // isDue — requires a real store for GetLastRun/GetFailureCount
 // ---------------------------------------------------------------------------
@@ -208,6 +242,33 @@ func TestIsDue_ScheduleElapsed(t *testing.T) {
 	}
 	if !sched.isDue(skill) {
 		t.Error("should be due: 6m elapsed > 5m interval")
+	}
+}
+
+func TestIsDue_ScheduleUsesConfiguredAccountTimezone(t *testing.T) {
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.User.Timezone = "America/New_York"
+	sched := NewScheduler(&AccountRuntime{Store: st, Config: &cfg}, nil)
+	lastRun := time.Date(2026, 5, 14, 13, 0, 0, 0, time.UTC) // 09:00 in New York.
+	_ = st.SetLastRun("test-sched", lastRun)
+	skill := &core.SkillManifest{
+		Name:    "test-sched",
+		Trigger: core.SkillTrigger{Type: "schedule", Cron: "0 9 * * *"},
+	}
+
+	state := sched.skillScheduleState(skill, time.Date(2026, 5, 15, 12, 59, 0, 0, time.UTC))
+	if state.Due {
+		t.Fatal("schedule should not be due before 09:00 in the account timezone")
+	}
+	wantNext := time.Date(2026, 5, 15, 13, 0, 0, 0, time.UTC)
+	if state.NextRun == nil || !state.NextRun.Equal(wantNext) {
+		t.Fatalf("next_run = %v, want %s", state.NextRun, wantNext)
+	}
+
+	state = sched.skillScheduleState(skill, wantNext)
+	if !state.Due {
+		t.Fatal("schedule should be due at 09:00 in the account timezone")
 	}
 }
 
@@ -682,6 +743,30 @@ func TestDeliverWeeklyReport_WrongDay(t *testing.T) {
 
 	if last, _ := st.GetLastRun("__weekly_report__"); last != nil {
 		t.Errorf("wrong-day delivery must not record last-run; got %v", last)
+	}
+}
+
+func TestDeliverWeeklyReport_UsesAccountTimezoneWeekday(t *testing.T) {
+	sched, st := newTestScheduler(t)
+	notifier := &captureNotifier{}
+	sched.runtime.AccountID = "alice"
+	sched.runtime.Notifier = notifier
+	sched.runtime.Config.User.Timezone = "Asia/Tokyo"
+	sched.runtime.Config.Reflection.WeeklyReportDay = uint32(time.Monday)
+	sched.runtime.Config.AllowedChatIDs = []string{"chat-id"}
+	sched.runtime.Config.Channels = []core.ChannelConfig{
+		{ChannelType: core.ChannelTelegram, Token: "tok"},
+	}
+	_ = st.SetUserContext("topic_pref:weather", "0.40", "test")
+	now := time.Date(2026, 5, 17, 15, 30, 0, 0, time.UTC) // Sunday UTC, Monday in Tokyo.
+
+	sched.deliverWeeklyReportAt(context.Background(), now)
+
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one Tokyo Monday weekly report", notifier.deliveries)
+	}
+	if got := notifier.deliveries[0].Target.ChatID; got != "chat-id" {
+		t.Fatalf("delivery chat_id = %q, want chat-id", got)
 	}
 }
 

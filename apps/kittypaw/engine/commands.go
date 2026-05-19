@@ -502,8 +502,10 @@ func handleScheduleList(s *AccountRuntime) string {
 	if len(items) == 0 {
 		return "예약된 스킬이 없습니다."
 	}
+	tz := scheduleTimezoneForRuntime(s)
 	var sb strings.Builder
 	sb.WriteString("예약 스킬 목록:\n")
+	fmt.Fprintf(&sb, "timezone: %s\n", tz.Name)
 	now := time.Now()
 	for _, item := range items {
 		status := "enabled"
@@ -511,13 +513,13 @@ func handleScheduleList(s *AccountRuntime) string {
 			status = "paused"
 		}
 		lastRun, failCount := scheduleStoreState(s, item.Manifest.Name)
-		state := SkillScheduleStateFor(&item.Manifest, lastRun, failCount, now)
+		state := SkillScheduleStateForLocation(&item.Manifest, lastRun, failCount, now, tz.Location)
 		fmt.Fprintf(&sb, "- %s [%s] trigger=%s next_run=%s last_run=%s failure_count=%d\n",
 			item.Manifest.Name,
 			status,
 			item.Manifest.Trigger.Type,
-			formatOptionalScheduleTime(state.NextRun),
-			formatOptionalScheduleTime(state.LastRun),
+			formatOptionalScheduleTimeInTimezone(state.NextRun, tz),
+			formatOptionalScheduleTimeInTimezone(state.LastRun, tz),
 			state.FailureCount,
 		)
 	}
@@ -532,12 +534,14 @@ func handleScheduleShow(name string, s *AccountRuntime) string {
 	if !ok {
 		return fmt.Sprintf("예약 스킬을 찾지 못했습니다: %s", name)
 	}
+	tz := scheduleTimezoneForRuntime(s)
 	lastRun, failCount := scheduleStoreState(s, item.Manifest.Name)
-	state := SkillScheduleStateFor(&item.Manifest, lastRun, failCount, time.Now())
+	state := SkillScheduleStateForLocation(&item.Manifest, lastRun, failCount, time.Now(), tz.Location)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "name: %s\n", item.Manifest.Name)
 	fmt.Fprintf(&sb, "description: %s\n", item.Manifest.Description)
 	fmt.Fprintf(&sb, "enabled: %t\n", item.Manifest.Enabled)
+	fmt.Fprintf(&sb, "timezone: %s\n", tz.Name)
 	fmt.Fprintf(&sb, "trigger: %s\n", item.Manifest.Trigger.Type)
 	if item.Manifest.Trigger.Cron != "" {
 		fmt.Fprintf(&sb, "cron: %s\n", item.Manifest.Trigger.Cron)
@@ -548,8 +552,8 @@ func handleScheduleShow(name string, s *AccountRuntime) string {
 	if item.Manifest.Trigger.RunOnInstall {
 		sb.WriteString("run_on_install: true\n")
 	}
-	fmt.Fprintf(&sb, "next_run: %s\n", formatOptionalScheduleTime(state.NextRun))
-	fmt.Fprintf(&sb, "last_run: %s\n", formatOptionalScheduleTime(state.LastRun))
+	fmt.Fprintf(&sb, "next_run: %s\n", formatOptionalScheduleTimeInTimezone(state.NextRun, tz))
+	fmt.Fprintf(&sb, "last_run: %s\n", formatOptionalScheduleTimeInTimezone(state.LastRun, tz))
 	fmt.Fprintf(&sb, "failure_count: %d\n", state.FailureCount)
 	if !item.Manifest.Trigger.Delivery.IsZero() {
 		fmt.Fprintf(&sb, "delivery: %s\n", summarizeDeliveryTarget(item.Manifest.Trigger.Delivery))

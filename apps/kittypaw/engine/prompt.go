@@ -515,9 +515,7 @@ func defaultPromptRuntimeContext(state *core.ConversationState, config *core.Con
 	if staff != nil {
 		ctx.StaffID = staff.ID
 	}
-	if config != nil {
-		ctx.Timezone = config.User.Timezone
-	}
+	ctx.Timezone = core.ResolveUserTimezone(config).Name
 	return ctx
 }
 

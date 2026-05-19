@@ -2040,7 +2040,7 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 			if s.Store != nil {
 				lastRun, _ := s.Store.GetLastRun(sk.Manifest.Name)
 				failCount, _ := s.Store.GetFailureCount(sk.Manifest.Name)
-				state := SkillScheduleStateFor(&sk.Manifest, lastRun, failCount, time.Now())
+				state := SkillScheduleStateForLocation(&sk.Manifest, lastRun, failCount, time.Now(), scheduleTimezoneForRuntime(s).Location)
 				item["last_run"] = formatOptionalScheduleTime(state.LastRun)
 				item["next_run"] = formatOptionalScheduleTime(state.NextRun)
 				item["failure_count"] = state.FailureCount
@@ -2134,7 +2134,7 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 			skill.Trigger.Cron = schedule
 			skill.Trigger.RunOnInstall = runOnInstall
 			if !runOnInstall {
-				if runAt, ok := firstScheduledRunAfter(schedule, time.Now()); ok {
+				if runAt, ok := firstScheduledRunAfterInLocation(schedule, time.Now(), scheduleTimezoneForRuntime(s).Location); ok {
 					skill.Trigger.RunAt = runAt.Format(time.RFC3339)
 				}
 			}
@@ -2363,6 +2363,17 @@ func formatOptionalScheduleTime(t *time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func formatOptionalScheduleTimeInTimezone(t *time.Time, tz core.UserTimezone) string {
+	if t == nil {
+		return ""
+	}
+	loc := tz.Location
+	if loc == nil {
+		loc = time.Local
+	}
+	return t.In(loc).Format(time.RFC3339)
 }
 
 // runSkillOrPackage executes a user-created skill or installed package by name.

@@ -546,11 +546,13 @@ func (s *Server) handleConversationToolTraces(w http.ResponseWriter, r *http.Req
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
-	skills, err := core.LoadAllSkillsFrom(s.defaultRuntime().BaseDir)
+	runtime := s.defaultRuntime()
+	skills, err := core.LoadAllSkillsFrom(runtime.BaseDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	tz := core.ResolveUserTimezone(runtime.Config)
 
 	type skillItem struct {
 		Name         string `json:"name"`
@@ -573,7 +575,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 	for _, sk := range skills {
 		lastRun, _ := s.store.GetLastRun(sk.Manifest.Name)
 		failureCount, _ := s.store.GetFailureCount(sk.Manifest.Name)
-		status := engine.SkillScheduleStateFor(&sk.Manifest, lastRun, failureCount, now)
+		status := engine.SkillScheduleStateForLocation(&sk.Manifest, lastRun, failureCount, now, tz.Location)
 		item := skillItem{
 			Name:         sk.Manifest.Name,
 			Description:  sk.Manifest.Description,
@@ -701,7 +703,8 @@ func (s *Server) handleTeachApprove(w http.ResponseWriter, r *http.Request) {
 		triggerSpec.Cron = body.Schedule
 		triggerSpec.RunOnInstall = body.RunOnInstall
 		if !body.RunOnInstall {
-			if runAt, ok := engine.FirstScheduledRunAfter(body.Schedule, time.Now()); ok {
+			tz := core.ResolveUserTimezone(s.defaultRuntime().Config)
+			if runAt, ok := engine.FirstScheduledRunAfterInLocation(body.Schedule, time.Now(), tz.Location); ok {
 				triggerSpec.RunAt = runAt.Format(time.RFC3339)
 			}
 		}

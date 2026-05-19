@@ -124,6 +124,20 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	return snapshot
 }
 
+func (s *Scheduler) scheduleTimezone() core.UserTimezone {
+	if s == nil || s.runtime == nil {
+		return core.ResolveUserTimezone(nil)
+	}
+	return core.ResolveUserTimezone(s.runtime.Config)
+}
+
+func scheduleTimezoneForRuntime(runtime *AccountRuntime) core.UserTimezone {
+	if runtime == nil {
+		return core.ResolveUserTimezone(nil)
+	}
+	return core.ResolveUserTimezone(runtime.Config)
+}
+
 func (s *Scheduler) startReflectionLoop(ctx context.Context) {
 	if s.runtime == nil || s.runtime.Config == nil || !s.runtime.Config.Reflection.Enabled {
 		return
@@ -213,14 +227,23 @@ func (s *Scheduler) runReflectionTick(ctx context.Context) {
 // server restart on the same day does not double-send. Best-effort: any
 // dispatch failure is logged warn and does not abort the reflection cycle.
 func (s *Scheduler) deliverWeeklyReport(ctx context.Context) {
+	s.deliverWeeklyReportAt(ctx, time.Now())
+}
+
+func (s *Scheduler) deliverWeeklyReportAt(ctx context.Context, now time.Time) {
 	cfg := s.runtime.Config.Reflection
+	tz := s.scheduleTimezone()
+	loc := tz.Location
+	if loc == nil {
+		loc = time.Local
+	}
 	// time.Weekday: Sunday=0..Saturday=6. Default 0 (Sunday) matches the
 	// docs/index.html promise "매주 일요일 주간 관심사 리포트".
-	if int(time.Now().Weekday()) != int(cfg.WeeklyReportDay) {
+	if int(now.In(loc).Weekday()) != int(cfg.WeeklyReportDay) {
 		return
 	}
 	lastRun, _ := s.runtime.Store.GetLastRun("__weekly_report__")
-	if lastRun != nil && time.Since(*lastRun) < 23*time.Hour {
+	if lastRun != nil && now.Sub(*lastRun) < 23*time.Hour {
 		return
 	}
 
@@ -265,7 +288,7 @@ func (s *Scheduler) deliverWeeklyReport(ctx context.Context) {
 		return
 	}
 	slog.Info("weekly report: delivered")
-	_ = s.runtime.Store.SetLastRun("__weekly_report__", time.Now())
+	_ = s.runtime.Store.SetLastRun("__weekly_report__", now)
 }
 
 // firstTelegramTarget returns the (bot_token, chat_id) of the account's
@@ -288,23 +311,30 @@ func (s *Scheduler) firstTelegramTarget() (string, string) {
 // configured cron window. When no cron is configured, it uses 03:00 daily.
 func (s *Scheduler) isReflectionDue() bool {
 	lastRun, _ := s.runtime.Store.GetLastRun("__reflection__")
-	return reflectionDueAt(s.runtime.Config.Reflection, lastRun, time.Now())
+	return reflectionDueAtInLocation(s.runtime.Config.Reflection, lastRun, time.Now(), s.scheduleTimezone().Location)
 }
 
 func reflectionDueAt(cfg core.ReflectionConfig, lastRun *time.Time, now time.Time) bool {
+	return reflectionDueAtInLocation(cfg, lastRun, now, now.Location())
+}
+
+func reflectionDueAtInLocation(cfg core.ReflectionConfig, lastRun *time.Time, now time.Time, loc *time.Location) bool {
 	expr := strings.TrimSpace(cfg.Cron)
 	if expr == "" {
 		expr = "0 0 3 * * *"
 	}
 	if strings.HasPrefix(expr, "every ") {
-		return cronIsDueAt(expr, lastRun, now)
+		return cronIsDueAtInLocation(expr, lastRun, now, loc)
 	}
 	schedule, err := parseCronSchedule(expr)
 	if err != nil {
 		return false
 	}
-	fire := schedule.Next(now.Add(-1 * time.Hour))
-	if fire.After(now) {
+	if loc == nil {
+		loc = time.Local
+	}
+	fire := schedule.Next(now.In(loc).Add(-1 * time.Hour)).UTC()
+	if fire.After(now.UTC()) {
 		return false
 	}
 	return lastRun == nil || lastRun.Before(fire)
@@ -390,6 +420,8 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 		return
 	}
 
+	tz := s.scheduleTimezone()
+	now := time.Now()
 	for _, pkg := range packages {
 		if pkg.Meta.Cron == "" {
 			continue
@@ -397,8 +429,8 @@ func (s *Scheduler) checkPackages(ctx context.Context) {
 
 		schedName := "pkg:" + pkg.Meta.ID
 		lastRun, _ := s.runtime.Store.GetLastRun(schedName)
-		nextRun, ok := nextScheduledRun(pkg.Meta.Cron, lastRun, time.Now())
-		if !ok || time.Now().Before(nextRun) {
+		nextRun, ok := nextScheduledRunInLocation(pkg.Meta.Cron, lastRun, now, tz.Location)
+		if !ok || now.UTC().Before(nextRun) {
 			continue
 		}
 
@@ -590,7 +622,7 @@ func (s *Scheduler) skillScheduleState(skill *core.SkillManifest, now time.Time)
 	}
 
 	failCount, _ := s.runtime.Store.GetFailureCount(skill.Name)
-	return SkillScheduleStateFor(skill, lastRun, failCount, now)
+	return SkillScheduleStateForLocation(skill, lastRun, failCount, now, s.scheduleTimezone().Location)
 }
 
 func (s *Scheduler) claimScheduledRun(jobKey, jobType, jobID, triggerType string, dueAt time.Time) (*store.ScheduledRun, bool, error) {
@@ -793,6 +825,10 @@ func cronIsDue(expr string, lastRun *time.Time) bool {
 }
 
 func cronIsDueAt(expr string, lastRun *time.Time, now time.Time) bool {
+	return cronIsDueAtInLocation(expr, lastRun, now, now.Location())
+}
+
+func cronIsDueAtInLocation(expr string, lastRun *time.Time, now time.Time, loc *time.Location) bool {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return false
@@ -813,8 +849,11 @@ func cronIsDueAt(expr string, lastRun *time.Time, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	nextFire := schedule.Next(*lastRun)
-	return !now.Before(nextFire)
+	if loc == nil {
+		loc = time.Local
+	}
+	nextFire := schedule.Next(lastRun.In(loc)).UTC()
+	return !now.UTC().Before(nextFire)
 }
 
 func parseCronSchedule(expr string) (cron.Schedule, error) {
@@ -823,9 +862,16 @@ func parseCronSchedule(expr string) (cron.Schedule, error) {
 }
 
 func SkillScheduleStateFor(skill *core.SkillManifest, lastRun *time.Time, failureCount int, now time.Time) SkillScheduleState {
+	return SkillScheduleStateForLocation(skill, lastRun, failureCount, now, now.Location())
+}
+
+func SkillScheduleStateForLocation(skill *core.SkillManifest, lastRun *time.Time, failureCount int, now time.Time, loc *time.Location) SkillScheduleState {
 	state := SkillScheduleState{LastRun: lastRun, FailureCount: failureCount}
 	if skill == nil {
 		return state
+	}
+	if loc == nil {
+		loc = time.Local
 	}
 
 	switch skill.Trigger.Type {
@@ -849,7 +895,7 @@ func SkillScheduleStateFor(skill *core.SkillManifest, lastRun *time.Time, failur
 		return state
 
 	case "schedule":
-		next, ok := nextScheduledRunForTrigger(skill.Trigger, lastRun, now)
+		next, ok := nextScheduledRunForTriggerInLocation(skill.Trigger, lastRun, now, loc)
 		if !ok {
 			return state
 		}
@@ -869,6 +915,10 @@ func SkillScheduleStateFor(skill *core.SkillManifest, lastRun *time.Time, failur
 }
 
 func nextScheduledRunForTrigger(trigger core.SkillTrigger, lastRun *time.Time, now time.Time) (time.Time, bool) {
+	return nextScheduledRunForTriggerInLocation(trigger, lastRun, now, now.Location())
+}
+
+func nextScheduledRunForTriggerInLocation(trigger core.SkillTrigger, lastRun *time.Time, now time.Time, loc *time.Location) (time.Time, bool) {
 	if lastRun == nil && !trigger.RunOnInstall {
 		if runAt, ok := parseScheduleRunAt(trigger.RunAt); ok {
 			return runAt, true
@@ -876,15 +926,22 @@ func nextScheduledRunForTrigger(trigger core.SkillTrigger, lastRun *time.Time, n
 		// Older and hand-authored schedule manifests do not carry a first-run
 		// anchor. Keep that compatibility path runnable instead of recomputing a
 		// future next-run forever on each scheduler tick.
-		return nextScheduledRun(trigger.Cron, nil, now)
+		return nextScheduledRunInLocation(trigger.Cron, nil, now, loc)
 	}
-	return nextScheduledRun(trigger.Cron, lastRun, now)
+	return nextScheduledRunInLocation(trigger.Cron, lastRun, now, loc)
 }
 
 func nextScheduledRun(expr string, lastRun *time.Time, now time.Time) (time.Time, bool) {
+	return nextScheduledRunInLocation(expr, lastRun, now, now.Location())
+}
+
+func nextScheduledRunInLocation(expr string, lastRun *time.Time, now time.Time, loc *time.Location) (time.Time, bool) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return time.Time{}, false
+	}
+	if loc == nil {
+		loc = time.Local
 	}
 	if lastRun == nil {
 		return now.UTC(), true
@@ -900,13 +957,20 @@ func nextScheduledRun(expr string, lastRun *time.Time, now time.Time) (time.Time
 	if err != nil {
 		return time.Time{}, false
 	}
-	return schedule.Next(*lastRun).UTC(), true
+	return schedule.Next(lastRun.In(loc)).UTC(), true
 }
 
 func firstScheduledRunAfter(expr string, now time.Time) (time.Time, bool) {
+	return firstScheduledRunAfterInLocation(expr, now, now.Location())
+}
+
+func firstScheduledRunAfterInLocation(expr string, now time.Time, loc *time.Location) (time.Time, bool) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return time.Time{}, false
+	}
+	if loc == nil {
+		loc = time.Local
 	}
 	if strings.HasPrefix(expr, "every ") {
 		interval := parseCronInterval(expr)
@@ -919,13 +983,17 @@ func firstScheduledRunAfter(expr string, now time.Time) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	return schedule.Next(now).UTC(), true
+	return schedule.Next(now.In(loc)).UTC(), true
 }
 
 // FirstScheduledRunAfter returns the first future fire time for a recurring
 // schedule expression. It is used by API paths that create scheduled skills.
 func FirstScheduledRunAfter(expr string, now time.Time) (time.Time, bool) {
 	return firstScheduledRunAfter(expr, now)
+}
+
+func FirstScheduledRunAfterInLocation(expr string, now time.Time, loc *time.Location) (time.Time, bool) {
+	return firstScheduledRunAfterInLocation(expr, now, loc)
 }
 
 func parseScheduleRunAt(raw string) (time.Time, bool) {
