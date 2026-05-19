@@ -125,6 +125,27 @@ func TestPopulatePromptWorkspaceContextMarksUnscopedProjectSelectionRequired(t *
 	}
 }
 
+func TestPopulatePromptWorkspaceContextMarksGeneralScopeProjectSelectionRequired(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	conversationID := "general:web_chat:unscoped"
+	if err := st.EnsureConversation(conversationID, "general", "web_chat:unscoped"); err != nil {
+		t.Fatalf("EnsureConversation: %v", err)
+	}
+	ctx := PromptRuntimeContext{ConversationID: conversationID}
+
+	populatePromptWorkspaceContext(&ctx, &AccountRuntime{Store: st, Config: &core.Config{}})
+
+	if !ctx.ProjectSelectionRequired {
+		t.Fatalf("ProjectSelectionRequired = false, want true for general scope when projects exist")
+	}
+	if ctx.WorkspaceScope.Type != "" {
+		t.Fatalf("WorkspaceScope = %#v, want empty scope for general conversation", ctx.WorkspaceScope)
+	}
+}
+
 type promptCaptureProvider struct {
 	response string
 	messages []core.LlmMessage

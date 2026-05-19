@@ -387,7 +387,7 @@ func populatePromptWorkspaceContext(ctx *PromptRuntimeContext, s *AccountRuntime
 		slog.Warn("prompt workspace context: conversation scope unavailable", "conversation_id", ctx.ConversationID, "error", err)
 		return
 	}
-	if ok {
+	if ok && (strings.TrimSpace(scope.ScopeType) == "project" || strings.TrimSpace(scope.ScopeType) == "ticket") {
 		populatePromptWorkspaceScope(ctx, s, scope)
 		return
 	}
