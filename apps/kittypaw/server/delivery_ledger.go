@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/jinto/kittypaw/engine"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -28,6 +30,26 @@ func (s *Server) recordOutboundDelivery(req store.OutboundDeliveryWrite) int64 {
 		return 0
 	}
 	return id
+}
+
+func outboundDeliveryWithOrigin(ctx context.Context, req store.OutboundDeliveryWrite) store.OutboundDeliveryWrite {
+	origin, ok := engine.DeliveryOriginFromContext(ctx)
+	if !ok {
+		return req
+	}
+	if req.OriginType == "" {
+		req.OriginType = origin.Type
+	}
+	if req.OriginID == "" {
+		req.OriginID = origin.ID
+	}
+	if req.OriginName == "" {
+		req.OriginName = origin.Name
+	}
+	if req.ScheduledRunID <= 0 {
+		req.ScheduledRunID = origin.ScheduledRunID
+	}
+	return req
 }
 
 func (s *Server) markOutboundDelivery(id int64, accountID string, status store.OutboundDeliveryStatus, errorClass, errorMessage string) {

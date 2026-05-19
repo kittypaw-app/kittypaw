@@ -503,7 +503,7 @@ func TestChannelsCommandExposesDeliveriesSubcommand(t *testing.T) {
 	if err != nil || cmd == nil {
 		t.Fatalf("Find(channels deliveries) = %v, %v", cmd, err)
 	}
-	for _, flag := range []string{"limit", "status", "channel", "source", "json"} {
+	for _, flag := range []string{"limit", "status", "channel", "source", "origin-type", "origin-id", "scheduled-run-id", "json"} {
 		if cmd.Flag(flag) == nil {
 			t.Fatalf("channels deliveries missing --%s", flag)
 		}

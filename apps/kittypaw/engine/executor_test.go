@@ -1097,6 +1097,7 @@ func TestExecuteMemorySetCreatesPendingConfirmationForSensitivePersonalData(t *t
 type capturedNotification struct {
 	Target core.DeliveryTarget
 	Text   string
+	Origin DeliveryOrigin
 }
 
 type captureNotifier struct {
@@ -1104,8 +1105,9 @@ type captureNotifier struct {
 	err        error
 }
 
-func (n *captureNotifier) SendNotification(_ context.Context, target core.DeliveryTarget, text string) error {
-	n.deliveries = append(n.deliveries, capturedNotification{Target: target, Text: text})
+func (n *captureNotifier) SendNotification(ctx context.Context, target core.DeliveryTarget, text string) error {
+	origin, _ := DeliveryOriginFromContext(ctx)
+	n.deliveries = append(n.deliveries, capturedNotification{Target: target, Text: text, Origin: origin})
 	return n.err
 }
 

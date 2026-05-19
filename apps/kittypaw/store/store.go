@@ -372,6 +372,10 @@ type OutboundDeliveryRecord struct {
 	Status            OutboundDeliveryStatus `json:"status"`
 	ResponsePreview   string                 `json:"response_preview,omitempty"`
 	PendingResponseID int64                  `json:"pending_response_id,omitempty"`
+	OriginType        string                 `json:"origin_type,omitempty"`
+	OriginID          string                 `json:"origin_id,omitempty"`
+	OriginName        string                 `json:"origin_name,omitempty"`
+	ScheduledRunID    int64                  `json:"scheduled_run_id,omitempty"`
 	RetryCount        int                    `json:"retry_count"`
 	ErrorClass        string                 `json:"error_class,omitempty"`
 	ErrorMessage      string                 `json:"error_message,omitempty"`
@@ -389,17 +393,24 @@ type OutboundDeliveryWrite struct {
 	Response          string
 	ResponsePreview   string
 	PendingResponseID int64
+	OriginType        string
+	OriginID          string
+	OriginName        string
+	ScheduledRunID    int64
 	RetryCount        int
 	ErrorClass        string
 	ErrorMessage      string
 }
 
 type OutboundDeliveryQuery struct {
-	AccountID string
-	Status    OutboundDeliveryStatus
-	Source    OutboundDeliverySource
-	EventType string
-	Limit     int
+	AccountID      string
+	Status         OutboundDeliveryStatus
+	Source         OutboundDeliverySource
+	EventType      string
+	OriginType     string
+	OriginID       string
+	ScheduledRunID int64
+	Limit          int
 }
 
 // ---------------------------------------------------------------------------
@@ -3805,9 +3816,10 @@ func (s *Store) CreateOutboundDelivery(req OutboundDeliveryWrite) (int64, error)
 	res, err := s.db.Exec(`
 		INSERT INTO outbound_deliveries (
 			account_id, event_type, chat_id, source, status, response_preview,
-			pending_response_id, retry_count, error_class, error_message, delivered_at
+			pending_response_id, origin_type, origin_id, origin_name, scheduled_run_id,
+			retry_count, error_class, error_message, delivered_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'delivered' THEN datetime('now') ELSE '' END)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'delivered' THEN datetime('now') ELSE '' END)`,
 		strings.TrimSpace(req.AccountID),
 		strings.TrimSpace(req.EventType),
 		strings.TrimSpace(req.ChatID),
@@ -3815,6 +3827,10 @@ func (s *Store) CreateOutboundDelivery(req OutboundDeliveryWrite) (int64, error)
 		string(status),
 		safeOutboundDeliveryText(rawPreview, outboundDeliveryPreviewRunes),
 		req.PendingResponseID,
+		safeOutboundDeliveryMetadata(req.OriginType),
+		safeOutboundDeliveryMetadata(req.OriginID),
+		safeOutboundDeliveryMetadata(req.OriginName),
+		nonNegativeInt64(req.ScheduledRunID),
 		req.RetryCount,
 		strings.TrimSpace(req.ErrorClass),
 		safeOutboundDeliveryText(req.ErrorMessage, outboundDeliveryErrorRunes),
@@ -3900,11 +3916,24 @@ func (s *Store) ListOutboundDeliveries(q OutboundDeliveryQuery) ([]OutboundDeliv
 		clauses = append(clauses, "event_type = ?")
 		args = append(args, eventType)
 	}
+	if originType := strings.TrimSpace(q.OriginType); originType != "" {
+		clauses = append(clauses, "origin_type = ?")
+		args = append(args, originType)
+	}
+	if originID := strings.TrimSpace(q.OriginID); originID != "" {
+		clauses = append(clauses, "origin_id = ?")
+		args = append(args, originID)
+	}
+	if q.ScheduledRunID > 0 {
+		clauses = append(clauses, "scheduled_run_id = ?")
+		args = append(args, q.ScheduledRunID)
+	}
 	args = append(args, limit)
 
 	rows, err := s.db.Query(`
 		SELECT id, account_id, event_type, chat_id, source, status, response_preview,
-		       pending_response_id, retry_count, error_class, error_message,
+		       pending_response_id, origin_type, origin_id, origin_name, scheduled_run_id,
+		       retry_count, error_class, error_message,
 		       created_at, updated_at, delivered_at
 		FROM outbound_deliveries
 		WHERE `+strings.Join(clauses, " AND ")+`
@@ -3928,6 +3957,10 @@ func (s *Store) ListOutboundDeliveries(q OutboundDeliveryQuery) ([]OutboundDeliv
 			&status,
 			&rec.ResponsePreview,
 			&rec.PendingResponseID,
+			&rec.OriginType,
+			&rec.OriginID,
+			&rec.OriginName,
+			&rec.ScheduledRunID,
 			&rec.RetryCount,
 			&rec.ErrorClass,
 			&rec.ErrorMessage,
@@ -3954,6 +3987,17 @@ func safeOutboundDeliveryText(text string, maxRunes int) string {
 		return "[redacted]"
 	}
 	return snippet
+}
+
+func safeOutboundDeliveryMetadata(text string) string {
+	return safeOutboundDeliveryText(text, 160)
+}
+
+func nonNegativeInt64(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 // ---------------------------------------------------------------------------

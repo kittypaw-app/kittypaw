@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 41 {
-		t.Fatalf("expected 41 migrations, got %d", count)
+	if count != 42 {
+		t.Fatalf("expected 42 migrations, got %d", count)
 	}
 }
 
@@ -2621,6 +2621,10 @@ func TestOutboundDeliveriesRoundTripRedactsPreview(t *testing.T) {
 		Status:            OutboundDeliveryStatusQueued,
 		Response:          "hello api_key=sk-secret-1234567890",
 		PendingResponseID: 42,
+		OriginType:        "scheduled_skill",
+		OriginID:          "daily-summary",
+		OriginName:        "Daily Summary",
+		ScheduledRunID:    77,
 	})
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
@@ -2650,11 +2654,28 @@ func TestOutboundDeliveriesRoundTripRedactsPreview(t *testing.T) {
 	if row.PendingResponseID != 42 {
 		t.Fatalf("pending response id = %d, want 42", row.PendingResponseID)
 	}
+	if row.OriginType != "scheduled_skill" || row.OriginID != "daily-summary" || row.OriginName != "Daily Summary" || row.ScheduledRunID != 77 {
+		t.Fatalf("delivery origin = %+v", row)
+	}
 	if row.ResponsePreview != "[redacted]" {
 		t.Fatalf("response preview = %q, want redacted marker", row.ResponsePreview)
 	}
 	if row.DeliveredAt == "" || row.UpdatedAt == "" {
 		t.Fatalf("timestamps not updated: %+v", row)
+	}
+
+	filtered, err := st.ListOutboundDeliveries(OutboundDeliveryQuery{
+		AccountID:      "alice",
+		OriginType:     "scheduled_skill",
+		OriginID:       "daily-summary",
+		ScheduledRunID: 77,
+		Limit:          10,
+	})
+	if err != nil {
+		t.Fatalf("list filtered deliveries: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != id {
+		t.Fatalf("filtered deliveries = %+v, want id %d", filtered, id)
 	}
 }
 

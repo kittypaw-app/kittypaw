@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -477,6 +479,119 @@ func TestRunSkillAutoDeliversReturnToTriggerDeliveryTarget(t *testing.T) {
 	if notifier.deliveries[0].Target.ChatID != "chat-1" {
 		t.Fatalf("delivery target = %+v, want chat-1", notifier.deliveries[0].Target)
 	}
+	if origin := notifier.deliveries[0].Origin; origin.Type != "scheduled_skill" || origin.ID != "scheduled-output" || origin.Name != "scheduled-output" {
+		t.Fatalf("delivery origin = %+v, want scheduled skill origin", origin)
+	}
+}
+
+func TestRunSkillAutoDeliveryIncludesScheduledRunID(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	baseDir := t.TempDir()
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomyFull
+	notifier := &captureNotifier{}
+	session := &AccountRuntime{
+		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`return "scheduled output";`)}},
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		Config:    &cfg,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Notifier:  notifier,
+	}
+	run, claimed, err := st.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        "scheduled-output",
+		JobType:       "skill",
+		JobID:         "scheduled-output",
+		TriggerType:   "schedule",
+		DueAt:         time.Now().Add(-time.Minute),
+		Now:           time.Now(),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil || !claimed || run == nil {
+		t.Fatalf("ClaimScheduledRun = run:%+v claimed:%v err:%v", run, claimed, err)
+	}
+
+	sched := NewScheduler(session, nil)
+	sched.runSkillWithScheduledRun(context.Background(), &core.SkillManifestWithCode{
+		Manifest: core.SkillManifest{
+			Name:    "scheduled-output",
+			Enabled: true,
+			Trigger: core.SkillTrigger{
+				Type: "schedule",
+				Delivery: core.DeliveryTarget{
+					AccountID: "alice",
+					Channel:   string(core.EventTelegram),
+					ChatID:    "chat-1",
+				},
+			},
+		},
+		Code: `return "ignored";`,
+	}, run)
+
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one auto-delivery", notifier.deliveries)
+	}
+	if origin := notifier.deliveries[0].Origin; origin.ScheduledRunID != run.ID {
+		t.Fatalf("scheduled run id in delivery origin = %+v, want %d", origin, run.ID)
+	}
+}
+
+func TestRunPackageNotificationIncludesScheduledOrigin(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	baseDir := t.TempDir()
+	srcDir := t.TempDir()
+	writeScheduledNotifyPackage(t, srcDir, "notify-pkg", "Notify Package")
+	pm := core.NewPackageManagerFrom(baseDir, nil)
+	pkg, err := pm.Install(srcDir)
+	if err != nil {
+		t.Fatalf("Install package: %v", err)
+	}
+	st := newTestStore(t)
+	cfg := core.DefaultConfig()
+	cfg.AutonomyLevel = core.AutonomyFull
+	notifier := &captureNotifier{}
+	session := &AccountRuntime{
+		Sandbox:        sandbox.New(cfg.Sandbox),
+		Store:          st,
+		Config:         &cfg,
+		BaseDir:        baseDir,
+		AccountID:      "alice",
+		PackageManager: pm,
+		Notifier:       notifier,
+	}
+	run, claimed, err := st.ClaimScheduledRun(store.ClaimScheduledRunRequest{
+		JobKey:        "pkg:notify-pkg",
+		JobType:       "package",
+		JobID:         "notify-pkg",
+		TriggerType:   "package",
+		DueAt:         time.Now().Add(-time.Minute),
+		Now:           time.Now(),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil || !claimed || run == nil {
+		t.Fatalf("ClaimScheduledRun = run:%+v claimed:%v err:%v", run, claimed, err)
+	}
+
+	sched := NewScheduler(session, pm)
+	sched.runPackageWithScheduledRun(context.Background(), pkg, run)
+
+	if len(notifier.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one package notification", notifier.deliveries)
+	}
+	if notifier.deliveries[0].Text != "from package" {
+		t.Fatalf("delivery text = %q, want package notification", notifier.deliveries[0].Text)
+	}
+	origin := notifier.deliveries[0].Origin
+	if origin.Type != "scheduled_package" ||
+		origin.ID != "notify-pkg" ||
+		origin.Name != "Notify Package" ||
+		origin.ScheduledRunID != run.ID {
+		t.Fatalf("package notification origin = %+v, want scheduled package run %d", origin, run.ID)
+	}
 }
 
 func TestRunSkillSkipsAutoDeliveryAfterNotifySend(t *testing.T) {
@@ -518,6 +633,9 @@ func TestRunSkillSkipsAutoDeliveryAfterNotifySend(t *testing.T) {
 	}
 	if notifier.deliveries[0].Text != "explicit notice" {
 		t.Fatalf("delivered text = %q", notifier.deliveries[0].Text)
+	}
+	if origin := notifier.deliveries[0].Origin; origin.Type != "scheduled_skill" || origin.ID != "scheduled-notify" {
+		t.Fatalf("explicit notification origin = %+v, want scheduled skill origin", origin)
 	}
 }
 
@@ -569,6 +687,27 @@ func TestRunOnceSkillDeletesAfterDeliveryFailure(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("one-shot skill remained on disk after delivery failure: %+v", got.Trigger)
+	}
+}
+
+func writeScheduledNotifyPackage(t *testing.T, dir, id, name string) {
+	t.Helper()
+	toml := `[meta]
+id = "` + id + `"
+name = "` + name + `"
+version = "1.0.0"
+description = "scheduled notify package"
+
+[permissions]
+primitives = ["Notify"]
+`
+	code := `Notify.send("from package", { channel: "telegram", chat_id: "chat-1" });
+return "package output";`
+	if err := os.WriteFile(filepath.Join(dir, "package.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatalf("write package.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.js"), []byte(code), 0o644); err != nil {
+		t.Fatalf("write main.js: %v", err)
 	}
 }
 

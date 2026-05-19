@@ -2439,6 +2439,9 @@ func newChannelsDeliveriesCmd() *cobra.Command {
 	var status string
 	var channel string
 	var source string
+	var originType string
+	var originID string
+	var scheduledRunID int64
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "deliveries",
@@ -2448,7 +2451,14 @@ func newChannelsDeliveriesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := cl.Deliveries(limit, strings.TrimSpace(status), strings.TrimSpace(channel), strings.TrimSpace(source))
+			res, err := cl.Deliveries(limit,
+				strings.TrimSpace(status),
+				strings.TrimSpace(channel),
+				strings.TrimSpace(source),
+				strings.TrimSpace(originType),
+				strings.TrimSpace(originID),
+				scheduledRunID,
+			)
 			if err != nil {
 				return err
 			}
@@ -2468,6 +2478,9 @@ func newChannelsDeliveriesCmd() *cobra.Command {
 	cmd.Flags().StringVar(&status, "status", "", "filter by status: queued, sending, delivered, failed, dropped")
 	cmd.Flags().StringVar(&channel, "channel", "", "filter by channel/event type")
 	cmd.Flags().StringVar(&source, "source", "", "filter by source: channel_reply, notify, team_space_push, retry")
+	cmd.Flags().StringVar(&originType, "origin-type", "", "filter by origin type: scheduled_skill, scheduled_package, reflection_weekly_report")
+	cmd.Flags().StringVar(&originID, "origin-id", "", "filter by origin id")
+	cmd.Flags().Int64Var(&scheduledRunID, "scheduled-run-id", 0, "filter by scheduled run id")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
 	return cmd
 }
@@ -2477,31 +2490,48 @@ func printDeliveryRows(rows []map[string]any) {
 		fmt.Println("No deliveries found.")
 		return
 	}
-	fmt.Printf("%s %s %s %s %s %s %s\n",
+	fmt.Printf("%s %s %s %s %s %s %s %s\n",
 		padW("ID", 6),
 		padW("STATUS", 10),
 		padW("CHANNEL", 12),
 		padW("SOURCE", 16),
+		padW("ORIGIN", 24),
 		padW("RETRIES", 7),
 		padW("UPDATED", 20),
 		"PREVIEW",
 	)
-	fmt.Println(strings.Repeat("-", 104))
+	fmt.Println(strings.Repeat("-", 129))
 	for _, r := range rows {
 		preview := jsonStr(r, "response_preview")
 		if preview == "" {
 			preview = jsonStr(r, "error_message")
 		}
-		fmt.Printf("%s %s %s %s %s %s %s\n",
+		fmt.Printf("%s %s %s %s %s %s %s %s\n",
 			padW(fmt.Sprintf("%d", jsonInt(r, "id")), 6),
 			padW(truncW(jsonStr(r, "status"), 10), 10),
 			padW(truncW(jsonStr(r, "event_type"), 12), 12),
 			padW(truncW(jsonStr(r, "source"), 16), 16),
+			padW(truncW(deliveryOriginLabel(r), 24), 24),
 			padW(fmt.Sprintf("%d", jsonInt(r, "retry_count")), 7),
 			padW(truncW(jsonStr(r, "updated_at"), 20), 20),
-			truncW(preview, 72),
+			truncW(preview, 48),
 		)
 	}
+}
+
+func deliveryOriginLabel(r map[string]any) string {
+	originType := jsonStr(r, "origin_type")
+	originID := jsonStr(r, "origin_id")
+	if originType == "" && originID == "" {
+		return "-"
+	}
+	if originType == "" {
+		return originID
+	}
+	if originID == "" {
+		return originType
+	}
+	return originType + ":" + originID
 }
 
 // ---------------------------------------------------------------------------

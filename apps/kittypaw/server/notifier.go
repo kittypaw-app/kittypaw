@@ -26,6 +26,9 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 	}
 
 	s := n.server
+	withOrigin := func(req store.OutboundDeliveryWrite) store.OutboundDeliveryWrite {
+		return outboundDeliveryWithOrigin(ctx, req)
+	}
 	accountID := strings.TrimSpace(n.accountID)
 	if accountID == "" {
 		accountID = s.defaultAccountID()
@@ -71,7 +74,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		if err != nil {
 			return err
 		}
-		s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+		s.recordOutboundDelivery(withOrigin(store.OutboundDeliveryWrite{
 			AccountID:         accountID,
 			EventType:         string(channelType),
 			ChatID:            chatID,
@@ -79,7 +82,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 			Status:            store.OutboundDeliveryStatusQueued,
 			Response:          text,
 			PendingResponseID: id,
-		})
+		}))
 		publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
 			"reason": "spawner_unavailable",
 		})
@@ -94,7 +97,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		if err != nil {
 			return err
 		}
-		s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+		s.recordOutboundDelivery(withOrigin(store.OutboundDeliveryWrite{
 			AccountID:         accountID,
 			EventType:         string(channelType),
 			ChatID:            chatID,
@@ -102,7 +105,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 			Status:            store.OutboundDeliveryStatusQueued,
 			Response:          text,
 			PendingResponseID: id,
-		})
+		}))
 		publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
 			"reason": "channel_not_running",
 		})
@@ -121,7 +124,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 		} else {
 			pendingID = id
 			pendingQueued = true
-			deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			deliveryID = s.recordOutboundDelivery(withOrigin(store.OutboundDeliveryWrite{
 				AccountID:         accountID,
 				EventType:         string(channelType),
 				ChatID:            chatID,
@@ -129,18 +132,18 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 				Status:            store.OutboundDeliveryStatusQueued,
 				Response:          outbound.Text,
 				PendingResponseID: id,
-			})
+			}))
 			publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, nil)
 		}
 	} else {
-		deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+		deliveryID = s.recordOutboundDelivery(withOrigin(store.OutboundDeliveryWrite{
 			AccountID: accountID,
 			EventType: string(channelType),
 			ChatID:    chatID,
 			Source:    store.OutboundDeliverySourceNotify,
 			Status:    store.OutboundDeliveryStatusSending,
 			Response:  outbound.Text,
-		})
+		}))
 	}
 
 	if err := sendChannelResponse(ctx, ch, chatID, outbound, target.ReplyToMessage); err != nil {
@@ -152,7 +155,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 				s.markOutboundDelivery(deliveryID, accountID, store.OutboundDeliveryStatusFailed, "send_failed", err.Error())
 				return fmt.Errorf("send failed: %v; enqueue failed: %w", err, qErr)
 			}
-			deliveryID = s.recordOutboundDelivery(store.OutboundDeliveryWrite{
+			deliveryID = s.recordOutboundDelivery(withOrigin(store.OutboundDeliveryWrite{
 				AccountID:         accountID,
 				EventType:         string(channelType),
 				ChatID:            chatID,
@@ -162,7 +165,7 @@ func (n *serverNotifier) SendNotification(ctx context.Context, target core.Deliv
 				PendingResponseID: id,
 				ErrorClass:        "send_failed",
 				ErrorMessage:      err.Error(),
-			})
+			}))
 			publishDeliveryEvent(s, accountID, EventStreamDeliveryQueued, channelType, chatID, map[string]string{
 				"reason": "send_failed",
 			})

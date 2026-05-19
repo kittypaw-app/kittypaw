@@ -71,7 +71,7 @@ func (c *Client) Executions(skill string, limit int) (map[string]any, error) {
 }
 
 // Deliveries returns recent outbound delivery ledger rows.
-func (c *Client) Deliveries(limit int, status, channel, source string) (map[string]any, error) {
+func (c *Client) Deliveries(limit int, status, channel, source, originType, originID string, scheduledRunID int64) (map[string]any, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -85,6 +85,15 @@ func (c *Client) Deliveries(limit int, status, channel, source string) (map[stri
 	}
 	if source != "" {
 		values.Set("source", source)
+	}
+	if originType != "" {
+		values.Set("origin_type", originType)
+	}
+	if originID != "" {
+		values.Set("origin_id", originID)
+	}
+	if scheduledRunID > 0 {
+		values.Set("scheduled_run_id", fmt.Sprintf("%d", scheduledRunID))
 	}
 	return c.get("/api/v1/deliveries?" + values.Encode())
 }

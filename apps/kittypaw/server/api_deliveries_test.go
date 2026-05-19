@@ -104,3 +104,50 @@ func TestDeliveriesAPIAcceptsNonDefaultAccountAPIKey(t *testing.T) {
 		t.Fatalf("delivery row = %+v, want bob row", got)
 	}
 }
+
+func TestDeliveriesAPIFiltersByOriginMetadata(t *testing.T) {
+	root := t.TempDir()
+	cfg := &core.Config{Server: core.ServerConfig{APIKey: "api-key"}}
+	deps := buildAccountDeps(t, root, "alice", cfg)
+	srv := New([]*AccountDeps{deps}, "test", "alice")
+
+	if _, err := deps.Store.CreateOutboundDelivery(store.OutboundDeliveryWrite{
+		AccountID:      "alice",
+		EventType:      "telegram",
+		ChatID:         "chat-1",
+		Source:         store.OutboundDeliverySourceNotify,
+		Status:         store.OutboundDeliveryStatusDelivered,
+		Response:       "daily output",
+		OriginType:     "scheduled_skill",
+		OriginID:       "daily-summary",
+		OriginName:     "Daily Summary",
+		ScheduledRunID: 77,
+	}); err != nil {
+		t.Fatalf("seed scheduled delivery: %v", err)
+	}
+	if _, err := deps.Store.CreateOutboundDelivery(store.OutboundDeliveryWrite{
+		AccountID:      "alice",
+		EventType:      "telegram",
+		ChatID:         "chat-1",
+		Source:         store.OutboundDeliverySourceNotify,
+		Status:         store.OutboundDeliveryStatusDelivered,
+		Response:       "other output",
+		OriginType:     "scheduled_skill",
+		OriginID:       "other",
+		ScheduledRunID: 78,
+	}); err != nil {
+		t.Fatalf("seed other delivery: %v", err)
+	}
+
+	var body struct {
+		Deliveries []store.OutboundDeliveryRecord `json:"deliveries"`
+	}
+	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/deliveries?origin_type=scheduled_skill&origin_id=daily-summary&scheduled_run_id=77", nil, http.StatusOK, &body)
+	if len(body.Deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, want one filtered row", body.Deliveries)
+	}
+	got := body.Deliveries[0]
+	if got.OriginType != "scheduled_skill" || got.OriginID != "daily-summary" || got.OriginName != "Daily Summary" || got.ScheduledRunID != 77 {
+		t.Fatalf("delivery origin = %+v", got)
+	}
+}

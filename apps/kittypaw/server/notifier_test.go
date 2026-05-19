@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/engine"
 	"github.com/jinto/kittypaw/store"
 )
 
@@ -30,7 +31,13 @@ func TestServerNotifierPersistsBeforeSending(t *testing.T) {
 		t.Fatalf("TrySpawn: %v", err)
 	}
 
-	if err := srv.accounts.Runtime("alice").Notifier.SendNotification(ctx, core.DeliveryTarget{
+	deliveryCtx := engine.ContextWithDeliveryOrigin(ctx, engine.DeliveryOrigin{
+		Type:           "scheduled_skill",
+		ID:             "daily-summary",
+		Name:           "Daily Summary",
+		ScheduledRunID: 77,
+	})
+	if err := srv.accounts.Runtime("alice").Notifier.SendNotification(deliveryCtx, core.DeliveryTarget{
 		AccountID:      "alice",
 		Channel:        string(core.EventTelegram),
 		ChatID:         "chat-1",
@@ -73,6 +80,10 @@ func TestServerNotifierPersistsBeforeSending(t *testing.T) {
 		gotDelivery.EventType != string(core.EventTelegram) ||
 		gotDelivery.ChatID != "chat-1" ||
 		gotDelivery.ResponsePreview != "hello" ||
+		gotDelivery.OriginType != "scheduled_skill" ||
+		gotDelivery.OriginID != "daily-summary" ||
+		gotDelivery.OriginName != "Daily Summary" ||
+		gotDelivery.ScheduledRunID != 77 ||
 		gotDelivery.PendingResponseID <= 0 {
 		t.Fatalf("delivery row = %+v", gotDelivery)
 	}

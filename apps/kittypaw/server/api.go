@@ -146,12 +146,24 @@ func (s *Server) handleDeliveriesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := memoryLimitFromRequest(r, 50, 500)
+	var scheduledRunID int64
+	if raw := strings.TrimSpace(r.URL.Query().Get("scheduled_run_id")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "scheduled_run_id must be a positive integer")
+			return
+		}
+		scheduledRunID = parsed
+	}
 	rows, err := acct.Deps.Store.ListOutboundDeliveries(store.OutboundDeliveryQuery{
-		AccountID: acct.ID,
-		Status:    store.OutboundDeliveryStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
-		Source:    store.OutboundDeliverySource(strings.TrimSpace(r.URL.Query().Get("source"))),
-		EventType: strings.TrimSpace(r.URL.Query().Get("channel")),
-		Limit:     limit,
+		AccountID:      acct.ID,
+		Status:         store.OutboundDeliveryStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
+		Source:         store.OutboundDeliverySource(strings.TrimSpace(r.URL.Query().Get("source"))),
+		EventType:      strings.TrimSpace(r.URL.Query().Get("channel")),
+		OriginType:     strings.TrimSpace(r.URL.Query().Get("origin_type")),
+		OriginID:       strings.TrimSpace(r.URL.Query().Get("origin_id")),
+		ScheduledRunID: scheduledRunID,
+		Limit:          limit,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

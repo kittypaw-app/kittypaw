@@ -286,7 +286,12 @@ func (s *Scheduler) deliverWeeklyReportAt(ctx context.Context, now time.Time) {
 		ChatID:    chatID,
 	}
 	if s.runtime.Notifier != nil {
-		if err := s.runtime.Notifier.SendNotification(ctx, target, report); err != nil {
+		deliveryCtx := ContextWithDeliveryOrigin(ctx, DeliveryOrigin{
+			Type: "reflection_weekly_report",
+			ID:   "__weekly_report__",
+			Name: "Weekly report",
+		})
+		if err := s.runtime.Notifier.SendNotification(deliveryCtx, target, report); err != nil {
 			slog.Warn("weekly report: telegram dispatch failed", "error", err)
 			return
 		}
@@ -503,9 +508,10 @@ func (s *Scheduler) runPackageWithScheduledRun(ctx context.Context, pkg *core.Sk
 			return
 		}
 	}
+	runCtx := ContextWithDeliveryOrigin(ctx, scheduledDeliveryOrigin("scheduled_package", pkg.Meta.ID, pkg.Meta.Name, run))
 
 	// Execute package directly (no LLM loop).
-	resultJSON, err := runSkillOrPackage(ctx, pkg.Meta.ID, s.runtime)
+	resultJSON, err := runSkillOrPackage(runCtx, pkg.Meta.ID, s.runtime)
 	if err != nil {
 		slog.Error("scheduler: package execution failed", "id", pkg.Meta.ID, "error", err)
 		if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, err) {
@@ -548,7 +554,7 @@ func (s *Scheduler) runPackageWithScheduledRun(ctx context.Context, pkg *core.Sk
 				ChatID:    chatID,
 			}
 			if s.runtime.Notifier != nil {
-				if err := s.runtime.Notifier.SendNotification(ctx, target, output); err != nil {
+				if err := s.runtime.Notifier.SendNotification(runCtx, target, output); err != nil {
 					slog.Error("scheduler: telegram dispatch failed", "id", pkg.Meta.ID, "error", err)
 				}
 			} else if err := SendTelegramText(ctx, token, chatID, output); err != nil {
@@ -559,7 +565,7 @@ func (s *Scheduler) runPackageWithScheduledRun(ctx context.Context, pkg *core.Sk
 
 	// Execute chain steps if defined.
 	if len(pkg.Chain) > 0 {
-		if chainErr := s.executeChainSteps(ctx, pkg, output); chainErr != nil {
+		if chainErr := s.executeChainSteps(runCtx, pkg, output); chainErr != nil {
 			slog.Error("scheduler: chain execution failed", "id", pkg.Meta.ID, "error", chainErr)
 		}
 	}
@@ -689,6 +695,21 @@ func (s *Scheduler) setLastRunFromScheduledRun(jobKey string, run *store.Schedul
 	}
 }
 
+func scheduledDeliveryOrigin(originType, id, name string, run *store.ScheduledRun) DeliveryOrigin {
+	origin := DeliveryOrigin{
+		Type: strings.TrimSpace(originType),
+		ID:   strings.TrimSpace(id),
+		Name: strings.TrimSpace(name),
+	}
+	if origin.Name == "" {
+		origin.Name = origin.ID
+	}
+	if run != nil {
+		origin.ScheduledRunID = run.ID
+	}
+	return origin
+}
+
 func scheduledRunErrorDetails(err error) (string, string) {
 	if err == nil {
 		return "", ""
@@ -736,6 +757,7 @@ func (s *Scheduler) runSkillWithScheduledRun(ctx context.Context, sk *core.Skill
 
 	target := sk.Manifest.Trigger.Delivery
 	runCtx := ContextWithDeliveryTarget(admissionCtx, target)
+	runCtx = ContextWithDeliveryOrigin(runCtx, scheduledDeliveryOrigin("scheduled_skill", sk.Manifest.Name, sk.Manifest.Name, run))
 	state := &deliveryState{}
 	runCtx = contextWithDeliveryState(runCtx, state)
 	output, err := s.runtime.Run(runCtx, event, nil)
@@ -757,7 +779,7 @@ func (s *Scheduler) runSkillWithScheduledRun(ctx context.Context, sk *core.Skill
 	}
 
 	if strings.TrimSpace(output) != "" && !notificationSent(runCtx) && s.runtime.Notifier != nil && !target.IsZero() {
-		if err := s.runtime.Notifier.SendNotification(ctx, target, output); err != nil {
+		if err := s.runtime.Notifier.SendNotification(runCtx, target, output); err != nil {
 			slog.Error("scheduler: skill output delivery failed", "name", sk.Manifest.Name, "error", err)
 			if s.finishScheduledRun(run, store.ScheduledRunStatusFailed, err) {
 				s.setLastRunFromScheduledRun(sk.Manifest.Name, run)

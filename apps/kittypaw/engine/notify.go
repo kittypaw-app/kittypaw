@@ -18,9 +18,24 @@ type deliveryState struct {
 	sent bool
 }
 
+type DeliveryOrigin struct {
+	Type           string
+	ID             string
+	Name           string
+	ScheduledRunID int64
+}
+
+func (o DeliveryOrigin) IsZero() bool {
+	return strings.TrimSpace(o.Type) == "" &&
+		strings.TrimSpace(o.ID) == "" &&
+		strings.TrimSpace(o.Name) == "" &&
+		o.ScheduledRunID <= 0
+}
+
 const (
 	ctxKeyDeliveryTarget contextKey = "deliveryTarget"
 	ctxKeyDeliveryState  contextKey = "deliveryState"
+	ctxKeyDeliveryOrigin contextKey = "deliveryOrigin"
 )
 
 func ContextWithDeliveryTarget(ctx context.Context, target core.DeliveryTarget) context.Context {
@@ -35,6 +50,26 @@ func DeliveryTargetFromContext(ctx context.Context) (core.DeliveryTarget, bool) 
 		return v, true
 	}
 	return core.DeliveryTarget{}, false
+}
+
+func ContextWithDeliveryOrigin(ctx context.Context, origin DeliveryOrigin) context.Context {
+	if origin.IsZero() {
+		return ctx
+	}
+	origin.Type = strings.TrimSpace(origin.Type)
+	origin.ID = strings.TrimSpace(origin.ID)
+	origin.Name = strings.TrimSpace(origin.Name)
+	if origin.ScheduledRunID < 0 {
+		origin.ScheduledRunID = 0
+	}
+	return context.WithValue(ctx, ctxKeyDeliveryOrigin, origin)
+}
+
+func DeliveryOriginFromContext(ctx context.Context) (DeliveryOrigin, bool) {
+	if v, ok := ctx.Value(ctxKeyDeliveryOrigin).(DeliveryOrigin); ok && !v.IsZero() {
+		return v, true
+	}
+	return DeliveryOrigin{}, false
 }
 
 func contextWithDeliveryState(ctx context.Context, state *deliveryState) context.Context {
