@@ -269,6 +269,85 @@ func TestScheduleSummarySanitizesAndCapsMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildPromptWithRuntimeReturnsLayerManifest(t *testing.T) {
+	next := mustParseTime(t, "2026-05-13T11:00:00+09:00")
+	state := &core.ConversationState{
+		ConversationID: "general:web_chat:test",
+		Turns: []core.ConversationTurn{{
+			Role:    core.RoleUser,
+			Content: "이전 요청",
+		}},
+	}
+	staff := &core.Staff{
+		ID:            "ops",
+		Soul:          "Be precise.",
+		AllowedSkills: []string{"File", "Skill", "Memory"},
+	}
+
+	msgs, manifest := BuildPromptWithRuntimeAndLayerManifest(
+		state,
+		"status",
+		CompactionConfig{RecentWindow: 5},
+		&core.Config{},
+		"web_chat",
+		staff,
+		"user.locale = ko-KR",
+		"## MCP Tools\n\n- test.tool: ok",
+		[]core.Observation{{Label: "large", Data: strings.Repeat("O", promptObservationDataLimit+200)}},
+		t.TempDir(),
+		PromptRuntimeContext{
+			ConversationID:     "general:web_chat:test",
+			StaffID:            "ops",
+			ChannelName:        "web_chat",
+			Timezone:           "Asia/Seoul",
+			Now:                mustParseTime(t, "2026-05-13T10:30:00+09:00"),
+			ScheduleTimezone:   "Asia/Seoul",
+			ScheduledTaskCount: 1,
+			ScheduledTasks: []PromptScheduledTask{{
+				Kind:     "skill",
+				Name:     "daily-reminder",
+				Status:   "enabled",
+				Trigger:  "once",
+				Schedule: "soon",
+				NextRun:  &next,
+			}},
+		},
+	)
+	if len(msgs) < 2 {
+		t.Fatalf("messages = %d, want system plus history", len(msgs))
+	}
+	for _, want := range []string{"identity", "workspace_guide", "scheduled_tasks", "skills", "memory_context", "observations", "history"} {
+		entry, ok := promptLayerEntryForTest(manifest, want)
+		if !ok {
+			t.Fatalf("layer manifest missing %q: %#v", want, manifest)
+		}
+		if !entry.Enabled || entry.Chars <= 0 || entry.Hash == "" {
+			t.Fatalf("layer %q not populated: %#v", want, entry)
+		}
+	}
+	if entry, _ := promptLayerEntryForTest(manifest, "workspace_guide"); entry.Budget != promptWorkspaceGuideLimit {
+		t.Fatalf("workspace_guide budget = %d, want %d", entry.Budget, promptWorkspaceGuideLimit)
+	}
+	if entry, _ := promptLayerEntryForTest(manifest, "scheduled_tasks"); entry.Budget != promptScheduleSummaryLimit {
+		t.Fatalf("scheduled_tasks budget = %d, want %d", entry.Budget, promptScheduleSummaryLimit)
+	}
+	if entry, _ := promptLayerEntryForTest(manifest, "observations"); !entry.Truncated || entry.Budget != promptObservationDataLimit {
+		t.Fatalf("observations layer = %#v, want truncated with observation budget", entry)
+	}
+	if entry, _ := promptLayerEntryForTest(manifest, "channel_delivery"); entry.Enabled || entry.Chars != 0 || entry.Hash != "" {
+		t.Fatalf("disabled channel_delivery layer should not carry content metadata: %#v", entry)
+	}
+}
+
+func promptLayerEntryForTest(entries []PromptLayerAuditEntry, name string) (PromptLayerAuditEntry, bool) {
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry, true
+		}
+	}
+	return PromptLayerAuditEntry{}, false
+}
+
 func TestBuildSkillsSectionSanitizesInstalledMetadata(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := core.SaveSkillTo(baseDir, &core.SkillManifest{

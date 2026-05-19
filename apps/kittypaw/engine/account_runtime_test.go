@@ -786,11 +786,12 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 		t.Fatalf("executions = %d, want 1", len(execs))
 	}
 	var meta struct {
-		PromptHash     string   `json:"prompt_hash"`
-		Layers         []string `json:"layers"`
-		StaffID        string   `json:"staff_id"`
-		ConversationID string   `json:"conversation_id"`
-		Channel        string   `json:"channel"`
+		PromptHash     string                      `json:"prompt_hash"`
+		Layers         []string                    `json:"layers"`
+		LayerManifest  []promptAuditLayerTestEntry `json:"layer_manifest"`
+		StaffID        string                      `json:"staff_id"`
+		ConversationID string                      `json:"conversation_id"`
+		Channel        string                      `json:"channel"`
 		StaffRoute     struct {
 			Reason  string `json:"reason"`
 			StaffID string `json:"staff_id"`
@@ -811,6 +812,14 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 		!slices.Contains(meta.Layers, "skills") {
 		t.Fatalf("layers missing runtime/workspace/skills: %+v", meta.Layers)
 	}
+	runtimeLayer, ok := promptAuditLayerForTest(meta.LayerManifest, "runtime_context")
+	if !ok || !runtimeLayer.Enabled || runtimeLayer.Chars <= 0 || runtimeLayer.Hash == "" || runtimeLayer.Source == "" {
+		t.Fatalf("runtime_context layer manifest missing content metadata: %+v", meta.LayerManifest)
+	}
+	scheduleLayer, ok := promptAuditLayerForTest(meta.LayerManifest, "scheduled_tasks")
+	if !ok || scheduleLayer.Enabled || scheduleLayer.Chars != 0 || scheduleLayer.Hash != "" {
+		t.Fatalf("scheduled_tasks layer should be present but disabled without schedules: %+v", scheduleLayer)
+	}
 	if meta.StaffID != "default" || meta.ConversationID != testWebChatConversationID || meta.Channel != "web" {
 		t.Fatalf("prompt audit route metadata = %+v", meta)
 	}
@@ -820,6 +829,25 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 	if meta.Source.ChatID != "test-chat" || meta.Source.ChannelUserID != "test-session" {
 		t.Fatalf("prompt audit source = %+v", meta.Source)
 	}
+}
+
+type promptAuditLayerTestEntry struct {
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	Source    string `json:"source"`
+	Chars     int    `json:"chars"`
+	Hash      string `json:"hash"`
+	Budget    int    `json:"budget,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+func promptAuditLayerForTest(entries []promptAuditLayerTestEntry, name string) (promptAuditLayerTestEntry, bool) {
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry, true
+		}
+	}
+	return promptAuditLayerTestEntry{}, false
 }
 
 func TestPromptAuditIncludesSourceRouteDecision(t *testing.T) {

@@ -733,6 +733,25 @@ The current user turn is short (≤30 chars) and may reference this data implici
 	messages[0].Content += fmt.Sprintf(augmentTemplate, recent)
 }
 
+func leadingSystemPromptContent(messages []core.LlmMessage) string {
+	if len(messages) == 0 || messages[0].Role != core.RoleSystem {
+		return ""
+	}
+	return messages[0].Content
+}
+
+func appendSystemPromptDeltaLayer(manifest []PromptLayerAuditEntry, name, source, before string, messages []core.LlmMessage, budget int) []PromptLayerAuditEntry {
+	after := leadingSystemPromptContent(messages)
+	if after == "" || after == before {
+		return manifest
+	}
+	content := after
+	if strings.HasPrefix(after, before) {
+		content = strings.TrimSpace(strings.TrimPrefix(after, before))
+	}
+	return append(manifest, promptLayerAuditEntry(name, source, content, budget))
+}
+
 // suggestionSilenceWindow is how long a surfaced suggestion stays
 // suppressed before becoming eligible to surface again. Chosen to match
 // the "weekly reflection" cadence — a candidate seen Sunday will not
@@ -1221,7 +1240,7 @@ observeLoop:
 
 			// Build prompt (observations are volatile — replaced each observe round)
 			runtimeCtx.Now = time.Now()
-			messages := BuildPromptWithRuntime(state, eventText, compaction, s.Config, channelName, staff, memoryContext, mcpToolsSection, observations, s.BaseDir, runtimeCtx)
+			messages, layerManifest := BuildPromptWithRuntimeAndLayerManifest(state, eventText, compaction, s.Config, channelName, staff, memoryContext, mcpToolsSection, observations, s.BaseDir, runtimeCtx)
 
 			// Cross-turn augmentation — short follow-up + recent skill output.
 			// The conversation transcript already carries the prior assistant
@@ -1229,13 +1248,17 @@ observeLoop:
 			// observably stronger than its "use-history" prior. Re-surface
 			// the data inside the system message itself so the prior cannot
 			// route around it.
+			systemBeforeAugment := leadingSystemPromptContent(messages)
 			augmentSystemPromptWithRecentSkillOutput(messages, eventText, s.Pipeline)
+			layerManifest = appendSystemPromptDeltaLayer(layerManifest, "recent_skill_output", "runtime", systemBeforeAugment, messages, promptRecentSkillOutputLimit)
 
 			// First-turn proactive suggestion — surface a reflection
 			// candidate when this is the user's first message of the
 			// session. The 7-day silence window prevents the same
 			// suggestion repeating across back-to-back sessions.
+			systemBeforeSuggestion := leadingSystemPromptContent(messages)
 			augmentSystemPromptWithSuggestion(messages, s.Store, state.Turns)
+			layerManifest = appendSystemPromptDeltaLayer(layerManifest, "proactive_suggestion", "runtime", systemBeforeSuggestion, messages, 0)
 
 			slog.Info("prompt built",
 				"phase", core.PhasePrompt,
@@ -1282,12 +1305,13 @@ observeLoop:
 					Role:    core.RoleUser,
 					Content: hint,
 				})
+				layerManifest = append(layerManifest, promptLayerAuditEntry("retry_guidance", "runtime", hint, 0))
 			}
 			modelOverride := ""
 			if opts != nil {
 				modelOverride = opts.ModelOverride
 			}
-			lastPromptMetadata = BuildPromptAudit(messages, runtimeCtx, compaction, attempt, observeRound, modelOverride).MetadataJSON()
+			lastPromptMetadata = BuildPromptAuditWithLayerManifest(messages, runtimeCtx, compaction, attempt, observeRound, modelOverride, layerManifest).MetadataJSON()
 
 			// Call LLM
 			var resp *llm.Response

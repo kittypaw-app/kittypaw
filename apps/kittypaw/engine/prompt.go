@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jinto/kittypaw/core"
 	mcpreg "github.com/jinto/kittypaw/mcp"
@@ -431,115 +432,147 @@ func BuildPromptWithRuntime(
 	baseDir string,
 	runtimeContext PromptRuntimeContext,
 ) []core.LlmMessage {
+	messages, _ := BuildPromptWithRuntimeAndLayerManifest(state, eventText, compaction, config, channelName, staff, memoryContext, mcpToolsSection, observations, baseDir, runtimeContext)
+	return messages
+}
+
+func BuildPromptWithRuntimeAndLayerManifest(
+	state *core.ConversationState,
+	eventText string,
+	compaction CompactionConfig,
+	config *core.Config,
+	channelName string,
+	staff *core.Staff,
+	memoryContext string,
+	mcpToolsSection string,
+	observations []core.Observation,
+	baseDir string,
+	runtimeContext PromptRuntimeContext,
+) ([]core.LlmMessage, []PromptLayerAuditEntry) {
 	var sb strings.Builder
+	layers := newPromptLayerRecorder()
+	writeLayer := func(name, source, content string, budget int) {
+		if content == "" {
+			layers.Record(name, source, "", budget)
+			return
+		}
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+		layers.Record(name, source, content, budget)
+	}
 
 	// 1. SOUL.md first — identity takes highest priority
 	if staff != nil && staff.Soul != "" {
-		sb.WriteString("## Your Identity (SOUL.md)\n")
-		sb.WriteString(staff.Soul)
-		sb.WriteString("\n\n")
+		writeLayer("soul", "staff", "## Your Identity (SOUL.md)\n"+staff.Soul, 0)
+	} else {
+		layers.Record("soul", "staff", "", 0)
 	}
 
 	// 2. Identity block
-	sb.WriteString(IdentityBlock)
-	sb.WriteString("\n\n")
+	writeLayer("identity", "static", IdentityBlock, 0)
 
 	// 3. Execution rules
-	sb.WriteString(ExecutionBlock)
-	sb.WriteString("\n\n")
+	writeLayer("execution", "static", ExecutionBlock, 0)
 
 	// 4. Quality enforcement
-	sb.WriteString(QualityBlock)
-	sb.WriteString("\n\n")
+	writeLayer("quality", "static", QualityBlock, 0)
 
 	// 5. Channel-specific hints (dynamic)
-	if hint := channelHint(channelName); hint != "" {
-		sb.WriteString(hint)
-		sb.WriteString("\n\n")
-	}
+	writeLayer("channel_hint", "dynamic", channelHint(channelName), 0)
 
 	// 6. Configured channel delivery semantics (dynamic)
-	if delivery := buildChannelDeliverySection(config); delivery != "" {
-		sb.WriteString(delivery)
-		sb.WriteString("\n\n")
-	}
+	writeLayer("channel_delivery", "dynamic", buildChannelDeliverySection(config), 0)
 
 	allowedSkills := []string(nil)
 	if staff != nil {
 		allowedSkills = staff.AllowedSkills
 	}
 
-	if runtimeSection := buildRuntimeContextSection(runtimeContext); runtimeSection != "" {
-		sb.WriteString(runtimeSection)
-		sb.WriteString("\n\n")
-	}
+	writeLayer("runtime_context", "runtime", buildRuntimeContextSection(runtimeContext), 0)
 
-	if workspaceGuide := buildWorkspaceGuideSection(config, baseDir, allowedSkills, runtimeContext); workspaceGuide != "" {
-		sb.WriteString(workspaceGuide)
-		sb.WriteString("\n\n")
-	}
+	writeLayer("workspace_guide", "runtime", buildWorkspaceGuideSection(config, baseDir, allowedSkills, runtimeContext), promptWorkspaceGuideLimit)
 
-	if scheduleSummary := buildScheduleSummarySection(allowedSkills, runtimeContext); scheduleSummary != "" {
-		sb.WriteString(scheduleSummary)
-		sb.WriteString("\n\n")
-	}
+	writeLayer("scheduled_tasks", "runtime", buildScheduleSummarySection(allowedSkills, runtimeContext), promptScheduleSummaryLimit)
 
-	if dispatch := buildStaffDispatchSection(baseDir, runtimeContext.StaffID, allowedSkills); dispatch != "" {
-		sb.WriteString(dispatch)
-		sb.WriteString("\n\n")
-	}
+	writeLayer("staff_dispatch", "dynamic", buildStaffDispatchSection(baseDir, runtimeContext.StaffID, allowedSkills), 0)
 
 	// 7. Available skills (dynamic)
-	sb.WriteString(buildSkillsSection(baseDir, allowedSkills))
-	sb.WriteString("\n\n")
+	writeLayer("skills", "dynamic", buildSkillsSection(baseDir, allowedSkills), 0)
 
 	// 8. Skill creation guide
 	if skillAllowedByList(allowedSkills, "Skill") {
-		sb.WriteString(SkillCreationBlock)
-		sb.WriteString("\n\n")
+		writeLayer("skill_creation", "static", SkillCreationBlock, 0)
+	} else {
+		layers.Record("skill_creation", "static", "", 0)
 	}
 
 	// 9. Memory guide
 	sb.WriteString(MemoryBlock)
+	layers.Record("memory", "static", MemoryBlock, 0)
 
 	// 10. MCP tools (dynamic)
 	if mcpToolsSection != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(mcpToolsSection)
+		layers.Record("mcp_tools", "dynamic", mcpToolsSection, promptMCPToolsLimit)
+	} else {
+		layers.Record("mcp_tools", "dynamic", "", promptMCPToolsLimit)
 	}
 
 	// 11. Staff nick + user markdown
+	var staffUserNotes strings.Builder
 	if staff != nil {
 		if staff.Nick != "" {
-			sb.WriteString("\n\nYour name/nickname is: ")
-			sb.WriteString(staff.Nick)
+			staffUserNotes.WriteString("Your name/nickname is: ")
+			staffUserNotes.WriteString(staff.Nick)
 		}
 		if staff.UserMD != "" {
-			sb.WriteString("\n\n## User Notes (USER.md)\n")
-			sb.WriteString(staff.UserMD)
+			if staffUserNotes.Len() > 0 {
+				staffUserNotes.WriteString("\n\n")
+			}
+			staffUserNotes.WriteString("## User Notes (USER.md)\n")
+			staffUserNotes.WriteString(staff.UserMD)
 		}
+	}
+	if staffUserNotes.Len() > 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString(staffUserNotes.String())
+		layers.Record("staff_user_notes", "staff", staffUserNotes.String(), 0)
+	} else {
+		layers.Record("staff_user_notes", "staff", "", 0)
 	}
 
 	// 12. Memory context
 	if memoryContext != "" {
 		sb.WriteString("\n\n## User Memory\n")
 		sb.WriteString(memoryContext)
+		layers.Record("memory_context", "runtime", "## User Memory\n"+memoryContext, 0)
+	} else {
+		layers.Record("memory_context", "runtime", "", 0)
 	}
 
 	// 13. Observations (volatile — replaced each observe round, not accumulated)
 	if len(observations) > 0 {
-		sb.WriteString("\n\n## Current Observations\n")
-		sb.WriteString("You previously called Runner.observe(). Analyze these results and write code to produce your response.\n")
-		sb.WriteString("Do NOT call Runner.observe() again unless you need additional data.\n\n")
+		var obsBuilder strings.Builder
+		obsBuilder.WriteString("## Current Observations\n")
+		obsBuilder.WriteString("You previously called Runner.observe(). Analyze these results and write code to produce your response.\n")
+		obsBuilder.WriteString("Do NOT call Runner.observe() again unless you need additional data.\n\n")
 		for _, obs := range observations {
 			if obs.Label != "" {
-				sb.WriteString("### ")
-				sb.WriteString(obs.Label)
-				sb.WriteByte('\n')
+				obsBuilder.WriteString("### ")
+				obsBuilder.WriteString(obs.Label)
+				obsBuilder.WriteByte('\n')
 			}
-			sb.WriteString(capPromptPayload(obs.Data, promptObservationDataLimit))
-			sb.WriteString("\n\n")
+			obsBuilder.WriteString(capPromptPayload(obs.Data, promptObservationDataLimit))
+			obsBuilder.WriteString("\n\n")
 		}
+		obsSection := strings.TrimRight(obsBuilder.String(), "\n")
+		sb.WriteString("\n\n")
+		sb.WriteString(obsSection)
+		sb.WriteString("\n\n")
+		layers.Record("observations", "runtime", obsSection, promptObservationDataLimit)
+	} else {
+		layers.Record("observations", "runtime", "", promptObservationDataLimit)
 	}
 
 	messages := []core.LlmMessage{
@@ -550,7 +583,8 @@ func BuildPromptWithRuntime(
 	history := CompactTurns(state.Turns, compaction)
 	messages = append(messages, history...)
 
-	return messages
+	layers.RecordMessages("history", "history", history, 0)
+	return messages, layers.Manifest()
 }
 
 func defaultPromptRuntimeContext(state *core.ConversationState, config *core.Config, channelName string, staff *core.Staff) PromptRuntimeContext {
@@ -566,6 +600,65 @@ func defaultPromptRuntimeContext(state *core.ConversationState, config *core.Con
 		ctx.WorkspaceRoots = config.WorkspaceRoots()
 	}
 	return ctx
+}
+
+type promptLayerRecorder struct {
+	entries []PromptLayerAuditEntry
+}
+
+func newPromptLayerRecorder() *promptLayerRecorder {
+	return &promptLayerRecorder{entries: make([]PromptLayerAuditEntry, 0, len(promptLayerManifest))}
+}
+
+func (r *promptLayerRecorder) Record(name, source, content string, budget int) {
+	if r == nil {
+		return
+	}
+	r.entries = append(r.entries, promptLayerAuditEntry(name, source, content, budget))
+}
+
+func promptLayerAuditEntry(name, source, content string, budget int) PromptLayerAuditEntry {
+	entry := PromptLayerAuditEntry{
+		Name:    name,
+		Source:  source,
+		Enabled: strings.TrimSpace(content) != "",
+		Budget:  budget,
+	}
+	if entry.Enabled {
+		entry.Chars = utf8.RuneCountInString(content)
+		entry.Hash = first16Hex([]byte(content))
+		entry.Truncated = promptLayerLooksTruncated(content, budget)
+	}
+	return entry
+}
+
+func (r *promptLayerRecorder) RecordMessages(name, source string, messages []core.LlmMessage, budget int) {
+	if len(messages) == 0 {
+		r.Record(name, source, "", budget)
+		return
+	}
+	data, err := json.Marshal(messages)
+	if err != nil {
+		r.Record(name, source, "", budget)
+		return
+	}
+	r.Record(name, source, string(data), budget)
+}
+
+func (r *promptLayerRecorder) Manifest() []PromptLayerAuditEntry {
+	if r == nil {
+		return nil
+	}
+	return append([]PromptLayerAuditEntry(nil), r.entries...)
+}
+
+func promptLayerLooksTruncated(content string, budget int) bool {
+	if budget <= 0 {
+		return false
+	}
+	return strings.Contains(content, "[truncated") ||
+		strings.Contains(content, "more tools omitted") ||
+		utf8.RuneCountInString(content) >= budget
 }
 
 func buildRuntimeContextSection(ctx PromptRuntimeContext) string {
@@ -691,6 +784,7 @@ func buildWorkspaceGuideSection(config *core.Config, baseDir string, allowedSkil
 const (
 	promptScheduleSummaryLimit    = 1600
 	promptScheduleSummaryMaxTasks = 8
+	promptMCPToolsLimit           = 2000
 )
 
 func buildScheduleSummarySection(allowedSkills []string, ctx PromptRuntimeContext) string {
@@ -993,11 +1087,10 @@ func BuildMCPToolsSection(allTools map[string][]mcpreg.ToolInfo) string {
 	}
 	sort.Strings(servers)
 
-	const budget = 2000
 	header := "## MCP Tools\n\n"
 	var b strings.Builder
 	b.WriteString(header)
-	remaining := budget - len(header)
+	remaining := promptMCPToolsLimit - len(header)
 	omitted := 0
 
 outer:

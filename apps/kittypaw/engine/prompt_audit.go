@@ -34,19 +34,20 @@ type PromptAuditSource struct {
 }
 
 type PromptAudit struct {
-	PromptHash     string                 `json:"prompt_hash"`
-	Layers         []string               `json:"layers"`
-	StaffID        string                 `json:"staff_id,omitempty"`
-	StaffRoute     StaffRouteDecision     `json:"staff_route"`
-	ConversationID string                 `json:"conversation_id,omitempty"`
-	Channel        string                 `json:"channel,omitempty"`
-	Source         PromptAuditSource      `json:"source,omitempty"`
-	Attempt        int                    `json:"attempt"`
-	ObserveRound   int                    `json:"observe_round"`
-	RecentWindow   int                    `json:"recent_window"`
-	ModelOverride  string                 `json:"model_override,omitempty"`
-	Mode           string                 `json:"mode"`
-	Delegation     *PromptAuditDelegation `json:"delegation,omitempty"`
+	PromptHash     string                  `json:"prompt_hash"`
+	Layers         []string                `json:"layers"`
+	LayerManifest  []PromptLayerAuditEntry `json:"layer_manifest,omitempty"`
+	StaffID        string                  `json:"staff_id,omitempty"`
+	StaffRoute     StaffRouteDecision      `json:"staff_route"`
+	ConversationID string                  `json:"conversation_id,omitempty"`
+	Channel        string                  `json:"channel,omitempty"`
+	Source         PromptAuditSource       `json:"source,omitempty"`
+	Attempt        int                     `json:"attempt"`
+	ObserveRound   int                     `json:"observe_round"`
+	RecentWindow   int                     `json:"recent_window"`
+	ModelOverride  string                  `json:"model_override,omitempty"`
+	Mode           string                  `json:"mode"`
+	Delegation     *PromptAuditDelegation  `json:"delegation,omitempty"`
 }
 
 type PromptAuditDelegation struct {
@@ -55,7 +56,21 @@ type PromptAuditDelegation struct {
 	Task                   string `json:"task,omitempty"`
 }
 
+type PromptLayerAuditEntry struct {
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	Source    string `json:"source"`
+	Chars     int    `json:"chars"`
+	Hash      string `json:"hash,omitempty"`
+	Budget    int    `json:"budget,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
 func BuildPromptAudit(messages []core.LlmMessage, runtime PromptRuntimeContext, compaction CompactionConfig, attempt, observeRound int, modelOverride string) PromptAudit {
+	return BuildPromptAuditWithLayerManifest(messages, runtime, compaction, attempt, observeRound, modelOverride, nil)
+}
+
+func BuildPromptAuditWithLayerManifest(messages []core.LlmMessage, runtime PromptRuntimeContext, compaction CompactionConfig, attempt, observeRound int, modelOverride string, layerManifest []PromptLayerAuditEntry) PromptAudit {
 	mode := "interactive"
 	if runtime.Background {
 		mode = "background"
@@ -72,6 +87,7 @@ func BuildPromptAudit(messages []core.LlmMessage, runtime PromptRuntimeContext, 
 	return PromptAudit{
 		PromptHash:     promptMessagesHash(messages),
 		Layers:         append([]string(nil), promptLayerManifest...),
+		LayerManifest:  append([]PromptLayerAuditEntry(nil), layerManifest...),
 		StaffID:        runtime.StaffID,
 		StaffRoute:     runtime.StaffRoute,
 		ConversationID: runtime.ConversationID,
