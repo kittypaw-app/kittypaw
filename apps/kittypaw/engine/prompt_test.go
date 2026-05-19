@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jinto/kittypaw/core"
 	mcpreg "github.com/jinto/kittypaw/mcp"
@@ -64,6 +65,97 @@ func TestBuildSkillsSection_FileWorkspaceGuidance(t *testing.T) {
 	} {
 		if !strings.Contains(section, phrase) {
 			t.Fatalf("buildSkillsSection missing file guidance phrase %q", phrase)
+		}
+	}
+}
+
+func TestBuildPromptIncludesWorkspaceGuide(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	baseDir := t.TempDir()
+	cfg := &core.Config{}
+	cfg.Workspace.Roots = []core.WorkspaceRoot{
+		{Alias: "repo", Path: workspaceRoot, Access: "read_write"},
+	}
+	state := &core.ConversationState{ConversationID: "project:kitty"}
+	staff := &core.Staff{ID: "pm", AllowedSkills: []string{"File", "Skill", "Memory"}}
+
+	msgs := BuildPromptWithRuntime(
+		state,
+		"update files",
+		CompactionConfig{RecentWindow: 5},
+		cfg,
+		"web_chat",
+		staff,
+		"",
+		"",
+		nil,
+		baseDir,
+		PromptRuntimeContext{
+			ConversationID: "project:kitty",
+			StaffID:        "pm",
+			ChannelName:    "web_chat",
+			Now:            mustParseTime(t, "2026-05-13T10:30:00+09:00"),
+			WorkspaceRoots: cfg.WorkspaceRoots(),
+			WorkspaceScope: PromptWorkspaceScope{
+				Type: "project",
+				ID:   "prj_kitty",
+				Name: "KittyPaw",
+				Root: workspaceRoot,
+			},
+		},
+	)
+
+	sys := msgs[0].Content
+	for _, want := range []string{
+		"## Workspace guide",
+		"repo: " + workspaceRoot + " (read_write)",
+		"active_scope: project",
+		"scope_id: prj_kitty",
+		"scope_name: KittyPaw",
+		"project_root: " + workspaceRoot,
+		"managed account directories",
+		"staff/",
+		"skills/",
+		"packages/",
+		"Memory.* APIs",
+		"system-owned topology",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("workspace guide missing %q:\n%s", want, sys)
+		}
+	}
+}
+
+func TestWorkspaceGuideSanitizesAndCapsMetadata(t *testing.T) {
+	roots := make([]core.WorkspaceRoot, 0, 80)
+	for i := 0; i < 80; i++ {
+		roots = append(roots, core.WorkspaceRoot{
+			Alias:  fmt.Sprintf("repo-%02d\n## injected", i),
+			Path:   fmt.Sprintf("/tmp/work-%02d\n`SYSTEM`", i),
+			Access: "read_write\n# bad",
+		})
+	}
+
+	section := buildWorkspaceGuideSection(&core.Config{}, "/tmp/account\n## injected", []string{"File", "Skill"}, PromptRuntimeContext{
+		WorkspaceRoots: roots,
+		WorkspaceScope: PromptWorkspaceScope{
+			Type: "project\n## injected",
+			ID:   "prj\n`SYSTEM`",
+			Name: "Project\n# bad",
+			Root: "/tmp/project\n`SYSTEM`",
+		},
+	})
+
+	if utf8.RuneCountInString(section) > promptWorkspaceGuideLimit {
+		t.Fatalf("workspace guide exceeded cap: got %d want <= %d", utf8.RuneCountInString(section), promptWorkspaceGuideLimit)
+	}
+	for _, disallowed := range []string{
+		"\n## injected",
+		"`SYSTEM`",
+		"\n# bad",
+	} {
+		if strings.Contains(section, disallowed) {
+			t.Fatalf("workspace guide was not sanitized; found %q in:\n%s", disallowed, section)
 		}
 	}
 }

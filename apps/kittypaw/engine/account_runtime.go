@@ -372,6 +372,74 @@ func admissionScopeForEvent(s *AccountRuntime, event *core.Event) string {
 	return store.DefaultConversationID
 }
 
+func populatePromptWorkspaceContext(ctx *PromptRuntimeContext, s *AccountRuntime) {
+	if ctx == nil || s == nil {
+		return
+	}
+	if len(ctx.WorkspaceRoots) == 0 && s.Config != nil {
+		ctx.WorkspaceRoots = append([]core.WorkspaceRoot(nil), s.Config.WorkspaceRoots()...)
+	}
+	if s.Store == nil || strings.TrimSpace(ctx.ConversationID) == "" {
+		return
+	}
+	scope, ok, err := s.Store.ConversationScope(ctx.ConversationID)
+	if err != nil {
+		slog.Warn("prompt workspace context: conversation scope unavailable", "conversation_id", ctx.ConversationID, "error", err)
+		return
+	}
+	if ok {
+		populatePromptWorkspaceScope(ctx, s, scope)
+		return
+	}
+	projects, err := s.Store.ListProjects(false)
+	if err != nil {
+		slog.Warn("prompt workspace context: list projects failed", "error", err)
+		return
+	}
+	ctx.ProjectSelectionRequired = len(projects) > 0
+}
+
+func populatePromptWorkspaceScope(ctx *PromptRuntimeContext, s *AccountRuntime, scope *store.ConversationScope) {
+	switch strings.TrimSpace(scope.ScopeType) {
+	case "project":
+		project, err := s.Store.GetProject(scope.ScopeID)
+		if err != nil {
+			slog.Warn("prompt workspace context: project scope unavailable", "scope_id", scope.ScopeID, "error", err)
+			return
+		}
+		ctx.WorkspaceScope = PromptWorkspaceScope{
+			Type: "project",
+			ID:   project.ID,
+			Name: project.Name,
+			Root: project.RootPath,
+		}
+		ctx.ProjectSelectionRequired = false
+	case "ticket":
+		ticket, err := s.Store.GetTicket(scope.ScopeID)
+		if err != nil {
+			slog.Warn("prompt workspace context: ticket scope unavailable", "scope_id", scope.ScopeID, "error", err)
+			return
+		}
+		project, err := s.Store.GetProject(ticket.ProjectID)
+		if err != nil {
+			slog.Warn("prompt workspace context: ticket project unavailable", "project_id", ticket.ProjectID, "error", err)
+			return
+		}
+		name := strings.TrimSpace(ticket.Key)
+		if name == "" {
+			name = ticket.Title
+		}
+		ctx.WorkspaceScope = PromptWorkspaceScope{
+			Type:      "ticket",
+			ID:        ticket.ID,
+			Name:      name,
+			Root:      project.RootPath,
+			ProjectID: project.ID,
+		}
+		ctx.ProjectSelectionRequired = false
+	}
+}
+
 func admissionClassForEvent(event core.Event) AdmissionClass {
 	payload, err := event.ParsePayload()
 	if err == nil {
@@ -906,6 +974,7 @@ func (s *AccountRuntime) runAgentLoop(ctx context.Context, event core.Event, raw
 	if s.Config != nil {
 		runtimeCtx.Timezone = s.Config.User.Timezone
 	}
+	populatePromptWorkspaceContext(&runtimeCtx, s)
 
 	// Add user turn
 	userTurn := core.ConversationTurn{

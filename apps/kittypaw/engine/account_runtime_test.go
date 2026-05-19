@@ -75,6 +75,56 @@ func TestResolveWorkspaceIDFindsProjectRoot(t *testing.T) {
 	}
 }
 
+func TestPopulatePromptWorkspaceContextUsesProjectScope(t *testing.T) {
+	st := openTestStore(t)
+	root := t.TempDir()
+	project, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: root})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	sess := &AccountRuntime{
+		Store: st,
+		Config: &core.Config{
+			Workspace: core.WorkspaceConfig{
+				Roots: []core.WorkspaceRoot{{Alias: "repo", Path: root, Access: "read_write"}},
+			},
+		},
+	}
+	ctx := PromptRuntimeContext{ConversationID: project.ProjectConversationID}
+
+	populatePromptWorkspaceContext(&ctx, sess)
+
+	if len(ctx.WorkspaceRoots) != 1 || ctx.WorkspaceRoots[0].Alias != "repo" {
+		t.Fatalf("WorkspaceRoots = %#v, want configured repo root", ctx.WorkspaceRoots)
+	}
+	if ctx.WorkspaceScope.Type != "project" ||
+		ctx.WorkspaceScope.ID != project.ID ||
+		ctx.WorkspaceScope.Name != project.Name ||
+		ctx.WorkspaceScope.Root != project.RootPath {
+		t.Fatalf("WorkspaceScope = %#v, want project scope %#v", ctx.WorkspaceScope, project)
+	}
+	if ctx.ProjectSelectionRequired {
+		t.Fatalf("ProjectSelectionRequired = true, want false for scoped project conversation")
+	}
+}
+
+func TestPopulatePromptWorkspaceContextMarksUnscopedProjectSelectionRequired(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := st.CreateProject(store.CreateProjectRequest{Key: "kitty", Name: "KittyPaw", RootPath: t.TempDir()}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	ctx := PromptRuntimeContext{ConversationID: "general:web_chat:unscoped"}
+
+	populatePromptWorkspaceContext(&ctx, &AccountRuntime{Store: st, Config: &core.Config{}})
+
+	if !ctx.ProjectSelectionRequired {
+		t.Fatalf("ProjectSelectionRequired = false, want true when projects exist and conversation is unscoped")
+	}
+	if ctx.WorkspaceScope.Type != "" {
+		t.Fatalf("WorkspaceScope = %#v, want empty scope for unscoped conversation", ctx.WorkspaceScope)
+	}
+}
+
 type promptCaptureProvider struct {
 	response string
 	messages []core.LlmMessage
@@ -692,8 +742,10 @@ func TestRunRecordsPromptAuditMetadata(t *testing.T) {
 	if meta.PromptHash == "" {
 		t.Fatalf("prompt_hash missing in metadata: %+v", meta)
 	}
-	if !slices.Contains(meta.Layers, "runtime_context") || !slices.Contains(meta.Layers, "skills") {
-		t.Fatalf("layers missing runtime/skills: %+v", meta.Layers)
+	if !slices.Contains(meta.Layers, "runtime_context") ||
+		!slices.Contains(meta.Layers, "workspace_guide") ||
+		!slices.Contains(meta.Layers, "skills") {
+		t.Fatalf("layers missing runtime/workspace/skills: %+v", meta.Layers)
 	}
 	if meta.StaffID != "default" || meta.ConversationID != testWebChatConversationID || meta.Channel != "web" {
 		t.Fatalf("prompt audit route metadata = %+v", meta)
