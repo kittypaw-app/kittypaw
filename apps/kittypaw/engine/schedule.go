@@ -31,10 +31,11 @@ type Scheduler struct {
 }
 
 type SkillScheduleState struct {
-	LastRun      *time.Time
-	FailureCount int
-	NextRun      *time.Time
-	Due          bool
+	LastRun         *time.Time
+	FailureCount    int
+	NextRun         *time.Time
+	Due             bool
+	MissedRunPolicy string
 }
 
 type SchedulerSnapshot struct {
@@ -44,6 +45,12 @@ type SchedulerSnapshot struct {
 }
 
 const scheduledRunLeaseDuration = 2 * turnRunMaxTime
+
+const MissedRunPolicyCatchUpOnce = "catch_up_once"
+
+func defaultMissedRunPolicy() string {
+	return MissedRunPolicyCatchUpOnce
+}
 
 // NewScheduler creates a scheduler that uses the given account runtime for execution.
 // pkgManager may be nil if packages are not configured.
@@ -895,6 +902,7 @@ func SkillScheduleStateForLocation(skill *core.SkillManifest, lastRun *time.Time
 		return state
 
 	case "schedule":
+		state.MissedRunPolicy = defaultMissedRunPolicy()
 		next, ok := nextScheduledRunForTriggerInLocation(skill.Trigger, lastRun, now, loc)
 		if !ok {
 			return state

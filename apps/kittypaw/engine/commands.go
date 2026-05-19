@@ -543,6 +543,9 @@ func handleScheduleShow(name string, s *AccountRuntime) string {
 	fmt.Fprintf(&sb, "enabled: %t\n", item.Manifest.Enabled)
 	fmt.Fprintf(&sb, "timezone: %s\n", tz.Name)
 	fmt.Fprintf(&sb, "trigger: %s\n", item.Manifest.Trigger.Type)
+	if state.MissedRunPolicy != "" {
+		fmt.Fprintf(&sb, "missed_run_policy: %s\n", state.MissedRunPolicy)
+	}
 	if item.Manifest.Trigger.Cron != "" {
 		fmt.Fprintf(&sb, "cron: %s\n", item.Manifest.Trigger.Cron)
 	}

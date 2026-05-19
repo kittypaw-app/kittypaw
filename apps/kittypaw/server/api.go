@@ -555,20 +555,21 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 	tz := core.ResolveUserTimezone(runtime.Config)
 
 	type skillItem struct {
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		Enabled      bool   `json:"enabled"`
-		Version      uint32 `json:"version"`
-		Trigger      string `json:"trigger"`
-		Cron         string `json:"cron,omitempty"`
-		RunAt        string `json:"run_at,omitempty"`
-		RunOnInstall bool   `json:"run_on_install"`
-		LastRun      string `json:"last_run,omitempty"`
-		FailureCount int    `json:"failure_count"`
-		NextRun      string `json:"next_run,omitempty"`
-		Due          bool   `json:"due"`
-		CreatedAt    string `json:"created_at"`
-		UpdatedAt    string `json:"updated_at"`
+		Name            string `json:"name"`
+		Description     string `json:"description"`
+		Enabled         bool   `json:"enabled"`
+		Version         uint32 `json:"version"`
+		Trigger         string `json:"trigger"`
+		Cron            string `json:"cron,omitempty"`
+		RunAt           string `json:"run_at,omitempty"`
+		RunOnInstall    bool   `json:"run_on_install"`
+		LastRun         string `json:"last_run,omitempty"`
+		FailureCount    int    `json:"failure_count"`
+		NextRun         string `json:"next_run,omitempty"`
+		Due             bool   `json:"due"`
+		MissedRunPolicy string `json:"missed_run_policy,omitempty"`
+		CreatedAt       string `json:"created_at"`
+		UpdatedAt       string `json:"updated_at"`
 	}
 	items := make([]skillItem, 0, len(skills))
 	now := time.Now()
@@ -577,18 +578,19 @@ func (s *Server) handleSkills(w http.ResponseWriter, _ *http.Request) {
 		failureCount, _ := s.store.GetFailureCount(sk.Manifest.Name)
 		status := engine.SkillScheduleStateForLocation(&sk.Manifest, lastRun, failureCount, now, tz.Location)
 		item := skillItem{
-			Name:         sk.Manifest.Name,
-			Description:  sk.Manifest.Description,
-			Enabled:      sk.Manifest.Enabled,
-			Version:      sk.Manifest.Version,
-			Trigger:      sk.Manifest.Trigger.Type,
-			Cron:         sk.Manifest.Trigger.Cron,
-			RunAt:        sk.Manifest.Trigger.RunAt,
-			RunOnInstall: sk.Manifest.Trigger.RunOnInstall,
-			FailureCount: failureCount,
-			Due:          status.Due,
-			CreatedAt:    sk.Manifest.CreatedAt,
-			UpdatedAt:    sk.Manifest.UpdatedAt,
+			Name:            sk.Manifest.Name,
+			Description:     sk.Manifest.Description,
+			Enabled:         sk.Manifest.Enabled,
+			Version:         sk.Manifest.Version,
+			Trigger:         sk.Manifest.Trigger.Type,
+			Cron:            sk.Manifest.Trigger.Cron,
+			RunAt:           sk.Manifest.Trigger.RunAt,
+			RunOnInstall:    sk.Manifest.Trigger.RunOnInstall,
+			FailureCount:    failureCount,
+			Due:             status.Due,
+			MissedRunPolicy: status.MissedRunPolicy,
+			CreatedAt:       sk.Manifest.CreatedAt,
+			UpdatedAt:       sk.Manifest.UpdatedAt,
 		}
 		if lastRun != nil {
 			item.LastRun = lastRun.UTC().Format(time.RFC3339)

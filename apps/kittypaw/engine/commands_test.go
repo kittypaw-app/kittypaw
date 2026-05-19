@@ -466,7 +466,7 @@ func TestSlashScheduleListShowPauseResumeDelete(t *testing.T) {
 	if !handled {
 		t.Fatal("/schedule show was not handled")
 	}
-	for _, want := range []string{"daily-brief", "trigger: schedule", "recent_runs:", "failed", "test_error"} {
+	for _, want := range []string{"daily-brief", "trigger: schedule", "missed_run_policy: catch_up_once", "recent_runs:", "failed", "test_error"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("/schedule show missing %q:\n%s", want, out)
 		}

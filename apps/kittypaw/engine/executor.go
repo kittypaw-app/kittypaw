@@ -2043,6 +2043,9 @@ func executeSkillMgmt(ctx context.Context, call core.SkillCall, s *AccountRuntim
 				state := SkillScheduleStateForLocation(&sk.Manifest, lastRun, failCount, time.Now(), scheduleTimezoneForRuntime(s).Location)
 				item["last_run"] = formatOptionalScheduleTime(state.LastRun)
 				item["next_run"] = formatOptionalScheduleTime(state.NextRun)
+				if state.MissedRunPolicy != "" {
+					item["missed_run_policy"] = state.MissedRunPolicy
+				}
 				item["failure_count"] = state.FailureCount
 				item["due"] = state.Due
 			}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jinto/kittypaw/core"
+	"github.com/jinto/kittypaw/engine"
 )
 
 func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
@@ -46,38 +47,41 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 
 	var body struct {
 		Skills []struct {
-			Name         string `json:"name"`
-			Trigger      string `json:"trigger"`
-			Cron         string `json:"cron"`
-			RunAt        string `json:"run_at"`
-			RunOnInstall bool   `json:"run_on_install"`
-			LastRun      string `json:"last_run"`
-			FailureCount int    `json:"failure_count"`
-			NextRun      string `json:"next_run"`
+			Name            string `json:"name"`
+			Trigger         string `json:"trigger"`
+			Cron            string `json:"cron"`
+			RunAt           string `json:"run_at"`
+			RunOnInstall    bool   `json:"run_on_install"`
+			LastRun         string `json:"last_run"`
+			FailureCount    int    `json:"failure_count"`
+			NextRun         string `json:"next_run"`
+			MissedRunPolicy string `json:"missed_run_policy"`
 		} `json:"skills"`
 	}
 	projectsAPIRequest(t, srv, http.MethodGet, "/api/v1/skills", nil, http.StatusOK, &body)
 
 	byName := make(map[string]struct {
-		Name         string
-		Trigger      string
-		Cron         string
-		RunAt        string
-		RunOnInstall bool
-		LastRun      string
-		FailureCount int
-		NextRun      string
+		Name            string
+		Trigger         string
+		Cron            string
+		RunAt           string
+		RunOnInstall    bool
+		LastRun         string
+		FailureCount    int
+		NextRun         string
+		MissedRunPolicy string
 	}, len(body.Skills))
 	for _, skill := range body.Skills {
 		byName[skill.Name] = struct {
-			Name         string
-			Trigger      string
-			Cron         string
-			RunAt        string
-			RunOnInstall bool
-			LastRun      string
-			FailureCount int
-			NextRun      string
+			Name            string
+			Trigger         string
+			Cron            string
+			RunAt           string
+			RunOnInstall    bool
+			LastRun         string
+			FailureCount    int
+			NextRun         string
+			MissedRunPolicy string
 		}(skill)
 	}
 
@@ -101,6 +105,9 @@ func TestSkillsAPIIncludesScheduleStatus(t *testing.T) {
 	}
 	if poll.LastRun == "" || poll.NextRun == "" {
 		t.Fatalf("poll schedule status = %+v, want last_run and next_run", poll)
+	}
+	if poll.MissedRunPolicy != engine.MissedRunPolicyCatchUpOnce {
+		t.Fatalf("poll missed_run_policy = %q, want %q", poll.MissedRunPolicy, engine.MissedRunPolicyCatchUpOnce)
 	}
 	if poll.FailureCount != 2 {
 		t.Fatalf("poll failure_count = %d, want 2", poll.FailureCount)

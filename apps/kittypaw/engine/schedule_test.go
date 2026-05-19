@@ -272,6 +272,30 @@ func TestIsDue_ScheduleUsesConfiguredAccountTimezone(t *testing.T) {
 	}
 }
 
+func TestScheduleMissedRunPolicyCatchesUpOnceWithoutReplayStorm(t *testing.T) {
+	skill := &core.SkillManifest{
+		Name:    "daily-report",
+		Trigger: core.SkillTrigger{Type: "schedule", Cron: "0 9 * * *"},
+	}
+	lastRun := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
+
+	state := SkillScheduleStateForLocation(skill, &lastRun, 0, now, time.UTC)
+	if state.MissedRunPolicy != MissedRunPolicyCatchUpOnce {
+		t.Fatalf("missed policy = %q, want %q", state.MissedRunPolicy, MissedRunPolicyCatchUpOnce)
+	}
+	wantCatchUp := time.Date(2026, 5, 11, 9, 0, 0, 0, time.UTC)
+	if !state.Due || state.NextRun == nil || !state.NextRun.Equal(wantCatchUp) {
+		t.Fatalf("catch-up state = %+v, want due first missed run %s", state, wantCatchUp)
+	}
+
+	state = SkillScheduleStateForLocation(skill, &now, 0, now, time.UTC)
+	wantNext := time.Date(2026, 5, 14, 9, 0, 0, 0, time.UTC)
+	if state.Due || state.NextRun == nil || !state.NextRun.Equal(wantNext) {
+		t.Fatalf("post-attempt state = %+v, want next future run %s without replaying backlog", state, wantNext)
+	}
+}
+
 func TestIsDue_OnceNeverRun(t *testing.T) {
 	sched, _ := newTestScheduler(t)
 	skill := &core.SkillManifest{
