@@ -515,6 +515,7 @@ func TestDelegationsCommandExposesJobSubcommands(t *testing.T) {
 	root := newRootCmd()
 	for _, path := range [][]string{
 		{"delegations", "list"},
+		{"delegations", "tree"},
 		{"delegations", "show"},
 		{"delegations", "cancel"},
 	} {
@@ -527,6 +528,12 @@ func TestDelegationsCommandExposesJobSubcommands(t *testing.T) {
 	for _, flag := range []string{"limit", "status", "conversation-id", "json"} {
 		if list.Flag(flag) == nil {
 			t.Fatalf("delegations list missing --%s", flag)
+		}
+	}
+	tree, _, _ := root.Find([]string{"delegations", "tree"})
+	for _, flag := range []string{"limit", "conversation-id", "json"} {
+		if tree.Flag(flag) == nil {
+			t.Fatalf("delegations tree missing --%s", flag)
 		}
 	}
 	cancel, _, _ := root.Find([]string{"delegations", "cancel"})

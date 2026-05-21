@@ -315,6 +315,60 @@ func TestExecuteRunnerDelegateBackgroundQueuesJob(t *testing.T) {
 	}
 }
 
+func TestExecuteRunnerDelegateBackgroundPersistsParentJobID(t *testing.T) {
+	st := newDelegateTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{
+		Config:    &cfg,
+		Store:     st,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+	}
+	rt := NewDelegationJobRuntime(DelegationJobRuntimeOptions{
+		Store:         st,
+		Runtime:       sess,
+		AccountID:     "alice",
+		LeaseDuration: time.Minute,
+	})
+	sess.DelegationJobs = rt
+
+	parentEvent := webChatEvent("parent asks")
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &parentEvent), testWebChatConversationID)
+	ctx = ContextWithDelegationInfo(ctx, DelegationRunOptions{
+		ParentConversationID: testWebChatConversationID,
+		StaffID:              "researcher",
+		DelegationJobID:      "djob_parent",
+		Depth:                1,
+		MaxDepth:             3,
+	})
+	out, err := executeRunner(ctx, core.SkillCall{
+		Method: "delegate",
+		Args: []json.RawMessage{
+			json.RawMessage(`"coder"`),
+			json.RawMessage(`"continue in the background"`),
+			json.RawMessage(`true`),
+		},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeRunner error: %v", err)
+	}
+	var got struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	job, ok, err := st.GetDelegationJob(got.JobID)
+	if err != nil || !ok {
+		t.Fatalf("GetDelegationJob = ok %v err %v", ok, err)
+	}
+	if job.ParentJobID != "djob_parent" || job.ParentStaffID != "researcher" {
+		t.Fatalf("stored parent metadata = %+v, want parent job and staff", job)
+	}
+}
+
 func TestDelegationJobRuntimeRunOnceExecutesQueuedJob(t *testing.T) {
 	skipWithoutRuntime(t)
 

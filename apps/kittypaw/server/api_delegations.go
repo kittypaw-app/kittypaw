@@ -35,6 +35,30 @@ func (s *Server) handleDelegationsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"delegations": rows})
 }
 
+func (s *Server) handleDelegationsTree(w http.ResponseWriter, r *http.Request) {
+	acct, err := s.requestAccount(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	conversationID := strings.TrimSpace(r.URL.Query().Get("conversation_id"))
+	if conversationID == "" {
+		writeError(w, http.StatusBadRequest, "conversation_id is required")
+		return
+	}
+	limit := memoryLimitFromRequest(r, 200, 1000)
+	tree, err := acct.Deps.Store.GetDelegationJobTree(store.DelegationJobTreeFilter{
+		AccountID:          acct.ID,
+		RootConversationID: conversationID,
+		Limit:              limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tree": tree})
+}
+
 func (s *Server) handleDelegationGet(w http.ResponseWriter, r *http.Request) {
 	acct, err := s.requestAccount(r)
 	if err != nil {

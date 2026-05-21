@@ -22,6 +22,7 @@ type DelegationJob struct {
 	Task                   string     `json:"task"`
 	ParentConversationID   string     `json:"parent_conversation_id"`
 	DelegateConversationID string     `json:"delegate_conversation_id"`
+	ParentJobID            string     `json:"parent_job_id,omitempty"`
 	ParentStaffID          string     `json:"parent_staff_id,omitempty"`
 	ParentEventJSON        string     `json:"-"`
 	Status                 string     `json:"status"`
@@ -48,6 +49,7 @@ type CreateDelegationJobRequest struct {
 	Task                   string
 	ParentConversationID   string
 	DelegateConversationID string
+	ParentJobID            string
 	ParentStaffID          string
 	ParentEventJSON        string
 	Depth                  int
@@ -82,6 +84,34 @@ type DelegationJobListFilter struct {
 	Limit                int
 }
 
+type DelegationJobTreeFilter struct {
+	AccountID          string
+	RootConversationID string
+	Limit              int
+}
+
+type DelegationJobTree struct {
+	AccountID          string                   `json:"account_id"`
+	RootConversationID string                   `json:"root_conversation_id"`
+	Jobs               []DelegationJobTreeNode  `json:"jobs"`
+	Summary            DelegationJobTreeSummary `json:"summary"`
+	Truncated          bool                     `json:"truncated"`
+}
+
+type DelegationJobTreeNode struct {
+	Job      DelegationJob           `json:"job"`
+	Children []DelegationJobTreeNode `json:"children,omitempty"`
+}
+
+type DelegationJobTreeSummary struct {
+	Total     int `json:"total"`
+	Queued    int `json:"queued"`
+	Running   int `json:"running"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	Canceled  int `json:"canceled"`
+}
+
 type delegationJobScanner interface {
 	Scan(dest ...any) error
 }
@@ -92,6 +122,7 @@ func (s *Store) CreateDelegationJob(req CreateDelegationJobRequest) (*Delegation
 	req.Task = strings.TrimSpace(req.Task)
 	req.ParentConversationID = strings.TrimSpace(req.ParentConversationID)
 	req.DelegateConversationID = strings.TrimSpace(req.DelegateConversationID)
+	req.ParentJobID = strings.TrimSpace(req.ParentJobID)
 	req.ParentStaffID = strings.TrimSpace(req.ParentStaffID)
 	req.ParentEventJSON = strings.TrimSpace(req.ParentEventJSON)
 	if req.AccountID == "" {
@@ -118,12 +149,12 @@ func (s *Store) CreateDelegationJob(req CreateDelegationJobRequest) (*Delegation
 	_, err := s.db.Exec(`
 		INSERT INTO delegation_jobs (
 			id, account_id, staff_id, task, parent_conversation_id,
-			delegate_conversation_id, parent_staff_id, parent_event_json,
+			delegate_conversation_id, parent_job_id, parent_staff_id, parent_event_json,
 			status, depth, max_depth, created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, req.AccountID, req.StaffID, req.Task, req.ParentConversationID,
-		req.DelegateConversationID, req.ParentStaffID, req.ParentEventJSON,
+		req.DelegateConversationID, req.ParentJobID, req.ParentStaffID, req.ParentEventJSON,
 		DelegationJobStatusQueued, req.Depth, req.MaxDepth, nowText, nowText)
 	if err != nil {
 		return nil, err
@@ -445,6 +476,109 @@ func (s *Store) ListDelegationJobs(filter DelegationJobListFilter) ([]Delegation
 	return out, rows.Err()
 }
 
+func (s *Store) GetDelegationJobTree(filter DelegationJobTreeFilter) (*DelegationJobTree, error) {
+	filter.AccountID = strings.TrimSpace(filter.AccountID)
+	filter.RootConversationID = strings.TrimSpace(filter.RootConversationID)
+	if filter.AccountID == "" {
+		return nil, fmt.Errorf("delegation job account_id is required")
+	}
+	if filter.RootConversationID == "" {
+		return nil, fmt.Errorf("delegation root conversation_id is required")
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	rows, err := s.db.Query(delegationJobSelectSQL+`
+		WHERE account_id = ? AND parent_conversation_id = ?
+		ORDER BY created_at ASC, id ASC
+		LIMIT ?`,
+		filter.AccountID, filter.RootConversationID, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	loadedJobs := []DelegationJob{}
+	jobIDs := map[string]bool{}
+	summary := DelegationJobTreeSummary{}
+	truncated := false
+	for rows.Next() {
+		job, err := scanDelegationJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		if summary.Total >= limit {
+			truncated = true
+			break
+		}
+		loadedJobs = append(loadedJobs, *job)
+		jobIDs[job.ID] = true
+		summary.add(job.Status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	byParentJob := map[string][]DelegationJob{}
+	for _, job := range loadedJobs {
+		parentJobID := strings.TrimSpace(job.ParentJobID)
+		if parentJobID != "" && !jobIDs[parentJobID] {
+			parentJobID = ""
+		}
+		byParentJob[parentJobID] = append(byParentJob[parentJobID], job)
+	}
+
+	tree := &DelegationJobTree{
+		AccountID:          filter.AccountID,
+		RootConversationID: filter.RootConversationID,
+		Summary:            summary,
+		Truncated:          truncated,
+	}
+	tree.Jobs = buildDelegationJobTreeNodes(byParentJob, "")
+	if tree.Jobs == nil {
+		tree.Jobs = []DelegationJobTreeNode{}
+	}
+	return tree, nil
+}
+
+func buildDelegationJobTreeNodes(byParentJob map[string][]DelegationJob, parentJobID string) []DelegationJobTreeNode {
+	jobs := byParentJob[parentJobID]
+	if len(jobs) == 0 {
+		return nil
+	}
+	nodes := make([]DelegationJobTreeNode, 0, len(jobs))
+	for _, job := range jobs {
+		node := DelegationJobTreeNode{Job: job}
+		node.Children = buildDelegationJobTreeNodes(byParentJob, job.ID)
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+func (s *DelegationJobTreeSummary) add(status string) {
+	if s == nil {
+		return
+	}
+	s.Total++
+	switch status {
+	case DelegationJobStatusQueued:
+		s.Queued++
+	case DelegationJobStatusRunning:
+		s.Running++
+	case DelegationJobStatusSucceeded:
+		s.Succeeded++
+	case DelegationJobStatusFailed:
+		s.Failed++
+	case DelegationJobStatusCanceled:
+		s.Canceled++
+	}
+}
+
 func getDelegationJobTx(q interface {
 	QueryRow(query string, args ...any) *sql.Row
 }, id string) (*DelegationJob, error) {
@@ -453,7 +587,7 @@ func getDelegationJobTx(q interface {
 
 const delegationJobSelectSQL = `
 	SELECT id, account_id, staff_id, task, parent_conversation_id,
-		delegate_conversation_id, parent_staff_id, parent_event_json,
+		delegate_conversation_id, parent_job_id, parent_staff_id, parent_event_json,
 		status, attempt, claim_token, claimed_at, started_at,
 		lease_expires_at, finished_at, result, error_class, error_message,
 		token_usage, duration_ms, depth, max_depth, created_at, updated_at
@@ -465,7 +599,7 @@ func scanDelegationJob(scanner delegationJobScanner) (*DelegationJob, error) {
 	var createdAt, updatedAt string
 	if err := scanner.Scan(
 		&job.ID, &job.AccountID, &job.StaffID, &job.Task, &job.ParentConversationID,
-		&job.DelegateConversationID, &job.ParentStaffID, &job.ParentEventJSON,
+		&job.DelegateConversationID, &job.ParentJobID, &job.ParentStaffID, &job.ParentEventJSON,
 		&job.Status, &job.Attempt, &claimToken, &claimedAt, &startedAt,
 		&leaseExpiresAt, &finishedAt, &job.Result, &job.ErrorClass, &job.ErrorMessage,
 		&job.TokenUsage, &job.DurationMS, &job.Depth, &job.MaxDepth, &createdAt, &updatedAt,

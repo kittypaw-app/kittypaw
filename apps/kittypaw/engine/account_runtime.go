@@ -84,6 +84,7 @@ type RunUsageResult struct {
 type DelegationRunOptions struct {
 	ParentConversationID   string
 	DelegateConversationID string
+	DelegationJobID        string
 	ParentStaffID          string
 	StaffID                string
 	Task                   string

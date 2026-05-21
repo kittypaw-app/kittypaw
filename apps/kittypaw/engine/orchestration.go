@@ -316,6 +316,7 @@ func executeDelegateTask(
 	}
 	if parentInfo, ok := DelegationInfoFromContext(ctx); ok {
 		opts.Delegation.ParentStaffID = parentInfo.StaffID
+		opts.Delegation.DelegationJobID = parentInfo.DelegationJobID
 	}
 
 	// Determine token cap for background tasks.

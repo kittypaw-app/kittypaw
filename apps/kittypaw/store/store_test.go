@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 43 {
-		t.Fatalf("expected 43 migrations, got %d", count)
+	if count != 44 {
+		t.Fatalf("expected 44 migrations, got %d", count)
 	}
 }
 
@@ -2755,6 +2755,106 @@ func TestDelegationJobListAndCancelScopeByAccount(t *testing.T) {
 	}
 	if len(claimed) != 0 {
 		t.Fatalf("canceled alice job should not be claimed: %+v", claimed)
+	}
+}
+
+func TestDelegationJobTreeGroupsJobsByParentJob(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Date(2026, 5, 21, 11, 0, 0, 0, time.UTC)
+	rootConversationID := "general:web:parent"
+	parent, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:              "alice",
+		StaffID:                "researcher",
+		Task:                   "research the vendor options",
+		ParentConversationID:   rootConversationID,
+		DelegateConversationID: "delegation:general-web-parent:researcher",
+		Now:                    now,
+	})
+	if err != nil {
+		t.Fatalf("CreateDelegationJob parent: %v", err)
+	}
+	child, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:              "alice",
+		StaffID:                "coder",
+		Task:                   "prototype the chosen option",
+		ParentConversationID:   rootConversationID,
+		ParentJobID:            parent.ID,
+		ParentStaffID:          "researcher",
+		DelegateConversationID: "delegation:general-web-parent:coder",
+		Now:                    now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateDelegationJob child: %v", err)
+	}
+	if _, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:            "alice",
+		StaffID:              "ops",
+		Task:                 "other conversation job",
+		ParentConversationID: "general:other",
+		Now:                  now.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateDelegationJob other conversation: %v", err)
+	}
+	if _, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:            "bob",
+		StaffID:              "coder",
+		Task:                 "bob job",
+		ParentConversationID: rootConversationID,
+		Now:                  now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateDelegationJob other account: %v", err)
+	}
+
+	tree, err := st.GetDelegationJobTree(DelegationJobTreeFilter{
+		AccountID:          "alice",
+		RootConversationID: rootConversationID,
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("GetDelegationJobTree: %v", err)
+	}
+	if tree.AccountID != "alice" || tree.RootConversationID != rootConversationID {
+		t.Fatalf("tree root metadata = %+v", tree)
+	}
+	if tree.Summary.Total != 2 || tree.Summary.Queued != 2 {
+		t.Fatalf("tree summary = %+v, want two queued jobs", tree.Summary)
+	}
+	if len(tree.Jobs) != 1 || tree.Jobs[0].Job.ID != parent.ID {
+		t.Fatalf("tree root jobs = %+v, want parent only", tree.Jobs)
+	}
+	if len(tree.Jobs[0].Children) != 1 || tree.Jobs[0].Children[0].Job.ID != child.ID {
+		t.Fatalf("tree children = %+v, want child under parent", tree.Jobs[0].Children)
+	}
+	if tree.Jobs[0].Children[0].Job.ParentJobID != parent.ID {
+		t.Fatalf("child parent_job_id = %q, want %q", tree.Jobs[0].Children[0].Job.ParentJobID, parent.ID)
+	}
+}
+
+func TestDelegationJobTreeShowsOrphanedParentReferencesAtRoot(t *testing.T) {
+	st := openTestStore(t)
+	rootConversationID := "general:web:parent"
+	orphan, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:            "alice",
+		StaffID:              "coder",
+		Task:                 "continue missing parent work",
+		ParentConversationID: rootConversationID,
+		ParentJobID:          "djob_missing",
+		Now:                  time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("CreateDelegationJob orphan: %v", err)
+	}
+
+	tree, err := st.GetDelegationJobTree(DelegationJobTreeFilter{
+		AccountID:          "alice",
+		RootConversationID: rootConversationID,
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("GetDelegationJobTree: %v", err)
+	}
+	if tree.Summary.Total != 1 || len(tree.Jobs) != 1 || tree.Jobs[0].Job.ID != orphan.ID {
+		t.Fatalf("tree = %+v, want orphan visible as a root node", tree)
 	}
 }
 

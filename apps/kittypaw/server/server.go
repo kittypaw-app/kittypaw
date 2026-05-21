@@ -444,6 +444,7 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			// default/master API-key middleware.
 			r.Get("/deliveries", s.handleDeliveriesList)
 			r.Get("/delegations", s.handleDelegationsList)
+			r.Get("/delegations/tree", s.handleDelegationsTree)
 			r.Get("/delegations/{id}", s.handleDelegationGet)
 			r.Post("/delegations/{id}/cancel", s.handleDelegationCancel)
 

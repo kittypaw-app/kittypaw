@@ -120,3 +120,76 @@ func TestDelegationsAPICancelIsScopedToRequestAccount(t *testing.T) {
 		t.Fatalf("canceled status = %q, want canceled", canceled.Status)
 	}
 }
+
+func TestDelegationsAPITreeIsScopedToRequestAccount(t *testing.T) {
+	root := t.TempDir()
+	aliceCfg := &core.Config{Server: core.ServerConfig{APIKey: "alice-key"}}
+	bobCfg := &core.Config{Server: core.ServerConfig{APIKey: "bob-key"}}
+	aliceDeps := buildAccountDeps(t, root, "alice", aliceCfg)
+	bobDeps := buildAccountDeps(t, root, "bob", bobCfg)
+	srv := New([]*AccountDeps{aliceDeps, bobDeps}, "test", "alice")
+
+	rootConversationID := "general:shared"
+	aliceJob, err := aliceDeps.Store.CreateDelegationJob(store.CreateDelegationJobRequest{
+		AccountID:            "alice",
+		StaffID:              "coder",
+		Task:                 "alice task",
+		ParentConversationID: rootConversationID,
+	})
+	if err != nil {
+		t.Fatalf("seed alice delegation: %v", err)
+	}
+	bobParent, err := bobDeps.Store.CreateDelegationJob(store.CreateDelegationJobRequest{
+		AccountID:            "bob",
+		StaffID:              "researcher",
+		Task:                 "bob parent",
+		ParentConversationID: rootConversationID,
+	})
+	if err != nil {
+		t.Fatalf("seed bob parent: %v", err)
+	}
+	bobChild, err := bobDeps.Store.CreateDelegationJob(store.CreateDelegationJobRequest{
+		AccountID:            "bob",
+		StaffID:              "coder",
+		Task:                 "bob child",
+		ParentConversationID: rootConversationID,
+		ParentJobID:          bobParent.ID,
+	})
+	if err != nil {
+		t.Fatalf("seed bob child: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/delegations/tree?conversation_id="+rootConversationID+"&limit=10", nil)
+	req.Header.Set("x-api-key", "bob-key")
+	rr := httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/delegations/tree code = %d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Tree store.DelegationJobTree `json:"tree"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, rr.Body.String())
+	}
+	if body.Tree.AccountID != "bob" || body.Tree.RootConversationID != rootConversationID {
+		t.Fatalf("tree metadata = %+v, want bob shared root", body.Tree)
+	}
+	if body.Tree.Summary.Total != 2 || len(body.Tree.Jobs) != 1 {
+		t.Fatalf("tree = %+v, want bob parent with child only", body.Tree)
+	}
+	if body.Tree.Jobs[0].Job.ID != bobParent.ID || len(body.Tree.Jobs[0].Children) != 1 || body.Tree.Jobs[0].Children[0].Job.ID != bobChild.ID {
+		t.Fatalf("tree jobs = %+v, want bob hierarchy", body.Tree.Jobs)
+	}
+	if body.Tree.Jobs[0].Job.ID == aliceJob.ID {
+		t.Fatalf("tree leaked alice job: %+v", body.Tree.Jobs[0].Job)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/delegations/tree", nil)
+	req.Header.Set("x-api-key", "bob-key")
+	rr = httptest.NewRecorder()
+	srv.setupRoutes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("GET /api/v1/delegations/tree without conversation code = %d body=%s, want 400", rr.Code, rr.Body.String())
+	}
+}

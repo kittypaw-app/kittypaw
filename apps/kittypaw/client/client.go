@@ -114,6 +114,19 @@ func (c *Client) Delegations(limit int, status, conversationID string) (map[stri
 	return c.get("/api/v1/delegations?" + values.Encode())
 }
 
+// DelegationTree returns background delegation jobs grouped under one parent conversation.
+func (c *Client) DelegationTree(limit int, conversationID string) (map[string]any, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	values := url.Values{}
+	values.Set("limit", fmt.Sprintf("%d", limit))
+	if conversationID != "" {
+		values.Set("conversation_id", conversationID)
+	}
+	return c.get("/api/v1/delegations/tree?" + values.Encode())
+}
+
 // Delegation returns one background delegation job.
 func (c *Client) Delegation(id string) (map[string]any, error) {
 	return c.get("/api/v1/delegations/" + url.PathEscape(id))

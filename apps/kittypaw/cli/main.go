@@ -2546,6 +2546,7 @@ func newDelegationsCmd() *cobra.Command {
 	}
 	addPersistentAccountFlag(cmd)
 	cmd.AddCommand(newDelegationsListCmd())
+	cmd.AddCommand(newDelegationsTreeCmd())
 	cmd.AddCommand(newDelegationsShowCmd())
 	cmd.AddCommand(newDelegationsCancelCmd())
 	return cmd
@@ -2583,6 +2584,44 @@ func newDelegationsListCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 50, "number of delegation jobs")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status: queued, running, succeeded, failed, canceled")
 	cmd.Flags().StringVar(&conversationID, "conversation-id", "", "filter by parent conversation id")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
+	return cmd
+}
+
+func newDelegationsTreeCmd() *cobra.Command {
+	var limit int
+	var conversationID string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "tree",
+		Short: "Show background delegations for one conversation as a tree",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			conversationID = strings.TrimSpace(conversationID)
+			if conversationID == "" {
+				return errors.New("conversation-id is required")
+			}
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.DelegationTree(limit, conversationID)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				encoded, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(encoded))
+				return nil
+			}
+			printDelegationTree(jsonMap(res, "tree"))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 200, "maximum number of delegation jobs")
+	cmd.Flags().StringVar(&conversationID, "conversation-id", "", "root parent conversation id")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
 	return cmd
 }
@@ -2699,6 +2738,68 @@ func printDelegationDetail(job map[string]any) {
 	if errMsg := jsonStr(job, "error_message"); errMsg != "" {
 		fmt.Printf("Error: %s\n", errMsg)
 	}
+}
+
+func printDelegationTree(tree map[string]any) {
+	if tree == nil {
+		fmt.Println("No delegation tree found.")
+		return
+	}
+	jobs := jsonSlice(tree, "jobs")
+	if len(jobs) == 0 {
+		fmt.Println("No delegations found for this conversation.")
+		return
+	}
+	summary := jsonMap(tree, "summary")
+	fmt.Printf("Conversation: %s\n", jsonStr(tree, "root_conversation_id"))
+	fmt.Printf("Jobs: %d queued=%d running=%d succeeded=%d failed=%d canceled=%d\n",
+		jsonInt(summary, "total"),
+		jsonInt(summary, "queued"),
+		jsonInt(summary, "running"),
+		jsonInt(summary, "succeeded"),
+		jsonInt(summary, "failed"),
+		jsonInt(summary, "canceled"),
+	)
+	for _, node := range jobs {
+		printDelegationTreeNode(node, 0)
+	}
+	if jsonBool(tree, "truncated") {
+		fmt.Println("Output truncated by --limit.")
+	}
+}
+
+func printDelegationTreeNode(node map[string]any, depth int) {
+	job := jsonMap(node, "job")
+	if job == nil {
+		return
+	}
+	indent := strings.Repeat("  ", depth)
+	status := jsonStr(job, "status")
+	staffID := jsonStr(job, "staff_id")
+	task := truncW(jsonStr(job, "task"), 80)
+	fmt.Printf("%s- %s [%s] staff=%s task=%s\n",
+		indent,
+		truncW(jsonStr(job, "id"), 18),
+		status,
+		staffID,
+		task,
+	)
+	if msg := delegationTreeJobMessage(job); msg != "" {
+		fmt.Printf("%s  %s\n", indent, truncW(msg, 100))
+	}
+	for _, child := range jsonSlice(node, "children") {
+		printDelegationTreeNode(child, depth+1)
+	}
+}
+
+func delegationTreeJobMessage(job map[string]any) string {
+	if result := jsonStr(job, "result"); result != "" {
+		return "result: " + result
+	}
+	if errMsg := jsonStr(job, "error_message"); errMsg != "" {
+		return "error: " + errMsg
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------

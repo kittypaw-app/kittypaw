@@ -119,12 +119,17 @@ func (r *DelegationJobRuntime) Enqueue(ctx context.Context, task PMTaskSpec, par
 		}
 		parentEventJSON = string(body)
 	}
+	parentJobID := ""
+	if info, ok := DelegationInfoFromContext(ctx); ok {
+		parentJobID = strings.TrimSpace(info.DelegationJobID)
+	}
 	return r.store.CreateDelegationJob(store.CreateDelegationJobRequest{
 		AccountID:              r.accountID,
 		StaffID:                task.StaffID,
 		Task:                   task.Task,
 		ParentConversationID:   parentConversationID,
 		DelegateConversationID: delegateConversationID(parentConversationID, task.StaffID),
+		ParentJobID:            parentJobID,
 		ParentStaffID:          strings.TrimSpace(parentStaffID),
 		ParentEventJSON:        parentEventJSON,
 		Depth:                  depth,
@@ -274,6 +279,10 @@ func (r *DelegationJobRuntime) runClaimedJob(ctx context.Context, job store.Dele
 	defer stopHeartbeat()
 
 	parentEvent := parentEventFromDelegationJob(job)
+	runCtx = ContextWithDelegationInfo(runCtx, DelegationRunOptions{
+		DelegationJobID: job.ID,
+		StaffID:         job.ParentStaffID,
+	})
 	result := executeDelegateTask(runCtx, PMTaskSpec{
 		StaffID:    job.StaffID,
 		Task:       job.Task,
