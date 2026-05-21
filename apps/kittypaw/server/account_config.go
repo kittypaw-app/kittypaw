@@ -162,6 +162,10 @@ func (s *Server) applyAccountConfigLocked(accountID string, cfg *core.Config) (*
 		s.schedulers = NewAccountSchedulers()
 	}
 	oldScheduler = s.schedulers.Replace(accountID, engine.NewScheduler(newRuntime, td.PkgMgr))
+	if s.delegationJobs == nil {
+		s.delegationJobs = NewAccountDelegationJobRuntimes()
+	}
+	s.delegationJobs.Replace(accountID, newRuntime.DelegationJobs)
 	if accountID == s.defaultAccountID() {
 		s.configMu.Lock()
 		s.config = td.Account.Config
@@ -200,6 +204,7 @@ func (s *Server) rebuildRuntimeForConfigLocked(td *AccountDeps, old *engine.Acco
 		APITokenMgr:       td.APITokenMgr,
 		ServiceTokenMgr:   td.ServiceTokenMgr,
 		ProjectJobRuntime: td.JobRuntime,
+		DelegationJobs:    td.DelegationRuntime,
 		RateLimiters:      td.RateLimiters,
 		DailyTokenLimiter: td.DailyTokenLimiter,
 		AccountID:         td.Account.ID,
@@ -219,6 +224,12 @@ func (s *Server) rebuildRuntimeForConfigLocked(td *AccountDeps, old *engine.Acco
 		})
 		td.JobRuntime = runtime.ProjectJobRuntime
 	}
+	runtime.DelegationJobs = engine.NewDelegationJobRuntime(engine.DelegationJobRuntimeOptions{
+		Store:     td.Store,
+		Runtime:   runtime,
+		AccountID: td.Account.ID,
+	})
+	td.DelegationRuntime = runtime.DelegationJobs
 	if td.Account.Config.IsTeamSpaceAccount() {
 		runtime.Fanout = core.NewChannelFanout(s.eventCh, s.accountRegistry, td.Account.ID)
 	}

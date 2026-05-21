@@ -154,6 +154,7 @@ type AccountRuntime struct {
 	APITokenMgr       *core.APITokenManager     // nil when API token management is not configured
 	ServiceTokenMgr   *core.ServiceTokenManager // nil when external OAuth services are not configured
 	ProjectJobRuntime *ProjectJobRuntime
+	DelegationJobs    *DelegationJobRuntime
 	Notifier          Notifier                 // nil when outbound delivery is not wired (bare engine tests/CLI)
 	EventSink         RuntimeEventSink         // nil when runtime lifecycle streaming is not wired
 	Admission         *RuntimeAdmission        // nil disables account runtime admission (bare tests/CLI)

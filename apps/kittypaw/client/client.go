@@ -98,6 +98,36 @@ func (c *Client) Deliveries(limit int, status, channel, source, originType, orig
 	return c.get("/api/v1/deliveries?" + values.Encode())
 }
 
+// Delegations returns recent background delegation jobs.
+func (c *Client) Delegations(limit int, status, conversationID string) (map[string]any, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	values := url.Values{}
+	values.Set("limit", fmt.Sprintf("%d", limit))
+	if status != "" {
+		values.Set("status", status)
+	}
+	if conversationID != "" {
+		values.Set("conversation_id", conversationID)
+	}
+	return c.get("/api/v1/delegations?" + values.Encode())
+}
+
+// Delegation returns one background delegation job.
+func (c *Client) Delegation(id string) (map[string]any, error) {
+	return c.get("/api/v1/delegations/" + url.PathEscape(id))
+}
+
+// CancelDelegation cancels a queued or running background delegation job.
+func (c *Client) CancelDelegation(id, reason string) (map[string]any, error) {
+	body := map[string]string{}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	return c.post("/api/v1/delegations/"+url.PathEscape(id)+"/cancel", body)
+}
+
 // ChatHistory returns recent account-wide conversation turns.
 func (c *Client) ChatHistory(limit int) (map[string]any, error) {
 	return c.ChatHistoryForConversation(limit, "")

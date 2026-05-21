@@ -30,8 +30,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 42 {
-		t.Fatalf("expected 42 migrations, got %d", count)
+	if count != 43 {
+		t.Fatalf("expected 43 migrations, got %d", count)
 	}
 }
 
@@ -2562,6 +2562,199 @@ func TestScheduledRunReleaseMakesClaimAvailableImmediately(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("old claim token should not finish reclaimed run")
+	}
+}
+
+func TestDelegationJobCreateClaimFinishAndLeaseRecovery(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Date(2026, 5, 21, 9, 0, 0, 0, time.UTC)
+	job, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:              "alice",
+		StaffID:                "researcher",
+		Task:                   "summarize the docs",
+		ParentConversationID:   "general:web:parent",
+		DelegateConversationID: "delegation:general-web-parent:researcher",
+		ParentStaffID:          "pm",
+		Depth:                  2,
+		MaxDepth:               4,
+		ParentEventJSON:        `{"type":"web_chat"}`,
+		Now:                    now,
+	})
+	if err != nil {
+		t.Fatalf("CreateDelegationJob: %v", err)
+	}
+	if job.ID == "" || job.Status != DelegationJobStatusQueued || job.Attempt != 0 {
+		t.Fatalf("job = %+v, want queued new job", job)
+	}
+	if job.AccountID != "alice" || job.StaffID != "researcher" || job.ParentEventJSON == "" {
+		t.Fatalf("job metadata = %+v", job)
+	}
+
+	claimed, err := st.ClaimDelegationJobs(ClaimDelegationJobsRequest{
+		AccountID:     "alice",
+		Limit:         1,
+		Now:           now.Add(time.Minute),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("ClaimDelegationJobs: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != job.ID || claimed[0].Status != DelegationJobStatusRunning {
+		t.Fatalf("claimed = %+v, want running job", claimed)
+	}
+	if claimed[0].ClaimToken == "" || claimed[0].Attempt != 1 || claimed[0].StartedAt == nil {
+		t.Fatalf("claimed metadata = %+v", claimed[0])
+	}
+
+	again, err := st.ClaimDelegationJobs(ClaimDelegationJobsRequest{
+		AccountID:     "alice",
+		Limit:         1,
+		Now:           now.Add(90 * time.Second),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("ClaimDelegationJobs second: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("unexpired running job reclaimed: %+v", again)
+	}
+
+	ok, err := st.ExtendDelegationJobLease(claimed[0].ID, claimed[0].ClaimToken, now.Add(90*time.Second), 2*time.Minute)
+	if err != nil {
+		t.Fatalf("ExtendDelegationJobLease: %v", err)
+	}
+	if !ok {
+		t.Fatal("matching claim should extend lease")
+	}
+	extended, found, err := st.GetDelegationJob(job.ID)
+	if err != nil || !found {
+		t.Fatalf("GetDelegationJob after extend = found %v err %v", found, err)
+	}
+	if extended.LeaseExpiresAt == nil || !extended.LeaseExpiresAt.After(now.Add(3*time.Minute)) {
+		t.Fatalf("extended lease = %+v, want after 3 minutes", extended.LeaseExpiresAt)
+	}
+
+	stillRunning, err := st.ClaimDelegationJobs(ClaimDelegationJobsRequest{
+		AccountID:     "alice",
+		Limit:         1,
+		Now:           now.Add(3 * time.Minute),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("ClaimDelegationJobs during extended lease: %v", err)
+	}
+	if len(stillRunning) != 0 {
+		t.Fatalf("extended running job reclaimed: %+v", stillRunning)
+	}
+
+	reclaimed, err := st.ClaimDelegationJobs(ClaimDelegationJobsRequest{
+		AccountID:     "alice",
+		Limit:         1,
+		Now:           now.Add(4 * time.Minute),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("ClaimDelegationJobs expired: %v", err)
+	}
+	if len(reclaimed) != 1 || reclaimed[0].ID != job.ID || reclaimed[0].Attempt != 2 {
+		t.Fatalf("reclaimed = %+v, want same job attempt 2", reclaimed)
+	}
+	if reclaimed[0].ClaimToken == claimed[0].ClaimToken {
+		t.Fatal("reclaim should rotate claim token")
+	}
+
+	ok, err = st.FinishDelegationJob(FinishDelegationJobRequest{
+		ID:         reclaimed[0].ID,
+		ClaimToken: claimed[0].ClaimToken,
+		Status:     DelegationJobStatusSucceeded,
+		Result:     "old token",
+		Now:        now.Add(4 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("FinishDelegationJob old token: %v", err)
+	}
+	if ok {
+		t.Fatal("old claim token should not finish reclaimed job")
+	}
+
+	ok, err = st.FinishDelegationJob(FinishDelegationJobRequest{
+		ID:                     reclaimed[0].ID,
+		ClaimToken:             reclaimed[0].ClaimToken,
+		Status:                 DelegationJobStatusSucceeded,
+		Result:                 "done",
+		TokenUsage:             123,
+		DurationMS:             456,
+		DelegateConversationID: "delegation:general-web-parent:researcher",
+		Now:                    now.Add(5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("FinishDelegationJob: %v", err)
+	}
+	if !ok {
+		t.Fatal("matching claim should finish job")
+	}
+	finished, found, err := st.GetDelegationJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetDelegationJob: %v", err)
+	}
+	if !found {
+		t.Fatal("finished job not found")
+	}
+	if finished.Status != DelegationJobStatusSucceeded || finished.Result != "done" || finished.TokenUsage != 123 || finished.FinishedAt == nil {
+		t.Fatalf("finished = %+v, want succeeded result", finished)
+	}
+}
+
+func TestDelegationJobListAndCancelScopeByAccount(t *testing.T) {
+	st := openTestStore(t)
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	alice, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:            "alice",
+		StaffID:              "ops",
+		Task:                 "check alice",
+		ParentConversationID: "general:alice",
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("CreateDelegationJob alice: %v", err)
+	}
+	if _, err := st.CreateDelegationJob(CreateDelegationJobRequest{
+		AccountID:            "bob",
+		StaffID:              "ops",
+		Task:                 "check bob",
+		ParentConversationID: "general:bob",
+		Now:                  now,
+	}); err != nil {
+		t.Fatalf("CreateDelegationJob bob: %v", err)
+	}
+
+	rows, err := st.ListDelegationJobs(DelegationJobListFilter{AccountID: "alice", Status: DelegationJobStatusQueued, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListDelegationJobs: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != alice.ID {
+		t.Fatalf("alice queued rows = %+v, want alice only", rows)
+	}
+
+	canceled, err := st.CancelDelegationJob(alice.ID, "alice", "user asked")
+	if err != nil {
+		t.Fatalf("CancelDelegationJob: %v", err)
+	}
+	if canceled.Status != DelegationJobStatusCanceled || canceled.ErrorClass != "canceled" || !strings.Contains(canceled.ErrorMessage, "user asked") {
+		t.Fatalf("canceled = %+v, want canceled reason", canceled)
+	}
+
+	claimed, err := st.ClaimDelegationJobs(ClaimDelegationJobsRequest{
+		AccountID:     "alice",
+		Limit:         1,
+		Now:           now.Add(time.Minute),
+		LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("ClaimDelegationJobs alice after cancel: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("canceled alice job should not be claimed: %+v", claimed)
 	}
 }
 

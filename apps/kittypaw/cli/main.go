@@ -134,6 +134,7 @@ func newRootCmd() *cobra.Command {
 		newConfigCmd(),
 		newMemoryCmd(),
 		newChannelsCmd(),
+		newDelegationsCmd(),
 		newLoginCmd(),
 		newConnectCmd(),
 		newGmailCmd(),
@@ -2532,6 +2533,172 @@ func deliveryOriginLabel(r map[string]any) string {
 		return originType
 	}
 	return originType + ":" + originID
+}
+
+// ---------------------------------------------------------------------------
+// delegations
+// ---------------------------------------------------------------------------
+
+func newDelegationsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delegations",
+		Short: "Manage background delegation jobs",
+	}
+	addPersistentAccountFlag(cmd)
+	cmd.AddCommand(newDelegationsListCmd())
+	cmd.AddCommand(newDelegationsShowCmd())
+	cmd.AddCommand(newDelegationsCancelCmd())
+	return cmd
+}
+
+func newDelegationsListCmd() *cobra.Command {
+	var limit int
+	var status string
+	var conversationID string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List background delegation jobs",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.Delegations(limit, strings.TrimSpace(status), strings.TrimSpace(conversationID))
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				encoded, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(encoded))
+				return nil
+			}
+			printDelegationRows(jsonSlice(res, "delegations"))
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "number of delegation jobs")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status: queued, running, succeeded, failed, canceled")
+	cmd.Flags().StringVar(&conversationID, "conversation-id", "", "filter by parent conversation id")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
+	return cmd
+}
+
+func newDelegationsShowCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "show JOB_ID",
+		Short: "Show a background delegation job",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.Delegation(strings.TrimSpace(args[0]))
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				encoded, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(encoded))
+				return nil
+			}
+			printDelegationDetail(jsonMap(res, "delegation"))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
+	return cmd
+}
+
+func newDelegationsCancelCmd() *cobra.Command {
+	var reason string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "cancel JOB_ID",
+		Short: "Cancel a queued or running background delegation",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			cl, err := connectServerForCLIAccount()
+			if err != nil {
+				return err
+			}
+			res, err := cl.CancelDelegation(strings.TrimSpace(args[0]), strings.TrimSpace(reason))
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				encoded, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(encoded))
+				return nil
+			}
+			job := jsonMap(res, "delegation")
+			fmt.Printf("Canceled delegation %s (%s)\n", jsonStr(job, "id"), jsonStr(job, "status"))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&reason, "reason", "", "cancel reason")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output JSON")
+	return cmd
+}
+
+func printDelegationRows(rows []map[string]any) {
+	if len(rows) == 0 {
+		fmt.Println("No delegations found.")
+		return
+	}
+	fmt.Printf("%s %s %s %s %s %s\n",
+		padW("ID", 18),
+		padW("STATUS", 10),
+		padW("STAFF", 16),
+		padW("ATTEMPT", 7),
+		padW("UPDATED", 20),
+		"RESULT",
+	)
+	fmt.Println(strings.Repeat("-", 94))
+	for _, r := range rows {
+		result := jsonStr(r, "result")
+		if result == "" {
+			result = jsonStr(r, "error_message")
+		}
+		fmt.Printf("%s %s %s %s %s %s\n",
+			padW(truncW(jsonStr(r, "id"), 18), 18),
+			padW(truncW(jsonStr(r, "status"), 10), 10),
+			padW(truncW(jsonStr(r, "staff_id"), 16), 16),
+			padW(fmt.Sprintf("%d", jsonInt(r, "attempt")), 7),
+			padW(truncW(jsonStr(r, "updated_at"), 20), 20),
+			truncW(result, 80),
+		)
+	}
+}
+
+func printDelegationDetail(job map[string]any) {
+	if job == nil {
+		fmt.Println("Delegation not found.")
+		return
+	}
+	fmt.Printf("ID: %s\n", jsonStr(job, "id"))
+	fmt.Printf("Status: %s\n", jsonStr(job, "status"))
+	fmt.Printf("Staff: %s\n", jsonStr(job, "staff_id"))
+	fmt.Printf("Parent conversation: %s\n", jsonStr(job, "parent_conversation_id"))
+	fmt.Printf("Delegate conversation: %s\n", jsonStr(job, "delegate_conversation_id"))
+	fmt.Printf("Attempt: %d\n", jsonInt(job, "attempt"))
+	if result := jsonStr(job, "result"); result != "" {
+		fmt.Printf("Result: %s\n", result)
+	}
+	if errMsg := jsonStr(job, "error_message"); errMsg != "" {
+		fmt.Printf("Error: %s\n", errMsg)
+	}
 }
 
 // ---------------------------------------------------------------------------

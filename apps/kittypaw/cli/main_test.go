@@ -462,6 +462,7 @@ func TestAccountScopedCommandsExposeAccountFlag(t *testing.T) {
 		{"chat", "compact"},
 		{"memory"},
 		{"channels"},
+		{"delegations"},
 	} {
 		cmd, _, err := root.Find(path)
 		if err != nil || cmd == nil {
@@ -507,6 +508,30 @@ func TestChannelsCommandExposesDeliveriesSubcommand(t *testing.T) {
 		if cmd.Flag(flag) == nil {
 			t.Fatalf("channels deliveries missing --%s", flag)
 		}
+	}
+}
+
+func TestDelegationsCommandExposesJobSubcommands(t *testing.T) {
+	root := newRootCmd()
+	for _, path := range [][]string{
+		{"delegations", "list"},
+		{"delegations", "show"},
+		{"delegations", "cancel"},
+	} {
+		cmd, _, err := root.Find(path)
+		if err != nil || cmd == nil {
+			t.Fatalf("Find(%v) = %v, %v", path, cmd, err)
+		}
+	}
+	list, _, _ := root.Find([]string{"delegations", "list"})
+	for _, flag := range []string{"limit", "status", "conversation-id", "json"} {
+		if list.Flag(flag) == nil {
+			t.Fatalf("delegations list missing --%s", flag)
+		}
+	}
+	cancel, _, _ := root.Find([]string{"delegations", "cancel"})
+	if cancel.Flag("reason") == nil {
+		t.Fatal("delegations cancel missing --reason")
 	}
 }
 

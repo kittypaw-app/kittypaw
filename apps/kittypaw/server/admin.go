@@ -129,6 +129,15 @@ func (s *Server) AddAccount(t *core.Account) error {
 			rollbackSchedulers = append(rollbackSchedulers, scheduler)
 		}
 	})
+	if s.delegationJobs == nil {
+		s.delegationJobs = NewAccountDelegationJobRuntimes()
+	}
+	s.delegationJobs.Register(t.ID, sess.DelegationJobs)
+	rollback = append(rollback, func() {
+		if runtime := s.delegationJobs.Detach(t.ID); runtime != nil {
+			runtime.Close()
+		}
+	})
 
 	// accountList is read under accountMu by future AddAccount calls for
 	// their validation snapshot; StartChannels reads it only at boot (single
@@ -229,6 +238,10 @@ func (s *Server) RemoveAccount(id string) error {
 	if s.schedulers != nil {
 		scheduler = s.schedulers.Detach(id)
 	}
+	var delegationRuntime *engine.DelegationJobRuntime
+	if s.delegationJobs != nil {
+		delegationRuntime = s.delegationJobs.Detach(id)
+	}
 	scrubLiveTeamSpaceMembership(s.accountList, id)
 	s.accounts.Remove(id)
 	for i, peer := range s.accountList {
@@ -244,6 +257,9 @@ func (s *Server) RemoveAccount(id string) error {
 	if scheduler != nil {
 		scheduler.Stop()
 		scheduler.Wait()
+	}
+	if delegationRuntime != nil {
+		delegationRuntime.Close()
 	}
 	if td != nil {
 		if err := td.Close(); err != nil {

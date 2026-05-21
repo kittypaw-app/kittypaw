@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jinto/kittypaw/core"
 	"github.com/jinto/kittypaw/llm"
@@ -234,6 +236,240 @@ func TestExecuteRunnerDelegateUsesStaffIDFirst(t *testing.T) {
 	}
 	if !got.Success || got.Result != "delegated ok" {
 		t.Fatalf("result = %+v, want success delegated ok", got)
+	}
+}
+
+func TestExecuteRunnerDelegateBackgroundQueuesJob(t *testing.T) {
+	st := newDelegateTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{
+		Config:    &cfg,
+		Store:     st,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+	}
+	rt := NewDelegationJobRuntime(DelegationJobRuntimeOptions{
+		Store:         st,
+		Runtime:       sess,
+		AccountID:     "alice",
+		LeaseDuration: time.Minute,
+	})
+	sess.DelegationJobs = rt
+
+	parentEvent := webChatEvent("parent asks")
+	ctx := ContextWithConversationID(ContextWithEvent(context.Background(), &parentEvent), testWebChatConversationID)
+	out, err := executeRunner(ctx, core.SkillCall{
+		Method: "delegate",
+		Args: []json.RawMessage{
+			json.RawMessage(`"coder"`),
+			json.RawMessage(`"write a long report"`),
+			json.RawMessage(`true`),
+		},
+	}, sess)
+	if err != nil {
+		t.Fatalf("executeRunner error: %v", err)
+	}
+	var got struct {
+		Success        bool   `json:"success"`
+		Background     bool   `json:"background"`
+		JobID          string `json:"job_id"`
+		Status         string `json:"status"`
+		StaffID        string `json:"staff_id"`
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if !got.Success || !got.Background || got.JobID == "" || got.Status != store.DelegationJobStatusQueued {
+		t.Fatalf("background result = %+v, want queued job", got)
+	}
+	if got.StaffID != "coder" || got.ConversationID != delegateConversationID(testWebChatConversationID, "coder") {
+		t.Fatalf("background metadata = %+v", got)
+	}
+
+	job, ok, err := st.GetDelegationJob(got.JobID)
+	if err != nil || !ok {
+		t.Fatalf("GetDelegationJob = ok %v err %v", ok, err)
+	}
+	if job.AccountID != "alice" || job.Task != "write a long report" || job.ParentEventJSON == "" {
+		t.Fatalf("stored job = %+v", job)
+	}
+
+	statusOut, err := executeRunner(ctx, core.SkillCall{
+		Method: "delegateStatus",
+		Args:   []json.RawMessage{json.RawMessage(`"` + got.JobID + `"`)},
+	}, sess)
+	if err != nil {
+		t.Fatalf("delegateStatus error: %v", err)
+	}
+	var status struct {
+		Job store.DelegationJob `json:"job"`
+	}
+	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	if status.Job.ID != got.JobID || status.Job.Status != store.DelegationJobStatusQueued {
+		t.Fatalf("delegateStatus = %+v, want queued job", status.Job)
+	}
+}
+
+func TestDelegationJobRuntimeRunOnceExecutesQueuedJob(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	st := newDelegateTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{
+		Config:    &cfg,
+		Provider:  &mockProvider{responses: []*llm.Response{mockResp(`return "background ok";`)}},
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+	rt := NewDelegationJobRuntime(DelegationJobRuntimeOptions{
+		Store:         st,
+		Runtime:       sess,
+		AccountID:     "alice",
+		LeaseDuration: time.Minute,
+	})
+	sess.DelegationJobs = rt
+	parentEvent := webChatEvent("parent asks")
+	job, err := rt.Enqueue(context.Background(), PMTaskSpec{StaffID: "coder", Task: "do background work", Background: true}, testWebChatConversationID, &parentEvent, 1, 3, "pm")
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	n, err := rt.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("RunOnce count = %d, want 1", n)
+	}
+	finished, ok, err := st.GetDelegationJob(job.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetDelegationJob = ok %v err %v", ok, err)
+	}
+	if finished.Status != store.DelegationJobStatusSucceeded || finished.Result != "background ok" {
+		t.Fatalf("finished = %+v, want succeeded background ok", finished)
+	}
+	if finished.TokenUsage == 0 || finished.DurationMS < 0 {
+		t.Fatalf("finished usage/duration = %+v", finished)
+	}
+	rt.mu.Lock()
+	doneCount := len(rt.done)
+	rt.mu.Unlock()
+	if doneCount != 0 {
+		t.Fatalf("done map retains %d completed job(s), want 0", doneCount)
+	}
+	if !rt.WaitForJob(job.ID, time.Second) {
+		t.Fatal("WaitForJob should treat terminal store status as complete after done map cleanup")
+	}
+}
+
+func TestDelegationJobRuntimeCancelRunningJobPersistsCanceledStatus(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	st := newDelegateTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
+	cfg := core.DefaultConfig()
+	provider := &blockingDelegateProvider{started: make(chan struct{})}
+	sess := &AccountRuntime{
+		Config:    &cfg,
+		Provider:  provider,
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Pipeline:  NewPipelineState(),
+	}
+	rt := NewDelegationJobRuntime(DelegationJobRuntimeOptions{
+		Store:         st,
+		Runtime:       sess,
+		AccountID:     "alice",
+		LeaseDuration: time.Minute,
+		PollInterval:  time.Hour,
+	})
+	sess.DelegationJobs = rt
+	job, err := rt.Enqueue(context.Background(), PMTaskSpec{StaffID: "coder", Task: "block until canceled", Background: true}, testWebChatConversationID, nil, 1, 3, "pm")
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n, err := rt.StartAvailable(ctx)
+	if err != nil {
+		t.Fatalf("StartAvailable: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("StartAvailable count = %d, want 1", n)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delegation provider did not start")
+	}
+	if _, err := rt.CancelJob(context.Background(), job.ID, "test", "stop"); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	if !rt.WaitForJob(job.ID, 2*time.Second) {
+		t.Fatal("running delegation did not stop after cancel")
+	}
+	canceled, ok, err := st.GetDelegationJob(job.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetDelegationJob = ok %v err %v", ok, err)
+	}
+	if canceled.Status != store.DelegationJobStatusCanceled {
+		t.Fatalf("status = %q, want canceled; job=%+v", canceled.Status, canceled)
+	}
+}
+
+func TestDelegationJobRuntimeRecoversPanicsAndFailsJob(t *testing.T) {
+	skipWithoutRuntime(t)
+
+	st := newDelegateTestStore(t)
+	baseDir := t.TempDir()
+	seedActiveStaffFile(t, baseDir, "coder", "", "Code staff")
+	cfg := core.DefaultConfig()
+	sess := &AccountRuntime{
+		Config:    &cfg,
+		Provider:  panicDelegateProvider{},
+		Sandbox:   sandbox.New(cfg.Sandbox),
+		Store:     st,
+		BaseDir:   baseDir,
+		AccountID: "alice",
+		Health:    core.NewHealthState(),
+		Pipeline:  NewPipelineState(),
+	}
+	rt := NewDelegationJobRuntime(DelegationJobRuntimeOptions{
+		Store:         st,
+		Runtime:       sess,
+		AccountID:     "alice",
+		LeaseDuration: time.Minute,
+	})
+	sess.DelegationJobs = rt
+	job, err := rt.Enqueue(context.Background(), PMTaskSpec{StaffID: "coder", Task: "panic during background run", Background: true}, testWebChatConversationID, nil, 1, 3, "pm")
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := rt.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	failed, ok, err := st.GetDelegationJob(job.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetDelegationJob = ok %v err %v", ok, err)
+	}
+	if failed.Status != store.DelegationJobStatusFailed || failed.ErrorClass != "panic" || !strings.Contains(failed.ErrorMessage, "delegate boom") {
+		t.Fatalf("failed job = %+v, want panic failure", failed)
+	}
+	if sess.Health.Load() != core.AccountHealthDegraded {
+		t.Fatalf("health status = %s, want degraded", sess.Health.Load())
 	}
 }
 
@@ -555,6 +791,37 @@ func ptrEvent(event core.Event) *core.Event {
 func containsSubstring(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findSubstring(s, substr))
 }
+
+type blockingDelegateProvider struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingDelegateProvider) Generate(ctx context.Context, _ []core.LlmMessage) (*llm.Response, error) {
+	p.once.Do(func() { close(p.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (p *blockingDelegateProvider) GenerateWithTools(ctx context.Context, msgs []core.LlmMessage, _ []llm.Tool) (*llm.Response, error) {
+	return p.Generate(ctx, msgs)
+}
+
+func (p *blockingDelegateProvider) ContextWindow() int { return 128_000 }
+func (p *blockingDelegateProvider) MaxTokens() int     { return 4096 }
+
+type panicDelegateProvider struct{}
+
+func (panicDelegateProvider) Generate(context.Context, []core.LlmMessage) (*llm.Response, error) {
+	panic("delegate boom")
+}
+
+func (p panicDelegateProvider) GenerateWithTools(ctx context.Context, msgs []core.LlmMessage, _ []llm.Tool) (*llm.Response, error) {
+	return p.Generate(ctx, msgs)
+}
+
+func (panicDelegateProvider) ContextWindow() int { return 128_000 }
+func (panicDelegateProvider) MaxTokens() int     { return 4096 }
 
 func findSubstring(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {

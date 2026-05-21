@@ -235,7 +235,9 @@ var curatedParameterSchemas = map[string]map[string]any{
 	"Mcp.call":      objectSchema([]string{"server", "tool", "args"}, map[string]any{"server": stringSchema, "tool": stringSchema, "args": flexibleObjectSchema(nil, map[string]any{})}),
 	"Mcp.listTools": objectSchema([]string{"server"}, map[string]any{"server": stringSchema}),
 
-	"Runner.delegate": objectSchema([]string{"staffId", "task"}, map[string]any{"staffId": stringSchema, "task": stringSchema}),
+	"Runner.delegate":       objectSchema([]string{"staffId", "task"}, map[string]any{"staffId": stringSchema, "task": stringSchema, "background": boolSchema}),
+	"Runner.delegateStatus": objectSchema([]string{"jobId"}, map[string]any{"jobId": stringSchema}),
+	"Runner.delegateCancel": objectSchema([]string{"jobId"}, map[string]any{"jobId": stringSchema, "reason": stringSchema}),
 	"Runner.observe":  objectSchema([]string{"data"}, map[string]any{"data": jsonValueSchema(), "label": stringSchema}),
 
 	"Staff.list":   objectSchema(nil, map[string]any{}),
@@ -473,7 +475,9 @@ var SkillRegistry = withParameterSchemas([]SkillMeta{
 		{Name: "listTools", Signature: "Mcp.listTools(server) — lists tools on an MCP server"},
 	}},
 	{Name: "Runner", Methods: []SkillMethodMeta{
-		{Name: "delegate", Signature: "Runner.delegate(staffId, task) — delegates task to another staff member"},
+		{Name: "delegate", Signature: "Runner.delegate(staffId, task[, background]) — delegates task to another staff member; when background is true, returns a durable job_id"},
+		{Name: "delegateStatus", Signature: "Runner.delegateStatus(jobId) — returns durable background delegation status/result"},
+		{Name: "delegateCancel", Signature: "Runner.delegateCancel(jobId[, reason]) — cancels a queued/running background delegation"},
 		{Name: "observe", Signature: "Runner.observe({data, label}) — pauses execution and sends data back for analysis. Engine re-calls LLM with observations in context."},
 	}},
 	{Name: "Staff", Methods: []SkillMethodMeta{

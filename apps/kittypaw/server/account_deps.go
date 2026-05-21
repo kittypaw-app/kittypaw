@@ -42,6 +42,7 @@ type AccountDeps struct {
 	Secrets           *core.SecretsStore
 	LiveIndexer       *engine.LiveIndexer
 	JobRuntime        *engine.ProjectJobRuntime
+	DelegationRuntime *engine.DelegationJobRuntime
 	RateLimiters      *engine.LLMRateLimiterRegistry
 	DailyTokenLimiter *engine.DailyTokenLimiter
 }
@@ -69,6 +70,9 @@ func (td *AccountDeps) Close() error {
 	}
 	if td.JobRuntime != nil {
 		td.JobRuntime.Close()
+	}
+	if td.DelegationRuntime != nil {
+		td.DelegationRuntime.Close()
 	}
 	if td.McpRegistry != nil {
 		td.McpRegistry.Shutdown()
@@ -257,6 +261,7 @@ func buildAccountRuntime(td *AccountDeps, registry *core.AccountRegistry, eventC
 		APITokenMgr:       td.APITokenMgr,
 		ServiceTokenMgr:   td.ServiceTokenMgr,
 		ProjectJobRuntime: td.JobRuntime,
+		DelegationJobs:    td.DelegationRuntime,
 		RateLimiters:      td.RateLimiters,
 		DailyTokenLimiter: td.DailyTokenLimiter,
 		AccountID:         td.Account.ID,
@@ -273,6 +278,12 @@ func buildAccountRuntime(td *AccountDeps, registry *core.AccountRegistry, eventC
 		})
 		td.JobRuntime = runtime.ProjectJobRuntime
 	}
+	runtime.DelegationJobs = engine.NewDelegationJobRuntime(engine.DelegationJobRuntimeOptions{
+		Store:     td.Store,
+		Runtime:   runtime,
+		AccountID: td.Account.ID,
+	})
+	td.DelegationRuntime = runtime.DelegationJobs
 	if count, err := td.Store.MarkRunningJobsFailedOnStartup("daemon stopped while the job was running"); err != nil {
 		slog.Warn("mark interrupted project jobs failed", "account", td.Account.ID, "error", err)
 	} else if count > 0 {

@@ -3342,6 +3342,29 @@ func executeRunner(ctx context.Context, call core.SkillCall, s *AccountRuntime) 
 				parentConversationID = info.ParentConversationID
 			}
 		}
+		parentStaffID := ""
+		if info, ok := DelegationInfoFromContext(ctx); ok {
+			parentStaffID = info.StaffID
+		}
+
+		if background {
+			if s.DelegationJobs == nil {
+				return jsonResult(map[string]any{"error": "background delegation unavailable", "success": false})
+			}
+			job, err := s.DelegationJobs.Enqueue(ctx, spec, parentConversationID, EventFromContext(ctx), depth, maxDepth, parentStaffID)
+			if err != nil {
+				return jsonResult(map[string]any{"error": err.Error(), "success": false})
+			}
+			return jsonResult(map[string]any{
+				"success":         true,
+				"background":      true,
+				"job_id":          job.ID,
+				"status":          job.Status,
+				"staff_id":        job.StaffID,
+				"task":            job.Task,
+				"conversation_id": job.DelegateConversationID,
+			})
+		}
 
 		result := executeDelegateTask(ctx, spec, s, depth, maxDepth, parentConversationID, EventFromContext(ctx))
 		return jsonResult(map[string]any{
@@ -3353,6 +3376,47 @@ func executeRunner(ctx context.Context, call core.SkillCall, s *AccountRuntime) 
 			"conversation_id": result.ConversationID,
 			"duration_ms":     result.DurationMs,
 		})
+
+	case "delegateStatus":
+		if len(call.Args) < 1 {
+			return jsonResult(map[string]any{"error": "Runner.delegateStatus requires (jobId)"})
+		}
+		var jobID string
+		if err := json.Unmarshal(call.Args[0], &jobID); err != nil {
+			return jsonResult(map[string]any{"error": "invalid jobId argument"})
+		}
+		if s.DelegationJobs == nil {
+			return jsonResult(map[string]any{"error": "background delegation unavailable"})
+		}
+		job, ok, err := s.DelegationJobs.GetJob(jobID)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		if !ok {
+			return jsonResult(map[string]any{"error": fmt.Sprintf("delegation job %q not found", strings.TrimSpace(jobID))})
+		}
+		return jsonResult(map[string]any{"job": job})
+
+	case "delegateCancel":
+		if len(call.Args) < 1 {
+			return jsonResult(map[string]any{"error": "Runner.delegateCancel requires (jobId)"})
+		}
+		var jobID string
+		if err := json.Unmarshal(call.Args[0], &jobID); err != nil {
+			return jsonResult(map[string]any{"error": "invalid jobId argument"})
+		}
+		reason := "canceled by runner"
+		if len(call.Args) > 1 {
+			_ = json.Unmarshal(call.Args[1], &reason)
+		}
+		if s.DelegationJobs == nil {
+			return jsonResult(map[string]any{"error": "background delegation unavailable"})
+		}
+		job, err := s.DelegationJobs.CancelJob(ctx, jobID, "runner", reason)
+		if err != nil {
+			return jsonResult(map[string]any{"error": err.Error()})
+		}
+		return jsonResult(map[string]any{"success": true, "job": job})
 
 	default:
 		return jsonResult(map[string]any{"error": fmt.Sprintf("unknown Runner method: %s", call.Method)})

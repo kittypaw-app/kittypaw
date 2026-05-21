@@ -907,7 +907,7 @@ func buildStaffDispatchSection(baseDir, currentStaffID string, allowedSkills []s
 	}
 	lines := []string{
 		"## Staff delegation",
-		"Use `Runner.delegate(staffId, task)` when a specialist should perform part of the work. Keep tasks concrete and include the needed context.",
+		"Use `Runner.delegate(staffId, task)` when a specialist should perform part of the work. Use `Runner.delegate(staffId, task, true)` only for long-running work that can continue in the background, then track it with `Runner.delegateStatus(jobId)`.",
 	}
 	if currentStaffID != "" {
 		lines = append(lines, "Do not delegate to your own staff_id: "+sanitizePromptMetadata(currentStaffID, 80))

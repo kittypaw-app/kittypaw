@@ -33,6 +33,7 @@ type Server struct {
 	store              *store.Store
 	runtime            *engine.AccountRuntime // default-account runtime; HTTP handlers use this
 	schedulers         *AccountSchedulers
+	delegationJobs     *AccountDelegationJobRuntimes
 	router             chi.Router
 	spawner            *ChannelSpawner       // manages channel lifecycle for hot-reload
 	accounts           *AccountRouter        // routes channel events to account-scoped sessions
@@ -118,12 +119,14 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 
 	router := NewAccountRouter()
 	schedulers := NewAccountSchedulers()
+	delegationJobs := NewAccountDelegationJobRuntimes()
 	var defaultRuntime *engine.AccountRuntime
 	depsByID := make(map[string]*AccountDeps, len(accounts))
 	for _, td := range accounts {
 		runtime := buildAccountRuntime(td, registry, eventCh)
 		router.Register(td.Account.ID, runtime)
 		schedulers.Register(td.Account.ID, engine.NewScheduler(runtime, td.PkgMgr))
+		delegationJobs.Register(td.Account.ID, runtime.DelegationJobs)
 		depsByID[td.Account.ID] = td
 		if td == defaultDeps {
 			defaultRuntime = runtime
@@ -135,6 +138,7 @@ func NewWithServerConfig(accounts []*AccountDeps, version string, sc core.TopLev
 		store:           defaultDeps.Store,
 		runtime:         defaultRuntime,
 		schedulers:      schedulers,
+		delegationJobs:  delegationJobs,
 		accounts:        router,
 		accountList:     accountList,
 		accountRegistry: registry,
@@ -439,6 +443,9 @@ func (s *Server) setupRoutesWithTimeout(requestTimeout time.Duration) chi.Router
 			// request account from the provided token must sit outside the
 			// default/master API-key middleware.
 			r.Get("/deliveries", s.handleDeliveriesList)
+			r.Get("/delegations", s.handleDelegationsList)
+			r.Get("/delegations/{id}", s.handleDelegationGet)
+			r.Post("/delegations/{id}/cancel", s.handleDelegationCancel)
 
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireAPIKey)
@@ -1084,6 +1091,9 @@ func (s *Server) ListenAndServe(addr string) error {
 	if s.schedulers != nil {
 		s.schedulers.StartAll(schedCtx)
 	}
+	if s.delegationJobs != nil {
+		s.delegationJobs.StartAll(schedCtx)
+	}
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
@@ -1101,6 +1111,9 @@ func (s *Server) ListenAndServe(addr string) error {
 		// in-flight skill goroutines to drain before shutting down HTTP.
 		if s.schedulers != nil {
 			s.schedulers.StopAll()
+		}
+		if s.delegationJobs != nil {
+			s.delegationJobs.StopAll()
 		}
 		schedCancel()
 		if s.schedulers != nil {
