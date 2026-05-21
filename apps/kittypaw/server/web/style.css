@@ -382,6 +382,167 @@ th {
   font-weight: 600;
 }
 
+/* ── Delegations ──────────────────────────────────────── */
+
+.delegations-view {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.delegations-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.delegations-header h1 {
+  font-size: 1.5em;
+  margin: 0;
+}
+
+.delegations-toolbar {
+  display: grid;
+  grid-template-columns: 120px minmax(240px, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.delegations-toolbar label {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.delegations-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.delegations-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.delegations-summary-chip strong {
+  color: var(--text);
+}
+
+.delegations-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.delegations-node {
+  margin-left: calc(var(--delegation-depth, 0) * 22px);
+}
+
+.delegations-node-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+.delegations-node-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.delegations-node-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 4px;
+}
+
+.delegations-staff {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.delegations-job-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.delegations-task {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.delegations-meta,
+.delegations-result {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.delegations-result.is-error {
+  color: var(--danger);
+}
+
+.delegations-node-children {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.delegations-status {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: #a8a29e;
+}
+
+.delegations-status--queued { background: #f59e0b; }
+.delegations-status--running { background: #2563eb; }
+.delegations-status--succeeded { background: #16a34a; }
+.delegations-status--failed { background: var(--danger); }
+.delegations-status--canceled { background: #78716c; }
+
+.delegations-cancel {
+  flex: 0 0 auto;
+}
+
+.delegations-empty {
+  padding: 22px;
+  border: 1px dashed var(--card-border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 /* ── Shell + Sidebar ──────────────────────────────────── */
 
 .shell {
@@ -1791,6 +1952,23 @@ th {
   }
   .memory-toolbar .input {
     max-width: none;
+  }
+  .delegations-header,
+  .delegations-toolbar {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+  .delegations-header {
+    flex-direction: column;
+  }
+  .delegations-node {
+    margin-left: calc(var(--delegation-depth, 0) * 12px);
+  }
+  .delegations-node-main {
+    flex-wrap: wrap;
+  }
+  .delegations-cancel {
+    width: 100%;
   }
   .memory-row-actions {
     flex-direction: column;

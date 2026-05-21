@@ -23,6 +23,7 @@ func TestWebLoadsI18nBeforeAppModules(t *testing.T) {
 	}
 	for _, module := range []string{
 		`<script src="/app.js"></script>`,
+		`<script src="/delegations.js"></script>`,
 		`<script src="/chat.js"></script>`,
 		`<script src="/skills.js"></script>`,
 		`<script src="/projects.js"></script>`,
@@ -132,11 +133,12 @@ func TestWebI18nAttributeInterpolationsUseAttributeEscaper(t *testing.T) {
 
 func TestLocalWebModulesUseI18nKeys(t *testing.T) {
 	cases := map[string][]string{
-		"web/chat.js":     {"chat.placeholder", "chat.send", "chat.permissionRequest"},
-		"web/settings.js": {"settings.title", "settings.channels", "settings.llmProvider"},
-		"web/skills.js":   {"skills.title", "skills.subtitle", "skills.search"},
-		"web/projects.js": {"projects.title", "projects.newTicket", "projects.jobs", "projects.drivers", "projects.projectChat", "projects.ticketChat"},
-		"web/memory.js":   {"memory.title", "memory.search", "memory.pending", "memory.saved"},
+		"web/chat.js":        {"chat.placeholder", "chat.send", "chat.permissionRequest"},
+		"web/delegations.js": {"delegations.title", "delegations.conversation", "delegations.noJobs"},
+		"web/settings.js":    {"settings.title", "settings.channels", "settings.llmProvider"},
+		"web/skills.js":      {"skills.title", "skills.subtitle", "skills.search"},
+		"web/projects.js":    {"projects.title", "projects.newTicket", "projects.jobs", "projects.drivers", "projects.projectChat", "projects.ticketChat"},
+		"web/memory.js":      {"memory.title", "memory.search", "memory.pending", "memory.saved"},
 	}
 	for path, keys := range cases {
 		src := readWebAssetForI18nTest(t, path)

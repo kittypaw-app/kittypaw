@@ -2,6 +2,10 @@
 
 const I18n = window.KittyPawI18n;
 const t = (key, params) => I18n ? I18n.t(key, params) : key;
+const appT = (key, params, fallback) => {
+  const value = t(key, params);
+  return value === key && fallback ? fallback : value;
+};
 
 const App = {
   root: null,
@@ -272,8 +276,9 @@ const App = {
   showShell() {
     this._teardown();
     const memoryNavLabel = typeof memoryT === 'function' ? memoryT('nav.memory', null, 'Memory') : 'Memory';
+    const delegationsNavLabel = appT('nav.delegations', null, 'Delegations');
     const defaultNav = this.isDefault
-      ? '<button class="nav-item" data-tab="dashboard" data-i18n="nav.dashboard">' + esc(t('nav.dashboard')) + '</button><button class="nav-item" data-tab="skills" data-i18n="nav.skills">' + esc(t('nav.skills')) + '</button><button class="nav-item" data-tab="memory">' + esc(memoryNavLabel) + '</button>'
+      ? '<button class="nav-item" data-tab="dashboard" data-i18n="nav.dashboard">' + esc(t('nav.dashboard')) + '</button><button class="nav-item" data-tab="delegations">' + esc(delegationsNavLabel) + '</button><button class="nav-item" data-tab="skills" data-i18n="nav.skills">' + esc(t('nav.skills')) + '</button><button class="nav-item" data-tab="memory">' + esc(memoryNavLabel) + '</button>'
       : '';
 
     // Override #app centering from stylesheet
@@ -381,6 +386,8 @@ const App = {
     content.style.display = '';
     if (tab === 'dashboard') {
       this._showDashboard(content);
+    } else if (tab === 'delegations') {
+      Delegations.mount(content);
     } else if (tab === 'skills') {
       Skills.mount(content);
     } else if (tab === 'memory') {
