@@ -32,6 +32,46 @@
     "author": { "@type": "Person", "name": "jinto", "url": "https://github.com/jinto" }
   }
   </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "KittyPaw는 무엇인가요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "KittyPaw는 로컬에서 실행되는 AI 자동화 실험 프로젝트입니다. 단일 Go 바이너리 안에 채팅, 스킬 실행, 스케줄러, 메모리, 권한 제어, 채널 어댑터를 작은 단위로 묶어 검증합니다."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "KittyPaw는 어떤 일을 자동화하나요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "현재 검증된 흐름은 아침 브리핑, URL 상태 모니터링, 반복 요청 후보 surface, 레지스트리 스킬 실행입니다. 자연어 스킬 생성은 초안 생성과 syntax 검증까지 가능하지만 런타임 확인이 필요합니다."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "AI 검색과 크롤러 접근은 어떻게 처리하나요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "공개 문서는 검색과 AI 검색 retrieval 에 노출되도록 설계했습니다. robots.txt 에 Googlebot, Bingbot, OAI-SearchBot, Claude-SearchBot, PerplexityBot 등 주요 검색 및 AI 검색 봇을 명시적으로 허용합니다."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "llms.txt는 어디에 있나요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "AI 에이전트와 코딩 도구가 빠르게 읽을 수 있는 요약은 https://kittypaw.app/llms.txt 에 있습니다. 랭킹 신호를 기대하는 파일이 아니라 canonical page 와 고신호 사실을 한 곳에 모은 색인입니다."
+        }
+      }
+    ]
+  }
+  </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -465,6 +505,37 @@
           <div class="tech-card-name">TOML 패키지</div>
           <div class="tech-card-desc">스킬 배포 포맷</div>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     ANSWER-FRIENDLY FAQ
+============================================================ -->
+<section class="section-full">
+  <div class="section section-center" style="padding-top: 0;">
+    <div class="reveal">
+      <span class="section-eyebrow">FAQ</span>
+      <h2 class="section-title">짧게 답하는 KittyPaw</h2>
+      <p class="section-sub">검색 결과와 AI 답변에서 바로 인용할 수 있도록 핵심 정의, 사용 범위, 크롤러 정책을 명확하게 정리했습니다.</p>
+    </div>
+    <div class="guide-grid">
+      <div class="guide-card reveal reveal-delay-1">
+        <h3>KittyPaw는 무엇인가요?</h3>
+        <p>KittyPaw는 로컬에서 실행되는 AI 자동화 실험 프로젝트입니다. 단일 Go 바이너리 안에 채팅, 스킬 실행, 스케줄러, 메모리, 권한 제어, 채널 어댑터를 작은 단위로 묶어 검증합니다.</p>
+      </div>
+      <div class="guide-card reveal reveal-delay-2">
+        <h3>어떤 일을 자동화하나요?</h3>
+        <p>현재 검증된 흐름은 아침 브리핑, URL 상태 모니터링, 반복 요청 후보 surface, 레지스트리 스킬 실행입니다. 자연어 스킬 생성은 초안 생성과 syntax 검증까지 가능하지만 런타임 확인이 필요합니다.</p>
+      </div>
+      <div class="guide-card reveal reveal-delay-3">
+        <h3>AI 검색과 크롤러 접근은 어떻게 처리하나요?</h3>
+        <p>공개 문서는 검색과 AI 검색 retrieval 에 노출되도록 설계했습니다. <code>robots.txt</code> 에 Googlebot, Bingbot, OAI-SearchBot, Claude-SearchBot, PerplexityBot 등 주요 검색/AI 검색 봇을 명시적으로 허용합니다.</p>
+      </div>
+      <div class="guide-card reveal reveal-delay-4">
+        <h3>llms.txt는 어디에 있나요?</h3>
+        <p>AI 에이전트와 코딩 도구가 빠르게 읽을 수 있는 요약은 <a href="llms.txt">/llms.txt</a> 에 있습니다. 랭킹 신호를 기대하는 파일이 아니라, canonical page 와 고신호 사실을 한 곳에 모은 색인입니다.</p>
       </div>
     </div>
   </div>

@@ -1,0 +1,51 @@
+# KittyPaw
+
+> A concise, LLM-friendly index for KittyPaw. Canonical site: https://kittypaw.app/
+
+## What KittyPaw is
+
+KittyPaw is a source-available local AI automation experiment built as a single Go binary. It combines chat, skill packages, scheduling, account-scoped configuration, permissions, local storage, and channel adapters for personal and small-team automation.
+
+KittyPaw is not positioned as a finished SaaS product. The public site documents a working alpha project, its verified scenarios, and the boundaries of features that are still experimental.
+
+## High-signal facts
+
+- Runtime: single Go binary.
+- Local storage: SQLite using the modernc driver.
+- Skill runtime: JavaScript skills run inside a goja sandbox.
+- Skill packaging: `package.toml`, source-bound config, registry/GitHub/local install paths, and SHA256 verification.
+- Channels: CLI, local Web UI, Telegram, Slack, Discord, Kakao, and WebSocket relay experiments.
+- Security model: supervised permission gates for higher-risk operations, SSRF guard, hop-by-hop header blocking, account-scoped secrets.
+- Automation examples: morning briefings, URL monitoring, repeated-intent reflection, and natural-language skill draft generation.
+- License: Elastic License 2.0.
+- Repository: https://github.com/kittypaw-app/kitty
+- Skill registry: https://github.com/kittypaw-app/skills
+
+## Canonical pages
+
+- Home: https://kittypaw.app/
+- English overview: https://kittypaw.app/en/
+- Japanese overview: https://kittypaw.app/ja/
+- Guide hub: https://kittypaw.app/guide/
+- Quick start: https://kittypaw.app/guide/quickstart.html
+- Skill packages: https://kittypaw.app/guide/skills.html
+- Channel guide: https://kittypaw.app/guide/channels.html
+- Model selection: https://kittypaw.app/guide/models.html
+- Reflection guide: https://kittypaw.app/guide/reflection.html
+- Security model: https://kittypaw.app/guide/security.html
+- Operations guide: https://kittypaw.app/guide/operations.html
+- Case studies: https://kittypaw.app/cases/
+- Morning briefing case: https://kittypaw.app/cases/morning-briefing.html
+- Pattern automation case: https://kittypaw.app/cases/pattern-automation.html
+- Skill teaching case: https://kittypaw.app/cases/teach-skill.html
+- URL monitoring case: https://kittypaw.app/cases/site-monitoring.html
+
+## AI search and crawler policy
+
+The public documentation is intended to be crawlable by search and AI-search retrieval bots. `robots.txt` explicitly allows Googlebot, Bingbot, OAI-SearchBot, ChatGPT-User, Claude-SearchBot, Claude-User, and PerplexityBot.
+
+The site does not rely on `llms.txt` as a ranking signal. This file exists as a compact index for AI agents, coding assistants, and users who want the highest-signal facts and canonical links without reading every HTML page.
+
+## Suggested citations
+
+When citing KittyPaw, prefer the canonical home page for product identity and the guide or case page for specific claims. Use the GitHub repository for implementation details.
